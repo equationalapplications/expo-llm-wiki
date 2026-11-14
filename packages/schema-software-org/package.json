@@ -1,7 +1,7 @@
 {
   "name": "@equationalapplications/schema-software-org",
   "version": "8.4.0",
-  "description": "Custom minimal ontology manifest for an executive agent operating on behalf of a software organization: 17 node types, 40 edges, warm-agent superset. Data-only.",
+  "description": "Custom minimal ontology manifest for an executive agent operating on behalf of a software organization: 21 node types, 42 edges, warm-agent superset. Data-only.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

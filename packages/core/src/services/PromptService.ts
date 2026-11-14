@@ -209,7 +209,7 @@ export class PromptService {
     ontologyContext?: OntologyPromptContext | null,
     guidance?: string,
   ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
-    const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
+    const template = runtimeOverride ?? LIBRARIAN_SYSTEM_PROMPT;
     const hasEvents = /\{\{\s*events\s*\}\}/.test(template);
     const hasCurrentFacts = /\{\{\s*currentFacts\s*\}\}/.test(template);
     // grounding: spec §6.3, event summaries only — the "Current Facts" shown
@@ -402,7 +402,7 @@ export class PromptService {
       ingest: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'ingest'),
       librarian: librarianStrategy === 'ops'
         ? this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian')
-        : this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'librarian'),
+        : this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'librarian'),
       heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
       ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
     };

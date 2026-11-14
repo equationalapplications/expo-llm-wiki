@@ -1,0 +1,437 @@
+{
+  "kind": "statement-kinds",
+  "createdAt": "2026-11-14T00:15:08.803Z",
+  "model": "GLM-5.3-FLASH",
+  "engine": {
+    "version": "8.4.0",
+    "gitSha": "c1fc5bf3",
+    "gitDescribe": "v8.5.0-28-gc1fc5bf3"
+  },
+  "total": 28,
+  "overall": {
+    "total": 28,
+    "correct": 28,
+    "accuracy": 1
+  },
+  "perKind": {
+    "rule": {
+      "total": 7,
+      "correct": 7,
+      "accuracy": 1
+    },
+    "decision": {
+      "total": 7,
+      "correct": 7,
+      "accuracy": 1
+    },
+    "lesson": {
+      "total": 7,
+      "correct": 7,
+      "accuracy": 1
+    },
+    "trap": {
+      "total": 7,
+      "correct": 7,
+      "accuracy": 1
+    }
+  },
+  "aboutRate": {
+    "proposed": 0,
+    "resolvable": 28,
+    "correctTarget": 0
+  },
+  "results": [
+    {
+      "text": "When deploying Orbit to production, run the smoke-test suite first and only promote the build if it passes.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Before cutting an Orbit release, bump the version through the release workflow, never by hand-editing package files.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Any Acme Labs repository must enable branch protection on main before its first production deploy.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "When a deploy fails its health check, roll back to the previous build before investigating.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "When adding a new Orbit dependency, pin the exact version and wait out the release-age gate.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Every Acme Labs service must page the on-call engineer when its error budget is exhausted.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "When deploying on a Friday after noon, get a second engineer's approval first.",
+      "expected_kind": "rule",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "rule",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "We chose blue-green deploys for Orbit over rolling deploys, because instant rollback mattered more than the extra infrastructure cost.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Orbit will use SQLite on device instead of a hosted database, because offline operation is a core requirement.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Acme Labs picked a monorepo over per-app repositories, rejecting polyrepo because shared tooling drifted.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "We decided deploys run from CI only, rejecting laptop deploys, because laptop builds were not reproducible.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Orbit adopted semantic-release for versioning rather than manual changelogs, to remove release-day mistakes.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Acme Labs standardised on pnpm over npm and yarn, because the workspace resolves reliably.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "We chose to deploy during the Tuesday window rather than continuously, because support staffing is highest then.",
+      "expected_kind": "decision",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "decision",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "The deploy broke production because we skipped the smoke tests; next time never promote a build without them.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Orbit's release failed when a version was edited by hand and the lockfile drifted; derive versions from the release tool instead.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Acme Labs lost a day when an expired audit allowlist turned CI red unexpectedly; track allowlist expiry dates ahead of time.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "A rollback was slow because nobody had rehearsed it; rehearse the deploy rollback before each major release.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Orbit crashed on launch after a migration ran without a backup; always snapshot the database before migrating.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Acme Labs' outage lasted hours because alerts went to a retired channel; verify alert routing after every team change.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "The Friday deploy caused a weekend incident; avoid shipping when nobody is around to respond.",
+      "expected_kind": "lesson",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "lesson",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Passing CI does not mean the deploy is safe: CI never exercises the production configuration, only the deploy smoke test does.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "It looks like Orbit's version field can be edited directly, but semantic-release owns it and overwrites manual changes.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "People assume Acme Labs' main branch is unprotected by default, but protection is already enforced by the organization ruleset.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "A green health check does not mean the new build is serving traffic; the load balancer may still point at the old build.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Orbit's database looks like it syncs to the cloud, but it is local only and nothing is replicated.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Orbit",
+        "type": "software_application"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Acme Labs staff often assume an alert resolving means the incident is over, but resolution only reflects the metric, not customer impact.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Acme Labs",
+        "type": "organization"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    },
+    {
+      "text": "Deploys appear instant, but the cache takes up to ten minutes to clear, so users see the old version meanwhile.",
+      "expected_kind": "trap",
+      "expected_target": {
+        "title": "Deploy",
+        "type": "area"
+      },
+      "actual_kind": "trap",
+      "kind_correct": true,
+      "about_targets": [],
+      "about_dropped": [],
+      "about_proposed": false,
+      "about_correct": false
+    }
+  ]
+}

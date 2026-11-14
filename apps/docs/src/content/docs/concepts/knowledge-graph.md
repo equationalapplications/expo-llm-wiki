@@ -39,7 +39,12 @@ relationship names on every call.
 
 Don't want to write your own? Use a published one:
 [schema.org warm-agent (9 types, 28 edges)](/expo-llm-wiki/packages/ontologies/) or
-[software organization (17 types, 40 edges)](/expo-llm-wiki/packages/ontologies/#software-organization).
+[software organization (21 types, 42 edges)](/expo-llm-wiki/packages/ontologies/#software-organization).
+
+The software-organization manifest also defines four statement kinds (`rule`, `decision`, `lesson`,
+`trap`), each holding one claim, plus an `area` type. A statement is designed to attach with `about` to an
+area, an application, or the organization; edge attachment is prompt-steered and unproven so far
+(issue #381).
 
 ## Three modes
 

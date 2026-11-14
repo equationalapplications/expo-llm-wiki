@@ -65,9 +65,11 @@ describe('librarian grounding', () => {
     expectNoContent(h.diagnostics, ['Bare body', 'algebraic']);
   });
 
-  it('a promptOverride without evidence wording still gets the block', async () => {
+  it('the removed librarianSystemPrompt key is ignored: built-in prompt, block still appended', async () => {
     const h = await librarian({ ...ON, prompts: { librarianSystemPrompt: 'Custom librarian.' } }, []);
-    expect(h.generateText.mock.calls[0][0].systemPrompt).toMatch(/^Custom librarian\.[\s\S]*EVIDENCE REQUIREMENT/);
+    const sp = h.generateText.mock.calls[0][0].systemPrompt as string;
+    expect(sp).not.toContain('Custom librarian.');
+    expect(sp).toContain('EVIDENCE REQUIREMENT');
   });
 
   it('librarian outside grounding.writers: no block, facts stable, trust untouched', async () => {

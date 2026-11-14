@@ -164,8 +164,8 @@ describe('librarian guidance — prompt placement (specs/librarian-guidance §3-
   });
 
   it('composes after a whole-prompt override under legacy', () => {
-    const svc = new PromptService({ librarianSystemPrompt: 'OVERRIDE-PROMPT {{events}}' });
-    const { systemPrompt } = svc.buildLibrarianPrompt(EVENTS, [], undefined, null, GUIDANCE);
+    const svc = new PromptService();
+    const { systemPrompt } = svc.buildLibrarianPrompt(EVENTS, [], 'OVERRIDE-PROMPT {{events}}', null, GUIDANCE);
     const overrideIdx = systemPrompt.indexOf('OVERRIDE-PROMPT');
     const sectionIdx = systemPrompt.indexOf('--- Host guidance ---');
     expect(overrideIdx).toBeGreaterThan(-1);
@@ -198,7 +198,6 @@ describe('librarian guidance — no-guidance parity against the golden fixture (
     const plain = new PromptService();
     const overridden = new PromptService({
       ingestSystemPrompt: 'INGEST-OVERRIDE {{documentChunk}}',
-      librarianSystemPrompt: 'LIBRARIAN-OVERRIDE {{events}}',
     });
     const grounded = new PromptService(undefined, GROUNDING);
     const services = { plain, overridden, grounded } as const;
@@ -208,9 +207,9 @@ describe('librarian guidance — no-guidance parity against the golden fixture (
       out[`ingest/${name}/default`] = svc.buildIngestPrompt('DOCUMENT-CHUNK-SENTINEL');
       out[`ingest/${name}/runtimeOverride`] = svc.buildIngestPrompt('DOCUMENT-CHUNK-SENTINEL', 'RUNTIME-OVERRIDE {{documentChunk}}');
       out[`ingest/${name}/ontology`] = svc.buildIngestPrompt('DOCUMENT-CHUNK-SENTINEL', undefined, ONTOLOGY);
-      out[`librarian/${name}/builtin`] = svc.buildLibrarianPrompt(EVENTS, []);
+      if (name !== 'overridden') out[`librarian/${name}/builtin`] = svc.buildLibrarianPrompt(EVENTS, []);
       out[`librarian/${name}/runtimeOverride`] = svc.buildLibrarianPrompt(EVENTS, [], 'RUNTIME-OVERRIDE {{events}}');
-      out[`librarian/${name}/ontology`] = svc.buildLibrarianPrompt(EVENTS, [], undefined, ONTOLOGY);
+      if (name !== 'overridden') out[`librarian/${name}/ontology`] = svc.buildLibrarianPrompt(EVENTS, [], undefined, ONTOLOGY);
       out[`opsExtract/${name}`] = svc.buildOpsExtractPrompt(EVENTS);
       out[`opsExtract/${name}/ontology`] = svc.buildOpsExtractPrompt(EVENTS, ONTOLOGY);
     }
@@ -224,18 +223,17 @@ describe('librarian guidance — no-guidance parity against the golden fixture (
   });
 });
 
-describe('librarian guidance — upgrade warnings (specs/librarian-guidance §Deprecation)', () => {
-  it('override under unset strategy keeps the legacy advice and now points at prompts.guidance', () => {
-    const warnings = changedDefaultWarnings({ prompts: { librarianSystemPrompt: 'X' } });
-    expect(warnings.join('\n')).toContain("strategy: 'legacy'");
-    expect(warnings.join('\n')).toContain('prompts.guidance');
-    expect(warnings.join('\n')).toContain('9.0.0');
-  });
+describe('librarian guidance — removal notice (specs/statement-kinds §Removals)', () => {
+  const NOTICE = '`prompts.librarianSystemPrompt` was removed in 9.0.0';
 
-  it('override under explicit ops gets its own warning pointing at prompts.guidance', () => {
-    const warnings = changedDefaultWarnings({ prompts: { librarianSystemPrompt: 'X' }, librarian: { strategy: 'ops' } });
-    expect(warnings.join('\n')).toContain("explicit `librarian.strategy: 'ops'`");
-    expect(warnings.join('\n')).toContain('prompts.guidance');
+  it('the removed key emits exactly one removal notice, under any strategy', () => {
+    for (const librarian of [undefined, { strategy: 'ops' as const }]) {
+      const config = { prompts: { librarianSystemPrompt: 'X' }, ...(librarian ? { librarian } : {}) };
+      const warnings = changedDefaultWarnings(config as never);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(NOTICE);
+      expect(warnings[0]).toContain('prompts.guidance');
+    }
   });
 
   it('no override, no warning', () => {

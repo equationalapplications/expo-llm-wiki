@@ -96,8 +96,9 @@ createWiki(db, {
 |---|---|
 | `prompts.ingestSystemPrompt` | `ingestDocument()` |
 | `prompts.guidance` | Host guidance appended to ingest, librarian (both strategies), ops extract and `getInstructions`. Never heal or ontology backfill. Max 2,000 UTF-16 code units; no `{{…}}` |
-| `prompts.librarianSystemPrompt` | Librarian runs, manual and auto (legacy strategy only). Deprecated — removed in 9.0.0; use `prompts.guidance`. |
 | `prompts.healSystemPrompt` | Heal runs, manual and auto |
 | `prompts.ontologyBackfillSystemPrompt` | `runOntologyBackfill()` |
+
+`prompts.librarianSystemPrompt` was removed in 9.0.0; use `prompts.guidance`.
 
 See [Customize prompts](/expo-llm-wiki/guides/prompts/).

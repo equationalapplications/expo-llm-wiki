@@ -4,10 +4,12 @@ export type { OntologyManifest, OntologyNodeType, OntologyEdgeType } from '@equa
 
 /**
  * Custom minimal ontology for an executive agent operating on behalf of a
- * software organization: 17 node types, 40 edges. Superset of the warm-agent
+ * software organization: 21 node types, 42 edges. Superset of the warm-agent
  * manifest (`schema-org-llm-wiki`), whose 9 node types and 28 edges are copied
  * verbatim (D2) — with one deliberate override on `product` (D8) — plus 3
- * software-org base types, 5 `creativework` subtypes, and 12 new edges.
+ * software-org base types, 3 `creativework` subtypes, the abstract `statement`
+ * with its four kinds (`rule`, `decision`, `lesson`, `trap`), `area`, and 14
+ * new edges.
  *
  * Properties live in the description strings (D3): `buildPromptContext`
  * JSON-serializes the manifest into the classification prompt, so description
@@ -38,10 +40,15 @@ export const schemaSoftwareOrgManifest: OntologyManifest = {
     { type: 'role', description: 'A functional role a person fills within the organization. Expected frontmatter properties: role_name, scope, capabilities.' },
     // Software-org concrete types (one level under creativework)
     { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (software_application or service slug), branch.' },
-    { type: 'handoff', parent_type: 'creativework', description: 'An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.' },
     { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).' },
-    { type: 'session_recap', parent_type: 'creativework', description: 'A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).' },
     { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, application (software_application slug).' },
+    // Statement kinds: one abstract parent, four content-defined children.
+    { type: 'statement', description: 'Abstract parent of the four statement kinds (rule, decision, lesson, trap); classify a fact as one of the four kinds, never as `statement`. The four kinds attach with `about` to an `area`, the `software_application`, or the `organization`, and the `about` rows declared with source `statement` apply to every kind.' },
+    { type: 'rule', parent_type: 'statement', description: 'A situation, and what to do in it. Each rule holds one claim.' },
+    { type: 'decision', parent_type: 'statement', description: 'What was chosen, what was rejected, and why. Each decision holds one claim.' },
+    { type: 'lesson', parent_type: 'statement', description: 'What went wrong, and what to do differently. Each lesson holds one claim.' },
+    { type: 'trap', parent_type: 'statement', description: 'A likely wrong assumption, and the fact that corrects it. Each trap holds one claim.' },
+    { type: 'area', description: "A named part of a `software_application`, such as deploy or billing. Expected frontmatter properties: name, patterns_file (path, inside the host repo, of the file that holds the area's file globs — a pointer, not a copy)." },
   ],
   edge_types: [
     // Warm-agent edges — copied verbatim from schemaOrgWarmAgentManifest (D2).
@@ -73,14 +80,12 @@ export const schemaSoftwareOrgManifest: OntologyManifest = {
     { type: 'itemReviewed', source_type: 'review', target_type: 'event', description: 'The event this review evaluates.' },
     { type: 'itemReviewed', source_type: 'review', target_type: 'product', description: 'The tool, device, or product this review evaluates.' },
     { type: 'owns', source_type: 'person', target_type: 'product', description: 'Item owned by the person (electronics, vehicles, etc.).' },
-    // Software-org edges (12, new)
+    // Software-org edges (14, new)
     { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'This software application depends on this service.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this software application.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'service', description: 'Spec is about this service.' },
     { type: 'documents', source_type: 'procedure', target_type: 'software_application', description: 'Procedure applies to this software application.' },
     { type: 'documents', source_type: 'procedure', target_type: 'service', description: 'Procedure applies to this service.' },
-    { type: 'handoffFor', source_type: 'handoff', target_type: 'software_application', description: 'Handoff is for this software application.' },
-    { type: 'handoffFor', source_type: 'handoff', target_type: 'service', description: 'Handoff is for this service.' },
     // One row covers every creativework subtype on both sides: matching is
     // parent-aware on source and target alike, exact-first (D6).
     { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'This document replaces an older one.' },
@@ -88,5 +93,9 @@ export const schemaSoftwareOrgManifest: OntologyManifest = {
     { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role operates this software application.' },
     { type: 'provides', source_type: 'organization', target_type: 'service', description: 'Organization provides this service.' },
     { type: 'maintains', source_type: 'person', target_type: 'software_application', description: 'Person maintains this software application.' },
+    { type: 'partOf', source_type: 'area', target_type: 'software_application', description: 'This area is a named part of this software application.' },
+    { type: 'about', source_type: 'statement', target_type: 'area', description: 'This statement (any of the four kinds) concerns this area.' },
+    { type: 'about', source_type: 'statement', target_type: 'software_application', description: 'This statement (any of the four kinds) concerns this software application as a whole.' },
+    { type: 'about', source_type: 'statement', target_type: 'organization', description: 'This statement (any of the four kinds) concerns the organization.' },
   ],
 };

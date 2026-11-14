@@ -98,18 +98,19 @@ describe('MaintenanceService — PromptService injection', () => {
       );
     });
 
-    it('uses global librarianSystemPrompt override', async () => {
+    it('ignores the removed librarianSystemPrompt config key', async () => {
       mockOptions.llmProvider.generateText.mockResolvedValue(librarianResponse);
+      // @ts-expect-error librarianSystemPrompt was removed in 9.0.0
       const svc = makeService(new PromptService({ librarianSystemPrompt: 'global lib' }));
       await svc.runLibrarian('entity1');
       expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
-        expect.objectContaining({ systemPrompt: 'global lib' })
+        expect.objectContaining({ systemPrompt: LIBRARIAN_SYSTEM_PROMPT })
       );
     });
 
-    it('uses runtime promptOverride over global', async () => {
+    it('uses runtime promptOverride', async () => {
       mockOptions.llmProvider.generateText.mockResolvedValue(librarianResponse);
-      const svc = makeService(new PromptService({ librarianSystemPrompt: 'global lib' }));
+      const svc = makeService(new PromptService());
       await svc.runLibrarian('entity1', { promptOverride: 'runtime lib' });
       expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
         expect.objectContaining({ systemPrompt: 'runtime lib' })

@@ -92,6 +92,10 @@ pnpm --filter @equationalapplications/benchmarks-llm-wiki bench longmemeval --st
 
 # Supersession suite
 pnpm --filter @equationalapplications/benchmarks-llm-wiki bench supersession --strategy legacy --yes --out packages/benchmarks/results/supersession-baseline-7.7.7.json
+
+# Statement-kinds classification (rule/decision/lesson/trap + `about` edge; in-memory store)
+pnpm --filter @equationalapplications/benchmarks-llm-wiki bench statement-kinds --dry-run
+pnpm --filter @equationalapplications/benchmarks-llm-wiki bench statement-kinds --yes --out packages/benchmarks/results/statement-kinds.json
 ```
 
 Every live command prints a one-screen estimate (engine, flags, models,

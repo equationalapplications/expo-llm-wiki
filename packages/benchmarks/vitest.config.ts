@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@equationalapplications/core-llm-wiki': resolve(__dirname, '../core/src/index.ts'),
+      '@equationalapplications/schema-software-org': resolve(__dirname, '../schema-software-org/src/index.ts'),
     },
   },
   test: {

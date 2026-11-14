@@ -219,6 +219,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@equationalapplications/schema-software-org':
+        specifier: workspace:*
+        version: link:../schema-software-org
       '@types/better-sqlite3':
         specifier: 9.6.0
         version: 9.6.0

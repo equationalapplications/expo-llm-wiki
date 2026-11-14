@@ -3,6 +3,8 @@ import { WikiMemory } from '../src/WikiMemory';
 import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
 import type { MemoryBundle, MemoryDump, SQLiteAdapter, WikiOptions } from '../src/types';
 import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
+import { changedDefaultWarnings } from '../src/utils/engineDefaults';
+import type { WikiConfig } from '../src/types';
 
 function createMockDb(): SQLiteAdapter {
   const mockDb = {
@@ -201,30 +203,13 @@ describe('WikiMemory — prompt override API', () => {
     expect(typeof access.promptService.buildLibrarianPrompt).toBe('function');
   });
 
-  it('global config.prompts flows into PromptService', async () => {
-    const db2 = createMockDb();
-    const wikiWithGlobal = new WikiMemory(db2, {
-      llmProvider: {
-        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
-          capturedCalls.push(params);
-          return JSON.stringify({ facts: [], tasks: [] });
-        }),
-      },
-      config: {
-        ...LEGACY_AUTO,
-        prompts: { librarianSystemPrompt: 'global lib from config' },
-      },
-    });
-    await wikiWithGlobal.setup();
-    await wikiWithGlobal.write('e2', { event_type: 'observation', summary: 'x' });
-    await wikiWithGlobal.runLibrarian('e2');
-    const libCall = capturedCalls.find(c => c.systemPrompt === 'global lib from config');
-    expect(libCall).toBeDefined();
-  });
-
-  it('global config.prompts reaches LLM when write() triggers auto-run', async () => {
+  it('removed prompts.librarianSystemPrompt is ignored and yields one removal notice', async () => {
     const db2 = createMockDb();
     const localCalls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const config = {
+      ...LEGACY_AUTO,
+      prompts: { librarianSystemPrompt: 'global lib from config' },
+    } as WikiConfig;
     const wikiWithGlobal = new WikiMemory(db2, {
       llmProvider: {
         generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
@@ -232,25 +217,46 @@ describe('WikiMemory — prompt override API', () => {
           return JSON.stringify({ facts: [], tasks: [] });
         }),
       },
-      config: {
-        ...LEGACY_AUTO,
-        autoLibrarianThreshold: 1,
-        prompts: { librarianSystemPrompt: 'auto-run global prompt' },
+      config,
+    });
+    await wikiWithGlobal.setup();
+    await wikiWithGlobal.write('e2', { event_type: 'observation', summary: 'x' });
+    await wikiWithGlobal.runLibrarian('e2');
+    expect(localCalls.some(c => c.systemPrompt.includes('global lib from config'))).toBe(false);
+    expect(localCalls.length).toBeGreaterThan(0);
+    const notices = changedDefaultWarnings(config).filter(w => w.includes('prompts.librarianSystemPrompt'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('removed in 9.0.0');
+  });
+
+  it('removed key does not reach the LLM when write() triggers auto-run', async () => {
+    const db2 = createMockDb();
+    const localCalls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const config = {
+      ...LEGACY_AUTO,
+      autoLibrarianThreshold: 1,
+      prompts: { librarianSystemPrompt: 'auto-run global prompt' },
+    } as WikiConfig;
+    const wikiWithGlobal = new WikiMemory(db2, {
+      llmProvider: {
+        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+          localCalls.push(params);
+          return JSON.stringify({ facts: [], tasks: [] });
+        }),
       },
+      config,
     });
     await wikiWithGlobal.setup();
 
-    // Make eventRepo.count return 1 so write() crosses the threshold
     vi.spyOn((wikiWithGlobal as any).eventRepo, 'count').mockResolvedValue(1);
     vi.spyOn(wikiWithGlobal.__testAccess.metadataRepo, 'getCheckpoint').mockResolvedValue({ memory: 0 });
 
     await wikiWithGlobal.write('e3', { event_type: 'observation', summary: 'trigger' });
-
-    // Drain the fire-and-forget maintenance task
     await new Promise<void>((r) => setImmediate(r));
 
-    const libCall = localCalls.find(c => c.systemPrompt === 'auto-run global prompt');
-    expect(libCall).toBeDefined();
+    expect(localCalls.length).toBeGreaterThan(0);
+    expect(localCalls.some(c => c.systemPrompt === 'auto-run global prompt')).toBe(false);
+    expect(changedDefaultWarnings(config).filter(w => w.includes('removed in 9.0.0'))).toHaveLength(1);
   });
 
   it('global heal prompt reaches LLM when write() auto-triggers heal', async () => {
@@ -268,7 +274,6 @@ describe('WikiMemory — prompt override API', () => {
         autoLibrarianThreshold: 1,
         autoHealThreshold: 1,
         prompts: {
-          librarianSystemPrompt: 'auto-run global librarian prompt',
           healSystemPrompt: 'auto-run global heal prompt',
         },
       },

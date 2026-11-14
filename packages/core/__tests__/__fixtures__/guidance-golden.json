@@ -43,16 +43,8 @@
     "systemPrompt": "INGEST-OVERRIDE DOCUMENT-CHUNK-SENTINEL\n\nONTOLOGY-MODE-INSTRUCTIONS-SENTINEL",
     "userPrompt": "Please extract the facts."
   },
-  "librarian/overridden/builtin": {
-    "systemPrompt": "LIBRARIAN-OVERRIDE [\n  {\n    \"label\": \"note\",\n    \"at\": \"2026-11-01T00:00:00.000Z\",\n    \"event\": {\n      \"event_type\": \"note\",\n      \"summary\": \"EVENT-SUMMARY-SENTINEL\"\n    }\n  }\n]",
-    "userPrompt": "Please synthesize the context."
-  },
   "librarian/overridden/runtimeOverride": {
     "systemPrompt": "RUNTIME-OVERRIDE [\n  {\n    \"label\": \"note\",\n    \"at\": \"2026-11-01T00:00:00.000Z\",\n    \"event\": {\n      \"event_type\": \"note\",\n      \"summary\": \"EVENT-SUMMARY-SENTINEL\"\n    }\n  }\n]",
-    "userPrompt": "Please synthesize the context."
-  },
-  "librarian/overridden/ontology": {
-    "systemPrompt": "LIBRARIAN-OVERRIDE [\n  {\n    \"label\": \"note\",\n    \"at\": \"2026-11-01T00:00:00.000Z\",\n    \"event\": {\n      \"event_type\": \"note\",\n      \"summary\": \"EVENT-SUMMARY-SENTINEL\"\n    }\n  }\n]\n\nONTOLOGY-MODE-INSTRUCTIONS-SENTINEL",
     "userPrompt": "Please synthesize the context."
   },
   "opsExtract/overridden": {
