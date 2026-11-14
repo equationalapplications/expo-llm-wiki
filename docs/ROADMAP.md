@@ -9,7 +9,8 @@
 >
 > v1.1 amendment (2026-11-14): records the owner's ruling on step 4's
 > scope (the store only), names three things left out of it as
-> exploratory, and adds the done mark that step 1 was missing. No order
+> exploratory, and adds the done mark that step 1 was missing under the
+> done-mark rule's new exception (issue #392). No order
 > change.
 >
 > Scope note: this is the first roadmap for this repository. It starts
@@ -34,7 +35,9 @@ Curated Journal roadmaps use:
 **Done mark.** When a step completes, one dated line goes under its
 heading: `Done — merged YYYY-MM-DD, PR #N, spec <link>`. It is written in
 the pull request that completes the step, never in a status-only pull
-request.
+request. Exception: a mark a completing PR failed to write may be added
+afterwards by a pull request that says so and cites the issue tracking
+the omission.
 
 **This file carries order, not status.** How much of a charter rule the
 code does today is the rule's Status line in INTENT.md. How far a piece of
