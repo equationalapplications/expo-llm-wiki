@@ -10,7 +10,8 @@ answers the four questions the issue poses; the owner gates the answers.
 diagnostic code, and one OKF frontmatter key. It drops nothing. Rule 5 —
 unchanged. A pointer is provenance, not an edit path; no code may rewrite
 a stored fact through it. Rule 5's Planned note names this change, and
-this pull request leaves INTENT.md untouched: that note's text is
+this pull request updates only the note's status clause — the rule's
+normative text is
 reserved to the source-store release by INTENT.md's own sentence
 ("reworded in the pull request that ships the source store, not
 before").
@@ -18,10 +19,10 @@ Rule 6 — no pointer is dropped silently anywhere. A pointer the model
 names but the engine cannot resolve emits
 `source_pointer_unresolved` (ops) or, on legacy, the same code with a
 `'unsupported_strategy'` reason. A malformed pointer met at dump import
-emits `source_pointer_invalid`. The OKF parse path stays tolerant-null
-(it has no diagnostic channel of its own), and it gains an additive
-collector on its options type so a host can receive the report;
-§Export, import, and OKF says how. Heal emits none because no
+emits `source_pointer_invalid`. The OKF parse path stays tolerant-null,
+and its result carries the dropped values on a new optional field
+(§Export, import, and OKF) — reported on the result, not swallowed.
+Heal emits none because no
 attribution signal exists to drop (§Heal restatements).
 Rule 10 — this spec comes first. This pull request updates exactly one
 INTENT.md clause: the status clause of rule 5's Planned note ("today
@@ -188,7 +189,9 @@ parser still reads the field for presence only: when a legacy model
 volunteers a non-null `source_event`, the engine emits
 `source_pointer_unresolved` with reason `'unsupported_strategy'` — the
 model named a pointer, and rule 6 says that fact is reported, not
-swallowed. The quote rule is ops-only (§Quote rule): a legacy fact
+swallowed. (The presence read is new parsing; `legacy.ts` does not
+read the field today.) The quote rule is ops-only (§Quote rule): a
+legacy fact
 persists no quote into the pointer, because a verified quote attributed
 to no event is the misleading provenance the quote rule exists to
 prevent; the legacy trust path (grounding verdicts, drafts) works
@@ -246,7 +249,13 @@ engine has verified. The rule:
   yields `quote: null`; the pointer's `event_id` still persists, and
   the fact follows the grounding verdict as today. Without this check,
   a fact could carry event B's id and event A's verified quote, and
-  the attribution would look checked while being wrong. The candidate
+  the attribution would look checked while being wrong. The check is
+  precisely: the trust verdict comes from the full corpus, exactly as
+  today (`ops/apply.ts:77`) and is never recomputed; then the write
+  site tests the retained quotes against the named event's own
+  normalized corpus part — the first `retained` entry that the part
+  contains becomes `quote`; if none does, `quote` is null. The part's
+  index is the batch label's index. The candidate
   carries the resolved event id and the event's corpus-part index into
   the write site, so the check needs no new lookup; the index
   alignment holds because `event.summary` is always a string —
@@ -270,9 +279,9 @@ touches it:
 
 - Prune deletes event rows only. It never rewrites, nulls, or follows
   `source_pointer`.
-- Prune is watermark-guarded only under the ops and deferred
-  **maintenance modes** (deferred is a maintenance mode, not a
-  librarian strategy): there it
+- Prune is watermark-guarded when the maintenance mode is `'deferred'`
+  or the librarian strategy is `'ops'`
+  (`MaintenanceService.ts:406-418`): there it
   deletes only events the librarian has already processed
   (`pruneThrough`, `EventRepository.ts:119-127`), so unprocessed events
   are retention-held, never deleted. Under legacy with the `'auto'`
@@ -284,13 +293,17 @@ touches it:
 - A pointer to a pruned event means: "this fact came from the event with
   this id; the event's text is gone." The pointer keeps its value as
   provenance even when the target is gone. One retention consequence is
-  stated openly: the pointer's `quote` is verbatim event text, capped
-  at `maxEvidenceChars` (300 by default), and it survives prune, dump
-  export, OKF export, and the outbox as part of the fact's own record.
-  Prune deletes event rows; it does not scrub quotes that landed inside
-  facts. This is the accepted reading of the charter's deletion rules:
-  a fact survives prune with its evidence attached. The provenance docs
-  say so too. A dump taken before prune
+  stated as an **open owner question**, not a settled reading: the
+  pointer's `quote` is normalized event text, capped at
+  `maxEvidenceChars`, and it survives prune, dump export, OKF export,
+  and the outbox as part of the fact's own record — prune deletes event
+  rows and does not scrub quotes that landed inside facts. Whether that
+  retention sits comfortably with the charter's deletion rules is for
+  the owner to confirm; this spec asserts no charter reading, and the
+  question is on the gate report. The mechanism is unavoidable while
+  facts carry verified quotes at all, so the question is about
+  comfort, not about a code decision in this release. A dump taken
+  before prune
   preserves both sides: export round-trips events
   (`ImportExportService`, bundle includes `events`), so a restored dump
   keeps pointer and text together.
@@ -319,15 +332,15 @@ path at `:51` and the v1 path at `:117`): a map with the four slots of
 null are omitted from
 the emitted map. `parseOkfBundle` reads the key back: a well-formed map
 restores the pointer exactly; an absent key yields null; a malformed
-value yields null. The parse path has no diagnostic channel, so it
-stays silent itself — but it stops being a silent drop:
-`parseOkfBundle`'s existing options type (`OkfImportOptions`) gains an
-optional collector parameter that reports each dropped
-`source_pointer` value (entry id and the raw value), and the engine
-forwards nothing on its own. A host that passes the collector routes
-the report into its own diagnostics; a host that does not gets
-today's tolerant behavior. This keeps the parse additive while
-honoring rule 6: the drop is reported to whoever can hear it.
+value yields null. The parse path has no diagnostic channel, so the
+result itself carries the report: the parse result gains an optional
+`dropped_pointer_values` field, present only when a malformed
+`source_pointer` was nulled, listing the entry ids and raw values.
+Nothing is dropped without a trace on the result; a host or router
+forwards those entries into its diagnostics. This keeps the parse
+additive while
+honoring rule 6: nothing is inaccessible, and nothing pretends to be
+more than it is.
 The
 existing `resource` (mapped from `source_ref`,
 `formatOkfBundle.ts:61`/`:123`, `parseOkfBundle.ts:268`) and `sources`
@@ -351,8 +364,12 @@ imports as given; any other value imports as null and emits a
 `source_pointer_invalid` diagnostic carrying the entry id and no fact
 text. A fact object **without** the key — a dump taken before this
 release — imports with no diagnostic, and the import leaves any stored
-pointer untouched: the SET clause omits the column when the key is
-absent, so a pre-release dump can neither null stored pointers nor
+pointer untouched. The mechanism, named because a static SET list
+cannot express it: the import path carries a per-row presence flag for
+the key, and the SET clause uses
+`source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE
+source_pointer END`, so a pre-release dump can neither null stored
+pointers nor
 emit a storm of false `source_pointer_invalid` reports. This is a
 deliberate departure from the temporal precedent next to it —
 `importDump` calls `setTemporal` with replace semantics, where an
@@ -452,17 +469,16 @@ it.
   entries; the new `entryId` key on `WikiDiagnosticDetail`
   (`factId`, `itemIndex`, and `reason` already exist there).
 - `packages/core/src/services/librarian/ops/extract.ts` — resolve the
-  label to an event id on the candidate; emit the unresolved
-  diagnostic on ops.
+  label to an event id on the candidate.
 - `packages/core/src/services/librarian/ops/apply.ts` — write the
-  pointer; quote by the quote rule; UPDATE leaves pointers untouched.
+  pointer; quote by the quote rule; emit the unresolved diagnostics at
+  the write site; UPDATE leaves pointers untouched.
 - `packages/core/src/services/librarian/legacy.ts` — no pointer write;
   presence-only read of `source_event` with the
   `'unsupported_strategy'` diagnostic.
-- `packages/core/src/utils/parseOkfBundle.ts` — the optional collector
-  parameter on its own `OkfImportOptions` type (defined there,
-  `parseOkfBundle.ts:23`) that reports dropped pointer values
-  (§Export, import, and OKF).
+- `packages/core/src/utils/parseOkfBundle.ts` — the optional
+  `dropped_pointer_values` field on the parse result (§Export, import,
+  and OKF).
 - `packages/core/src/repositories/EntryRepository.ts` — both row
   mappers return the column, reading it with the existing
   `parseJsonObject` pattern so a malformed stored value reads null
@@ -479,8 +495,8 @@ it.
   `Record<WikiDiagnosticCode, ...>` maps, so typecheck fails until
   they have them); the docs diagnostics guide page lists both codes.
 - `packages/core/__tests__/setupBudget.test.ts` — the
-  `CURRENT_SCHEMA_VERSION` pin moves from 15 to 16 (the test asserts
-  the number verbatim).
+  `CURRENT_SCHEMA_VERSION` pin moves from 15 to 16, and the stored
+  `schema_version` assertion (`:96`) moves from `'15'` to `'16'`.
 - `packages/core/src/services/MaintenanceService.ts` — the heal pass's
   fact literal sets `source_pointer: null` explicitly, stating the
   non-goal in code; no attribution logic is added (§Heal restatements).
@@ -560,9 +576,8 @@ byte-identical and double as the parity gate.
 9. **OKF round-trip.** `formatOkfBundle` emits the key only for
    non-null pointers and omits null slots; `parseOkfBundle` restores
    the pointer exactly; a bundle without the key parses to null; a
-   malformed key parses to null and, when the options collector is
-   passed, reports the dropped value with the entry id; without the
-   collector it stays silent.
+   malformed key parses to null; the result carries the dropped values
+   on its optional field, which is absent when nothing was dropped.
 10. **Prune semantics.** Run prune past the retention window; the
     surviving fact's pointer is unchanged; reads over the pruned store
     succeed with no event join.
