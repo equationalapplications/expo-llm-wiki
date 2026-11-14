@@ -570,6 +570,12 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   LLM step (spec test-plan sentence amended in this PR, same cycle).
   No accuracy claim beyond these numbers; the split being dependable
   for other models is unmeasured.
-- **Follow-up:** the 0/28 about rate is filed as its own issue rather
-  than folded here — it is a delivery-gap question (prompt steering,
-  backfill edge surfacing, or model behavior), not a manifest defect.
+- **Re-run with diagnostics — 2026-11-14** (result file:
+  `packages/benchmarks/results/statement-kinds-2026-11-13-rerun.json`):
+  after the runner gained `about_dropped` capture
+  (T3-Opus fix round), a second full run reproduced kind accuracy
+  28/28 (100%) with `about_dropped` **empty on all 28 rows** — the
+  classifier never proposed an `about` edge at all. The
+  no-proposal/dropped-proposal question in the first run's caveat is
+  settled: **no proposals**. #381's diagnosis narrows to prompt
+  steering or model behavior, not edge plumbing.
