@@ -401,8 +401,11 @@ All zero-token and deterministic unless stated. Suites live in
    `statement`-sourced `about` rows never match it.
 4. **Override removal (core).** With
    `prompts.librarianSystemPrompt` set on a 9.0.0 engine: the key is
-   absent from the type surface (typecheck is the assertion), the
-   built librarian prompt is byte-identical to the no-override prompt,
+   absent from the type surface (the `@ts-expect-error` comment keeps
+   the test compiling under vitest, which strips types; core's tsconfig
+   includes only `src`, so test files are never typechecked and the
+   real assertions are prompt-unchanged plus the runtime notice
+   checks), the built librarian prompt is byte-identical to the no-override prompt,
    and `changedDefaultWarnings` emits exactly the removal notice once.
    A host pinning `librarian.strategy: 'legacy'` gets the removal
    notice too; the assertion is that the notice is present and the
@@ -451,11 +454,11 @@ All zero-token and deterministic unless stated. Suites live in
    `okf_type: 'statement'` is accepted — the test pins today's
    behavior so the documented prompt-only abstract-type residual is
    visible and a later validation change shows up as an intended
-   change; a pre-existing stored row
-   with `handoff` still reads back and re-imports through `importDump`
-   verbatim (the row is not dropped, and no migration touches it).
+   change. (`importDump` copies `okf_type` verbatim, untested here;
+   the round-trip of a pre-existing `handoff` row is not asserted.)
 6. **Statement attach end-to-end (stub).** With the manifest seeded and
-   a scripted stub provider, a librarian pass writes a fact typed
+   a scripted stub provider, `runOntologyBackfill` classifies an
+   untyped statement that supersedes an earlier untyped statement as
    `rule` with an `about` edge to a `software_application` node, and
    the traversal returns it; a `decision` superseding an older
    `decision` carries `superseded_by` and `valid_to` on the old row
@@ -557,7 +560,9 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   zero, so this number cannot distinguish "no proposals" from
   "proposals dropped". The kind definitions alone carried the
   classification; no attachment survived to storage under this model.
-  Opened for diagnosis as #381.
+  Opened for diagnosis as #381; the runner now captures edge-drop
+  diagnostics, so a re-run can distinguish no-proposal from
+  dropped-proposal.
 - **Caveats:** single run, no repeats; small sample (28); one model;
   judge is exact-match against the fixture's expected kind and target;
   the runner's classification path (`remember` untyped → backfill

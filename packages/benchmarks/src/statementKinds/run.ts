@@ -76,8 +76,10 @@ export interface StatementRow {
   actual_kind: string | null;
   kind_correct: boolean;
   expected_target: { title: string; type: TargetType };
-  /** Titles of `about` targets the model proposed (resolved to a stored node). */
+  /** Titles of `about` targets persisted as edges (resolved to a stored node). */
   about_targets: string[];
+  /** Reasons of `edge_dropped` diagnostics captured during this statement's backfill pass. */
+  about_dropped: string[];
   about_proposed: boolean;
   about_correct: boolean;
   error?: string;
@@ -125,8 +127,12 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
   const handle = openDb(); // in-memory, never a host database
   try {
     const llmProvider: LLMProvider = { generateText: (p) => provider.generateText(p) };
+    let dropped: string[] = [];
     const wiki = new WikiMemory(handle.adapter, {
       llmProvider,
+      onDiagnostic: (d) => {
+        if (d.code === 'edge_dropped') dropped.push(d.detail?.reason ?? 'unknown');
+      },
       config: {
         librarian: { strategy: 'ops' },
         maintenance: 'deferred',
@@ -149,6 +155,7 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
         const fact = await wiki.remember(ENTITY, { title: e.text.slice(0, 80), body: e.text });
         createdId = fact.id;
         // One fact per pass so each call classifies exactly this statement.
+        dropped = [];
         const bf = await wiki.runOntologyBackfill(ENTITY, { classifier: 'llm', batchSize: 1 });
         const hood = await wiki.traverseGraph(ENTITY, { sourceId: fact.id, direction: 'outbound', maxDepth: 1, edgeTypes: ['about'] });
         const anchor = hood.nodes.find((n) => n.id === fact.id);
@@ -170,6 +177,7 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
           actual_kind: actual,
           kind_correct: actual === e.expected_kind,
           about_targets: targets,
+          about_dropped: [...dropped],
           about_proposed: targets.length > 0,
           about_correct: targets.includes(want),
           ...(misaligned ? { misaligned: true as const } : {}),
@@ -183,7 +191,7 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
           } catch { /* best effort; the row below still records the error */ }
         }
         // One bad statement must not discard the paid-for rest of the run.
-        rows.push({ ...base, actual_kind: null, kind_correct: false, about_targets: [], about_proposed: false, about_correct: false, error: err instanceof Error ? err.message : String(err) });
+        rows.push({ ...base, actual_kind: null, kind_correct: false, about_targets: [], about_dropped: [], about_proposed: false, about_correct: false, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
