@@ -1,6 +1,6 @@
 # Source pointers on librarian facts
 
-**Status:** Draft (rev 10) — converged. The owner gate passed
+**Status:** Draft (rev 11) — converged. The owner gate passed
 2026-11-13 for the four scope decisions, and the owner answered the
 charter-level question on 2026-11-14 (verified quotes survive prune,
 export, and the outbox inside the fact's own record — §Pruned events,
@@ -8,7 +8,7 @@ ruling folded there). Awaiting the reviewer re-gate on this revision,
 then the owner spec stop; plan.md and LEDGER.md land in the same
 commit that flips this Status to Reviewed (INTENT.md, "How changes
 are made", step 1).
-**Date:** 2026-11-13 (rev 9: 2026-11-14; rev 10: 2026-11-14)
+**Date:** 2026-11-13 (revs 9–11: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md);
 2026-11-14 (§Pruned events: quote retention is accepted — consolidation
@@ -413,8 +413,9 @@ explicit changes, and both are listed in §Files touched:
 `importDump`'s fact literal forwards the pointer from the dump
 (today's literal lists fields by name, `ImportExportService.ts:296`,
 so TypeScript would not flag the omission), and `upsertForImport` adds
-the column to both its INSERT list and its ON CONFLICT SET list
-(`EntryRepository.ts:459-495`) — import is an authoritative restore,
+the column to both its INSERT list (`EntryRepository.ts:460-467`) and
+its ON CONFLICT SET list (`:468-495`) — import is an authoritative
+restore,
 so a re-import over existing rows must overwrite their pointers.
 The mirror rule, and a documented limit: a dump whose facts lack the
 key cannot clear stored pointers (absent means untouched), so a dump
@@ -692,9 +693,12 @@ byte-identical and double as the parity gate.
     Under fts5 only: an explicit raw-SQL `UPDATE … SET source_pointer = ?`
     (no other column named) adds no `fts_pending` row — this pins the
     trigger's column list; and an `importDump` whose payload differs
-    from the stored row only in its pointer queues a reindex row
-    (the `upsertForImport` SET names trigger columns) and the rebuilt
-    index still contains no sentinel. This pins the §Reads column-list
+    from the stored row only in its pointer drains a reindex for that
+    id (assert via a spy on the index strategy's drain/`replace`
+    receiving the id — the ledger is drained before `importDump`
+    returns, so post-call `fts_pending` reads prove nothing) and the
+    rebuilt index still contains no sentinel. This pins the §Reads
+    column-list
     mechanism: a refactor to
     whole-row serialization leaks into vectors and the keyword index,
     and this test fails.
