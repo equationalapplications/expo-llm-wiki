@@ -1268,6 +1268,7 @@ export class MaintenanceService {
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+          source_pointer: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
           ...grounding?.trust,
         };

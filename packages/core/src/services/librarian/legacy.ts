@@ -169,10 +169,25 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
           okf_type: normalized.okf_type,
+          // Legacy writes no pointer (spec §Legacy path): the column stays null
+          // on every legacy fact, and the legacy prompt keeps its exact text.
+          source_pointer: null,
           ...grounding?.trust,
         };
 
         await deps.entryRepo.upsert(factObj, tx);
+        // Rule 6 (spec §Legacy path): the legacy contract never promises a
+        // `source_event` field, but if a legacy model volunteers one, the named
+        // pointer is reported, not swallowed. Presence read only — no
+        // resolution, no quote (the quote rule is ops-only).
+        const volunteeredSourceEvent = (facts[validFactItemIndexes[k]] as { source_event?: unknown } | undefined)?.source_event;
+        if (volunteeredSourceEvent !== undefined && volunteeredSourceEvent !== null) {
+          diagBuffer.push({
+            ...diagBase,
+            code: 'source_pointer_unresolved',
+            detail: { factId: id, itemIndex: validFactItemIndexes[k], reason: 'unsupported_strategy' },
+          });
+        }
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         factsForDedupe.push(factObj);
 

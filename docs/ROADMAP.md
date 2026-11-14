@@ -91,12 +91,22 @@ sorts the kinds dependably.
 
 ### Step 3 — A source pointer on every librarian fact — PLANNED
 
-Every fact the librarian writes carries a pointer to where it came from:
-the source, the quote and its position. Today it carries none. The host
-keeps the source text; the engine keeps the pointer. Issue
+Done — merged 2026-11-14, PR #385, spec [source-pointers](../specs/source-pointers/spec.md)
+
+Ops facts the librarian writes can carry a pointer to where they came
+from: the source event and, when grounding permits, the verified quote
+(`ref` and `position` slots exist with no producer; heal and legacy
+facts carry no pointer — the accepted gap). Verified quotes survive
+prune inside the fact's own record (owner ruling, 2026-11-14). Today a
+host hides a quote by forgetting its fact by entry id,
+`forget({ entryId })` — reads and exports drop it immediately, and prune
+purges the row; deleting quotes by event id, `forget({ eventId })`,
+is planned in issue
+[#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).
 
-*Gate:* a spec. The schema change is additive only (rule 2).
+*Gate:* a spec — met (`specs/source-pointers/`, owner-approved
+2026-11-14; schema additive only, rule 2).
 
 ### Step 4 — A source store in the engine — PLANNED
 

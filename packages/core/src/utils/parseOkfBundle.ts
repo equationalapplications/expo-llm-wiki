@@ -1,4 +1,5 @@
 import type { MemoryDump, WikiFact, WikiTask, WikiEvent, WikiEdge } from '../types';
+import { validateSourcePointerValue } from './sourcePointer';
 import type { OkfFile, OkfFrontmatter, OkfFrontmatterValue } from '@equationalapplications/core-okf';
 import {
   parseConcept,
@@ -207,6 +208,7 @@ function frontmatterToFact(
   frontmatter: OkfFrontmatter,
   body: string,
   now: number,
+  droppedPointerValues: Array<{ factId: string; reason: string }>,
 ): WikiFact {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
   // Precedence (spec §2.4): v0.2 `generated.at` -> v0.1 `timestamp` -> legacy
@@ -289,6 +291,22 @@ function frontmatterToFact(
     ...optionalEpoch('valid_to', (frontmatter as any).valid_to),
     ...(typeof (frontmatter as any).superseded_by === 'string' ? { superseded_by: (frontmatter as any).superseded_by } : {}),
     ...optionalEpoch('superseded_at', (frontmatter as any).superseded_at),
+    // Source pointer (specs/source-pointers §Export, import, and OKF): the
+    // parse path has no diagnostic channel, so it reports through the result.
+    // ABSENT key → the property is omitted (not null), so the import
+    // presence guard survives the parse. Malformed → the property is omitted
+    // AND the drop is reported as entry id + reason slug — never the raw
+    // value, which can carry quote text.
+    ...(() => {
+      const raw = (frontmatter as any).source_pointer;
+      if (raw === undefined) return {};
+      const v = validateSourcePointerValue(raw);
+      if (v === undefined) {
+        droppedPointerValues.push({ factId: id, reason: 'malformed' });
+        return {};
+      }
+      return { source_pointer: v };
+    })(),
   };
 }
 
@@ -480,6 +498,9 @@ export function parseOkfBundle(
 
   const facts: WikiFact[] = [];
   const tasks: WikiTask[] = [];
+  // Source-pointer parse report (specs/source-pointers): present on the
+  // returned MemoryDump only when a malformed `source_pointer` was dropped.
+  const droppedPointerValues: Array<{ factId: string; reason: string }> = [];
   const edges: WikiEdge[] = [];
   let logContent: string | null = null;
   const logMdPath = findLogMdPath(allowedFiles);
@@ -510,7 +531,7 @@ export function parseOkfBundle(
     const usesV1StatusRule = isProfile1 || isLegacyV1 || (profile === undefined && okfVersion === undefined);
 
     if (route === 'fact') {
-      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
+      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now, droppedPointerValues));
     } else {
       tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, usesV1StatusRule));
     }
@@ -591,5 +612,6 @@ export function parseOkfBundle(
     entities: {
       [entityId]: { facts, tasks, events, edges, summary: entitySummary },
     },
+    ...(droppedPointerValues.length > 0 ? { dropped_pointer_values: droppedPointerValues } : {}),
   };
 }

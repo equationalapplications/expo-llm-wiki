@@ -62,9 +62,9 @@ describe('setupBudgetMs (#280 B1)', () => {
   });
 });
 
-describe('schema v15 (#280 B1)', () => {
-  it('CURRENT_SCHEMA_VERSION is 15', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(15);
+describe('schema v16 (specs/source-pointers)', () => {
+  it('CURRENT_SCHEMA_VERSION is 16', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(16);
   });
 
   it('a fresh FTS5 store gets the fts_pending indexes from init (v15 never runs on it)', async () => {
@@ -73,27 +73,29 @@ describe('schema v15 (#280 B1)', () => {
     expect(await indexes(db)).toEqual([`${P}fts_pending_entity`, `${P}fts_pending_id`]);
   });
 
-  it("'refuse' on a v14 store throws schema_migration 14 -> 15 with zero mutation; plain setup() migrates", async () => {
+  it("'refuse' on a v15 store throws schema_migration 15 -> 16 with zero mutation; plain setup() migrates", async () => {
     const db = openTestDatabase();
     await open(db).setup();
-    await db.execAsync(`DROP INDEX ${P}fts_pending_id; DROP INDEX ${P}fts_pending_entity;`);
-    await db.runAsync(`UPDATE ${P}meta SET value = '14' WHERE key = 'schema_version'`);
+    await db.runAsync(`UPDATE ${P}meta SET value = '15' WHERE key = 'schema_version'`);
     await expect(open(db).setup({ migrations: 'refuse' })).rejects.toMatchObject({
       name: 'WikiMigrationRequiredError',
-      pendingWork: { type: 'schema_migration', fromVersion: 14, toVersion: 15 },
+      pendingWork: { type: 'schema_migration', fromVersion: 15, toVersion: 16 },
     });
-    expect(await indexes(db)).toEqual([]);
-    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('14');
+    const before = await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`);
+    expect(before!.value).toBe('15');
     await open(db).setup();
-    expect(await indexes(db)).toEqual([`${P}fts_pending_entity`, `${P}fts_pending_id`]);
+    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('16');
+    // v16 added the source_pointer column on a store that predates it.
+    const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${P}entries)`);
+    expect(cols.map((c) => c.name)).toContain('source_pointer');
   });
 
-  it('v15 on a store without a ledger (MiniSearch) is a no-op', async () => {
+  it('v15 on a store without a ledger (MiniSearch) still migrates through v16', async () => {
     const db = openTestDatabase();
     await open(db, { indexStrategy: 'minisearch' }).setup();
-    await db.runAsync(`UPDATE ${P}meta SET value = '14' WHERE key = 'schema_version'`);
+    await db.runAsync(`UPDATE ${P}meta SET value = '15' WHERE key = 'schema_version'`);
     await open(db, { indexStrategy: 'minisearch' }).setup();
-    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('15');
+    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('16');
     expect(await db.getFirstAsync(`SELECT name FROM sqlite_master WHERE name = '${P}fts_pending'`)).toBeNull();
   });
 });

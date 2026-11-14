@@ -106,7 +106,10 @@ export async function decisionLog(scenario: Scenario, inner: EmbedFn): Promise<D
     const candidates: Candidate[] = [];
     scenario.extract.facts.forEach((raw, index) => {
       const fact = validateFact(raw);
-      if (fact) candidates.push({ index, fact, sourceLabel: null, validFrom: 0 });
+      // Source-pointer slots: this harness drives the gate directly with no
+      // extract pass, so no pointer is resolved and no diagnostic is owed
+      // (pointerUnresolved null keeps apply-time reporting silent).
+      if (fact) candidates.push({ index, fact, sourceLabel: null, sourceEventId: null, sourcePartIndex: null, pointerUnresolved: null, validFrom: 0 });
     });
 
     const deps = (wiki.__testAccess.maintenanceService as unknown as { librarianDeps(): Parameters<typeof gateCandidates>[0] }).librarianDeps();

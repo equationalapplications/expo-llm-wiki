@@ -167,6 +167,7 @@ describe('ImportExportService', () => {
       expect(mockEntryRepo.upsertForImport).toHaveBeenCalledWith(
         expect.objectContaining({ source_type: 'immutable_document' }),
         mockDb,
+        false,
       );
     });
 
