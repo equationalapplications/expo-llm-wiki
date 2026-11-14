@@ -29,8 +29,9 @@ step 1 (`docs/ROADMAP.md`, landed by PR #378 on 2026-11-13, merge
 commit `ff13e74a`). Owner rulings
 2026-11-12 and 2026-11-13 (recorded in the issue #375 body and the
 2026-11-13 handoff; INTENT.md carries no amendment for them — the
-handoff states the design is settled without one). Minor release,
-planned as 8.5.0; first published in 9.0.0: see Release.
+handoff states the design is settled without one). Planned as a minor
+release (8.5.0); the work first reached npm inside the 9.0.0 major:
+see Release.
 
 ## Problem
 
@@ -262,21 +263,22 @@ before `appendGrounding` runs (`PromptService.ts:37`).
 
 ### Deprecation
 
-`prompts.librarianSystemPrompt` is marked `@deprecated` in
-`WikiConfig` docs in this release, with "removed in 9.0.0" (planned
-for 8.5.0; that release never published, so no npm version carries
-the notice — see Release below). The
-`changedDefaultWarnings` message for an override under ops
-(`engineDefaults.ts:36-42`) now points at `prompts.guidance` instead of
-only telling the host to pin `legacy`. A **second message** covers a
-host that set `librarian.strategy: 'ops'` explicitly — today that host
-gets no warning and a silently ignored override, and the existing
-message's "now defaults to 'ops'" text is false for it. The existing
-message and its test assertions (including the `strategy: 'legacy'`
-substring at `engineDefaults.test.ts:83`) stay; the new case adds a
-message, it does not replace one. Removal itself is #376's release
-(owner ruling 2026-11-13; the 9.0.0 break covers exactly the listed
-removals and nothing else).
+`prompts.librarianSystemPrompt` was marked `@deprecated` in the
+`WikiConfig` docs at the `v8.5.0` tag, with "removed in 9.0.0" — a
+notice no npm version carries, since 8.5.0 never published (see
+Release below). At that tag, the `changedDefaultWarnings` message for
+an override under ops (`engineDefaults.ts:36-42`) pointed at
+`prompts.guidance` instead of only telling the host to pin `legacy`,
+and a **second message** covered a host that set
+`librarian.strategy: 'ops'` explicitly — until then that host got no
+warning and a silently ignored override, and the existing message's
+"now defaults to 'ops'" text was false for it. The existing message
+and its test assertions (including the `strategy: 'legacy'` substring
+at `engineDefaults.test.ts:83`) stayed; the new case added a message,
+it did not replace one. None of that reached npm: 9.0.0 removed the
+key (owner ruling 2026-11-13; the 9.0.0 break covers exactly the
+listed removals and nothing else), and the only warning today is the
+removal message at `engineDefaults.ts:38-41`.
 
 ### Length cap and diagnostic
 
@@ -491,8 +493,9 @@ this work, because the 9.0.0 section starts at the `v8.5.0` tag and
 this spec's commits predate it (the `librarianSystemPrompt` removal
 and prompt-appendix entries in that section are the statement-kinds
 release's work, PR #380 — not this spec's). The 9.0.0 GitHub Release
-carries a note instead. The tag stays, by owner
-ruling 2026-11-14, because the 9.0.0 compare link depends on it.
+carries a note instead. The tag stays for now — deleting a pushed tag
+is the owner's call (issue #391) — and the 9.0.0 compare link depends
+on it.
 
 ## Non-goals
 
