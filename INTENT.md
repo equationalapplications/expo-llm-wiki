@@ -68,6 +68,10 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   `user_stated`, `user_confirmed` (a person said or confirmed it).
 - **Event** — one episodic record written with `write()`. Events are raw
   material; the librarian turns them into facts.
+- **Source pointer** — the structured provenance on an ops librarian
+  fact: the event it came from (`event_id`) plus the grounding-verified
+  quote. The quote survives the event's prune and travels with the fact
+  through export and the outbox; it is content, not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
   facts and tasks. Two strategies exist: `legacy` (add-only) and `ops`
   (add, supersede or skip, with a similarity gate).
@@ -192,9 +196,12 @@ not edit it.
 document's text as a *source*: stored as it is, searched with no model
 call, and never rewritten. Until that ships, the host keeps the source
 text. A pointer from each fact the librarian writes back to its source
-is planned too (#377); today those facts carry none. This rule's text is
-reworded in the pull request that ships the source store, not before.
-See `docs/ROADMAP.md`, steps 3 and 4.
+is planned too (#377); today those facts carry none — **status:
+shipped for the librarian write path** (9.1.0,
+`specs/source-pointers/`: ops facts carry a `source_pointer`; legacy
+and heal facts carry none, recorded as the accepted gap). This rule's
+text is reworded in the pull request that ships the source store, not
+before. See `docs/ROADMAP.md`, steps 3 and 4.
 
 ### 6. Honest reporting
 
@@ -363,6 +370,18 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-14 — Rule 5's Planned note gains its status line: librarian
+  facts now carry a source pointer (ops strategy) — the event they came
+  from plus the grounding-verified quote. Verified quotes survive
+  prune, dump export, OKF export and the outbox inside the fact's own
+  record: facts outliving their events is consolidation working as
+  designed, and pruning quotes out of facts would be a false deletion
+  (dumps already taken keep the quote either way). The deletion path
+  for a retained quote is named before merge: `forget({ eventId })`,
+  filed as issue #386. Recorded with `specs/source-pointers/`. Why: a
+  fact with no trail to its source cannot be checked, and the quote is
+  the only reader path back to the passage once the event is pruned.
+  Owner ruling, 2026-11-14. No rule text changed.
 - 2026-11-13 — Kurt rules that 9.0.0 removes the `handoff` and
   `session_recap` node types, the `handoffFor` edge rows, and
   `prompts.librarianSystemPrompt`, and nothing else; recorded with

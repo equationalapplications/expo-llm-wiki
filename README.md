@@ -30,7 +30,7 @@ Core LLM Wiki is a family of cross-platform TypeScript packages for long-term LL
 - **Offline first.** Keyword search runs in-process. Semantic search turns on when you provide `embed()` and falls back to keyword search when the network is down.
 - **GraphRAG built in.** Optional seeded ontologies make the model emit typed edges, and `traverseGraph()` walks them with a single recursive SQL query.
 - **Multi-entity.** Many independent "brains" in one database, with weighted reads across them.
-- **Trust and provenance.** Document facts are protected from rewriting, unreviewed facts can be held as drafts, and opt-in grounding checks that facts quote their source.
+- **Trust and provenance.** Document facts are protected from rewriting, unreviewed facts can be held as drafts, and opt-in grounding checks that facts quote their source. Librarian facts carry a **source pointer**: the event each fact came from, with the grounding-verified quote. The quote survives the event's prune and travels with the fact through export and the outbox — and a quote carries whatever its event carried, so secrets stay out of events as they already must out of fact bodies. Remove a quote today with `forget()` on the fact (`forget({ eventId })` lands via [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)).
 - **No silent failures.** An optional `onDiagnostic` hook reports what would otherwise be dropped, with typed, content-free reports.
 
 ## Quick start

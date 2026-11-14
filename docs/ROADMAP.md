@@ -89,14 +89,18 @@ outside adoption is close to zero, so a clean break costs least now.
 *Gate:* a spec. It includes a cheap targeted test of whether a small model
 sorts the kinds dependably.
 
-### Step 3 — A source pointer on every librarian fact — PLANNED
+### Step 3 — A source pointer on every librarian fact — DELIVERED (9.1.0, PR #385)
 
 Every fact the librarian writes carries a pointer to where it came from:
-the source, the quote and its position. Today it carries none. The host
-keeps the source text; the engine keeps the pointer. Issue
+the source event and the grounding-verified quote (`ref` and `position`
+slots exist with no producer; heal and legacy facts carry no pointer —
+the accepted gap). Verified quotes survive prune inside the fact's own
+record (owner ruling, 2026-11-14); the deletion path is
+`forget({ eventId })`, issue [#386](…/issues/386). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).
 
-*Gate:* a spec. The schema change is additive only (rule 2).
+*Gate:* a spec — met (`specs/source-pointers/`, owner-approved
+2026-11-14; schema additive only, rule 2).
 
 ### Step 4 — A source store in the engine — PLANNED
 

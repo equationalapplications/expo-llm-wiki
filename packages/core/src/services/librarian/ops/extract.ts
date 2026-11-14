@@ -16,6 +16,12 @@ export interface Candidate {
   index: number;
   fact: ExtractedFactWithOntology;
   sourceLabel: string | null;
+  /** Resolved source event id for the pointer (spec §Ops path); null when unresolved. */
+  sourceEventId: string | null;
+  /** The named event's own grounding-corpus part index (batch order); null when unresolved. */
+  sourcePartIndex: number | null;
+  /** Why the pointer is null, for the `source_pointer_unresolved` diagnostic; null when resolved. */
+  pointerUnresolved: 'missing' | 'unknown_label' | null;
   validFrom: number;
 }
 
@@ -86,9 +92,29 @@ export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext,
       return;
     }
     const r = raw as { source_event?: unknown; valid_from?: unknown };
-    const sourceLabel = typeof r.source_event === 'string' && byLabel.has(r.source_event) ? r.source_event : null;
+    // Source-pointer resolution (spec §One pointer, not a list). The split
+    // replaces the old single expression (`extract.ts:89`) so the two rule-6
+    // reasons are distinguishable: absent-or-null → 'missing' (ops contract
+    // requires the field); present-but-not-a-batch-label-string →
+    // 'unknown_label'. The label space is batch-local, so the id resolves at
+    // extract time, before any write.
+    let sourceEventId: string | null = null;
+    let sourcePartIndex: number | null = null;
+    let pointerUnresolved: 'missing' | 'unknown_label' | null;
+    const rawSourceEvent = r.source_event;
+    if (rawSourceEvent === undefined || rawSourceEvent === null) {
+      pointerUnresolved = 'missing';
+    } else if (typeof rawSourceEvent === 'string' && byLabel.has(rawSourceEvent)) {
+      const labeled = byLabel.get(rawSourceEvent)!;
+      sourceEventId = labeled.event.id;
+      sourcePartIndex = batch.findIndex((b) => b.label === rawSourceEvent);
+      pointerUnresolved = null;
+    } else {
+      pointerUnresolved = 'unknown_label';
+    }
+    const sourceLabel = typeof rawSourceEvent === 'string' && byLabel.has(rawSourceEvent) ? rawSourceEvent : null;
     const validFrom = parseValidFrom(r.valid_from) ?? (sourceLabel ? byLabel.get(sourceLabel)!.at : defaultValidFrom);
-    candidates.push({ index, fact, sourceLabel, validFrom });
+    candidates.push({ index, fact, sourceLabel, sourceEventId, sourcePartIndex, pointerUnresolved, validFrom });
   });
 
   const tasks: ExtractedTask[] = [];

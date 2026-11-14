@@ -1,9 +1,9 @@
-import type { ExtractedFactEdge, ExtractedTask, OntologyUpdates, WikiFact, WikiTask } from '../../../types';
+import type { ExtractedFactEdge, ExtractedTask, OntologyUpdates, WikiFact, WikiSourcePointer, WikiTask } from '../../../types';
 import { WikiSupersedeError } from '../../../types';
 import type { TitleIndexEntry } from '../../OntologyService';
 import { normalizeTitleKey, type EdgeDrop } from '../../../utils/ontology';
 import { edgeDropDiagnostic, type DiagnosticBuffer } from '../../../utils/diagnostics';
-import { checkGrounding, groundingOutcome } from '../../../utils/grounding';
+import { checkGrounding, groundingOutcome, type GroundingVerdict } from '../../../utils/grounding';
 import { generateId } from '../../../utils/ids';
 import { TemporalService } from '../../TemporalService';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
@@ -25,6 +25,33 @@ export interface WrittenFact {
   id: string;
   vector: Float32Array | null;
   fact: { id: string; entity_id: string; title: string; body: string; tags: string[] };
+}
+
+/**
+ * The pointer for one librarian insert (spec §Ops path + §Quote rule).
+ * `event_id` comes from the candidate's resolved batch label; `ref` and
+ * `position` have no producer and stay null. The `quote` is ops-only and
+ * grounding-gated: when grounding is on AND the verdict is grounded, it is
+ * the first retained quote that the NAMED event's own corpus part contains
+ * (the corpus part index is the batch label's index); otherwise null. A
+ * verified quote attributed to no event is the misleading provenance the
+ * named-event check exists to prevent.
+ */
+function buildSourcePointer(
+  candidate: GatedCandidate['candidate'],
+  verdict: GroundingVerdict | null,
+  groundingOn: boolean,
+  groundingCorpus: readonly string[] | null,
+): WikiSourcePointer | null {
+  if (candidate.sourceEventId === null) return null;
+  let quote: string | null = null;
+  if (groundingOn && verdict?.status === 'grounded' && candidate.sourcePartIndex !== null) {
+    const part = groundingCorpus?.[candidate.sourcePartIndex];
+    if (part !== undefined) {
+      quote = verdict.retained.find((q) => part.includes(q)) ?? null;
+    }
+  }
+  return { event_id: candidate.sourceEventId, ref: null, quote, position: null };
 }
 
 /**
@@ -73,9 +100,10 @@ export async function applyOps(
       const normalized = deps.ontologyService?.validateAndNormalizeFact(fact, manifest, { strict: false, drops })
         ?? { okf_type: null, edges: [] };
       for (const d of drops) input.diagnostics.push(edgeDropDiagnostic(d, { ...diagBase, factId: id }));
-      const g2 = grounding
-        ? groundingOutcome(checkGrounding(fact.evidence, input.groundingCorpus ?? [], grounding), now)
+      const gVerdict: GroundingVerdict | null = grounding
+        ? checkGrounding(fact.evidence, input.groundingCorpus ?? [], grounding)
         : null;
+      const g2 = gVerdict ? groundingOutcome(gVerdict, now) : null;
       if (g2?.diagnostic) {
         input.diagnostics.push({
           ...diagBase,
@@ -83,16 +111,28 @@ export async function applyOps(
           detail: { factId: id, itemIndex: g.candidate.index, reason: g2.diagnostic.reason },
         });
       }
+      const pointer = buildSourcePointer(g.candidate, gVerdict, grounding !== undefined && grounding !== null, input.groundingCorpus);
       const row: WikiFact = {
         id, entity_id: entityId, title, body, tags: fact.tags, confidence: fact.confidence,
         source_type: 'librarian_inferred', source_hash: null, source_ref: null,
         created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
         okf_type: normalized.okf_type,
+        source_pointer: pointer,
         ...g2?.trust,
         ...(draft ? { lifecycle_status: 'draft' as const } : {}),
       };
       await deps.entryRepo.upsert(row, tx);
       await deps.entryRepo.setTemporal(id, entityId, { valid_from: validFrom }, tx);
+      // Rule 6 fix (spec §Ops path + §Diagnostics): a fact that landed without
+      // its pointer is reported, not swallowed. Candidates the gate rejects or
+      // merges never reach insert(), so they emit nothing.
+      if (g.candidate.pointerUnresolved !== null) {
+        input.diagnostics.push({
+          ...diagBase,
+          code: 'source_pointer_unresolved',
+          detail: { factId: id, itemIndex: g.candidate.index, reason: g.candidate.pointerUnresolved },
+        });
+      }
       titleIndex.set(normalizeTitleKey(title), { id, okf_type: normalized.okf_type });
       if (normalized.edges.length > 0) pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
       // The gate vector encodes the candidate's own text; when overrides
