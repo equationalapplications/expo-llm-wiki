@@ -210,7 +210,43 @@ describe('source pointers — UPDATE boundary (test 7)', () => {
     const before = await pointerOf(db, id);
     await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_2b','u','observation','rex update',200)`);
     await wiki.runLibrarian('u');
+    // The UPDATE actually executed — the body changed, so the pointer
+    // assertion below is not vacuously green on an untouched row.
+    const updated = await db.getFirstAsync<any>(`SELECT body FROM llm_wiki_entries WHERE id = ?`, [id]);
+    expect(updated.body).toBe('Now a beagle hound named Rex, officially');
     expect(await pointerOf(db, id)).toBe(before);
+    const outbox = await db.getAllAsync<any>(
+      `SELECT payload FROM llm_wiki_outbox WHERE record_id = ? AND table_name = 'entries' ORDER BY rowid DESC LIMIT 1`,
+      [id],
+    );
+    expect(outbox).toHaveLength(1);
+    expect(JSON.parse(outbox[0].payload).source_pointer).toEqual(JSON.parse(before!));
+  });
+});
+
+describe('source pointers — plain upsert conflict (insert-only rule)', () => {
+  it('an ordinary upsert that omits source_pointer preserves the stored pointer, and the outbox payload publishes it (not a fabricated null)', async () => {
+    const { db, wiki } = mk([() => ({ facts: [factWith('e1')], tasks: [] })], { enableOutbox: true });
+    await wiki.setup();
+    await insertEvents(db, ['first event summary']);
+    await wiki.runLibrarian('u');
+    const id = (await db.getFirstAsync<any>(`SELECT id FROM llm_wiki_entries WHERE title = 'User has a dog named Rex'`))!.id;
+    const before = await pointerOf(db, id);
+    expect(before).not.toBeNull();
+    // Ordinary mutable write with NO source_pointer on the fact: the column
+    // is bound for INSERT only, so a conflicting UPDATE preserves the stored
+    // pointer (spec §Writes: out of the ON CONFLICT SET list).
+    const repo = wiki.__testAccess.entryRepo;
+    const [stored] = await repo.findByIds([id], ['u']);
+    const updating = { ...stored, body: 'Body rewritten without a pointer' } as Record<string, unknown>;
+    delete updating.source_pointer;
+    await repo.upsert(updating as unknown as Parameters<typeof repo.upsert>[0]);
+    // The UPDATE actually executed — the body changed, so the pointer
+    // assertion below is not vacuously green on an untouched row.
+    const row = await db.getFirstAsync<any>(`SELECT body, source_pointer FROM llm_wiki_entries WHERE id = ?`, [id]);
+    expect(row.body).toBe('Body rewritten without a pointer');
+    expect(row.source_pointer).toBe(before);
+    // Outbox payload publishes the stored pointer, not the omitted one.
     const outbox = await db.getAllAsync<any>(
       `SELECT payload FROM llm_wiki_outbox WHERE record_id = ? AND table_name = 'entries' ORDER BY rowid DESC LIMIT 1`,
       [id],
@@ -308,9 +344,11 @@ describe('source pointers — OKF round-trip (test 9)', () => {
     expect(back.dropped_pointer_values).toEqual([{ factId: 'fact_aaa', reason: 'malformed' }]);
     expect(JSON.stringify(back)).not.toContain('rogue');
     // Predicate spot checks (spec §Export, import, and OKF): null valid;
-    // all-null/empty map valid; malformed rejected; absent slots read null.
+    // all-null/empty map imports as a null pointer (no diagnostic);
+    // malformed rejected; absent slots read null.
     expect(validateSourcePointerValue(null)).toBeNull();
-    expect(validateSourcePointerValue({})).toEqual({ event_id: null, ref: null, quote: null, position: null });
+    expect(validateSourcePointerValue({})).toBeNull();
+    expect(validateSourcePointerValue({ event_id: null, ref: null, quote: null, position: null })).toBeNull();
     expect(validateSourcePointerValue('garbage')).toBeUndefined();
     expect(validateSourcePointerValue({ position: { start: -1, length: 2 } })).toBeUndefined();
     expect(validateSourcePointerValue({ event_id: 'e1', rogue: 1 })).toBeUndefined();

@@ -263,10 +263,11 @@ export class EntryRepository extends BaseRepository {
       okf_usage_window: string | null;
       last_verified_at: number | null;
       last_verified_by: string | null;
+      source_pointer: string | null;
     }>(
       `SELECT id, entity_id, lifecycle_status, stale_after, generated_by,
               okf_sources, okf_verified, okf_usage_window,
-              last_verified_at, last_verified_by
+              last_verified_at, last_verified_by, source_pointer
          FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
@@ -306,8 +307,7 @@ export class EntryRepository extends BaseRepository {
         embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
         embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
         embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
-        okf_type = excluded.okf_type,
-        source_pointer = excluded.source_pointer
+        okf_type = excluded.okf_type
       WHERE ${this.prefix}entries.entity_id = excluded.entity_id`,
       [
         fact.id,
@@ -362,10 +362,11 @@ export class EntryRepository extends BaseRepository {
     }
 
     // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
-    // clause intentionally omits the OKF metadata columns so the prior row
-    // values win — so `fact.X` here would describe state we did NOT write.
-    // Re-read those columns from the stored row and overlay them onto the
-    // caller-supplied payload before publishing (#90 review).
+    // clause intentionally omits the OKF metadata columns — and source_pointer
+    // (insert-only rule, specs/source-pointers §Writes) — so the prior row
+    // values win. Re-read those columns from the stored row and overlay them
+    // onto the caller-supplied payload before publishing (#90 review; the
+    // stored pointer publishes instead of a fabricated null).
     const persistedOkf = existingRow
       ? {
           lifecycle_status: (existingRow.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
@@ -376,6 +377,7 @@ export class EntryRepository extends BaseRepository {
           okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(existingRow.okf_usage_window),
           last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
           last_verified_by: existingRow.last_verified_by ?? null,
+          source_pointer: parseStoredSourcePointer(existingRow.source_pointer),
         }
       : null;
     await this.outbox.push({

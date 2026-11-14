@@ -68,10 +68,11 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   `user_stated`, `user_confirmed` (a person said or confirmed it).
 - **Event** — one episodic record written with `write()`. Events are raw
   material; the librarian turns them into facts.
-- **Source pointer** — the structured provenance on an ops librarian
-  fact: the event it came from (`event_id`) plus the grounding-verified
-  quote. The quote survives the event's prune and travels with the fact
-  through export and the outbox; it is content, not an edit path.
+- **Source pointer** — the structured provenance an ops librarian fact
+  can carry: the event it came from (`event_id`) plus, when grounding
+  permits, the verified quote. The quote survives the event's prune and
+  travels with the fact through export and the outbox; it is content,
+  not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
   facts and tasks. Two strategies exist: `legacy` (add-only) and `ops`
   (add, supersede or skip, with a similarity gate).

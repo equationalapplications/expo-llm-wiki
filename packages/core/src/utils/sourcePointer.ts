@@ -53,12 +53,20 @@ export function validateSourcePointerValue(
     return undefined;
   }
   if (!isValidPosition(o['position'] === undefined ? null : o['position'])) return undefined;
-  return {
+  const normalized = {
     event_id: (o['event_id'] as string | null) ?? null,
     ref: (o['ref'] as string | null) ?? null,
     quote: (o['quote'] as string | null) ?? null,
     position: (o['position'] as WikiSourcePointer['position']) ?? null,
   };
+  // Spec §Export, import, and OKF: an object with no non-null slots imports
+  // as a NULL pointer (no diagnostic) — normalize it away so row mappers
+  // omit the property instead of exposing an all-null object.
+  if (normalized.event_id === null && normalized.ref === null &&
+      normalized.quote === null && normalized.position === null) {
+    return null;
+  }
+  return normalized;
 }
 
 /**
