@@ -46,10 +46,10 @@ history carries the dates.
 4. When review loops converge: one final cleanup commit on the same PR —
    the PR's last lifecycle commit — flips the spec to **Implemented**
    and deletes `plan.md` and `LEDGER.md` (never a separate cleanup PR,
-   and no post-merge cleanup commit). It is pushed after the review
-   loops converge and before the `gh pr ready` flip; valid bot-review
-   fix commits may follow it before merge, and a fix that changes
-   specified behavior also amends `spec.md` in the same commit. Then
+   and no post-merge cleanup commit). It is pushed before the `gh pr
+   ready` flip; valid bot-review fix commits may follow it before
+   merge, and a fix that changes specified behavior also amends
+   `spec.md` in the same commit. Then
    `gh pr ready`; bot reviews that skip drafts fire on the ready flip.
    CI runs on every push to the PR, draft included.
 5. After merge, the status-carrying `spec.md` and the code are the record.

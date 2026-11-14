@@ -345,13 +345,12 @@ runs and who schedules it.
    Open a draft PR carrying the folder; add `plan.md` and
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
    same branch. The final cleanup commit flips the Status to Implemented
-   and deletes the plan and ledger. It is the PR's last lifecycle commit
-   (the Status flip + plan/ledger deletion), pushed after the review
-   loops converge and before the `gh pr ready` flip; valid bot-review
-   fix commits may follow it before merge, and a fix that changes
-   specified behavior also amends `spec.md` in the same commit. One PR
-   per cycle, no spec-only merges;
-   there is no post-merge cleanup commit and no docs-only cleanup PR.
+   and deletes the plan and ledger. It is the PR's last lifecycle commit,
+   pushed after the review loops converge and before the `gh pr ready`
+   flip; valid bot-review fix commits may follow it before merge, and a
+   fix that changes specified behavior also amends `spec.md` in the same
+   commit. One PR per cycle, no spec-only merges. There is no post-merge
+   cleanup commit and no docs-only cleanup PR.
    `specs/README.md` has the mechanics. The Status line changes in the
    same PR as the behavior.
 2. **Review, then merge.** CI green (build, typecheck, tests, both audit
