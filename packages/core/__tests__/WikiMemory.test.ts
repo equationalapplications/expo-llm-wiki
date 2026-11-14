@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
-import type { MemoryBundle, MemoryDump, SQLiteAdapter, WikiOptions } from '../src/types';
 import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 import { changedDefaultWarnings } from '../src/utils/engineDefaults';
-import type { WikiConfig } from '../src/types';
+import type { MemoryBundle, MemoryDump, SQLiteAdapter, WikiConfig, WikiOptions } from '../src/types';
 
 function createMockDb(): SQLiteAdapter {
   const mockDb = {
