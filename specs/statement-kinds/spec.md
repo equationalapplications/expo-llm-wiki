@@ -570,8 +570,9 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   LLM step (spec test-plan sentence amended in this PR, same cycle).
   No accuracy claim beyond these numbers; the split being dependable
   for other models is unmeasured.
-- **Re-run with diagnostics — 2026-11-14** (result file:
-  `packages/benchmarks/results/statement-kinds-2026-11-13-rerun.json`):
+- **Re-run with diagnostics — 2026-11-14 00:15 UTC** (result file:
+  `packages/benchmarks/results/statement-kinds-2026-11-13-rerun.json`,
+  filename carries the 2026-11-13 local date):
   after the runner gained `about_dropped` capture
   (T3-Opus fix round), a second full run reproduced kind accuracy
   28/28 (100%) with `about_dropped` **empty on all 28 rows** — the

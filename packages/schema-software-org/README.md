@@ -1,6 +1,6 @@
 # @equationalapplications/schema-software-org
 
-A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 21 node types, 42 edges, a superset of the warm-agent manifest in which the warm-agent rows are copied verbatim except for one intentional override of `product` (which delegates to `software_application` / `service`), data-only with no runtime code.
+A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 21 node types, 42 edges, a superset of the warm-agent manifest in which the warm-agent rows are copied verbatim except for one intentional override of `product` (which delegates to `software_application` / `service`), data-only with no runtime code. Tests import from sibling packages through their built `dist/` output — on a fresh checkout run `pnpm build` (workspace root or per package) before `pnpm test`.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)

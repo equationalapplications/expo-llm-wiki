@@ -67,7 +67,7 @@ types and 42 edges**. It adds:
 | `service` | — | A running hosted capability (database, API, CI, auth…) |
 | `role` | — | A function a person fills |
 | `design_spec`, `procedure`, `reference_doc` | `creativework` | Operational documents |
-| `statement` | — | Abstract parent of the four statement kinds; never a fact's own type |
+| `statement` | — | Abstract parent of the four statement kinds; should never be a fact's own type (prompt-enforced) |
 | `rule`, `decision`, `lesson`, `trap` | `statement` | One claim each, defined by content |
 | `area` | — | A named part of a `software_application` (deploy, billing…) |
 
