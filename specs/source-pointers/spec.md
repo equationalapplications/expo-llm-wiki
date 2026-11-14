@@ -24,7 +24,7 @@ from the fact back to the event it came from. Ingested document facts
 carry `source_ref`; librarian facts carry `source_ref: null` and
 `source_hash: null` on both strategies
 (`packages/core/src/services/librarian/ops/apply.ts:88`,
-`packages/core/src/services/librarian/legacy.ts:168`).
+`packages/core/src/services/librarian/legacy.ts:169`).
 
 The trail exists while the pass runs, and the engine then drops it. The
 ops extract prompt already orders the model to name its event
@@ -38,7 +38,7 @@ only as a `valid_from` fallback, and never writes it to the row.
 ## Root cause (with evidence)
 
 1. The write path hardcodes the nulls. The row literals at
-   `ops/apply.ts:88` and `legacy.ts:168` set `source_ref: null` and
+   `ops/apply.ts:88` and `legacy.ts:169` set `source_ref: null` and
    `source_hash: null`, and the candidate's resolved label reaches
    neither site.
 2. An unknown label degrades silently. `extract.ts:89` maps an unknown
@@ -127,10 +127,6 @@ in the model's response. The rule, the same on both strategies:
   through one expression (`extract.ts:89`); the change splits them so
   the two reasons are distinguishable.
 
-One pointer per fact, never a list: the ops prompt contract already
-says "the single event" (`prompts.ts:85`), so the engine has exactly one
-named event per fact. A list would add shape with no writer.
-
 The label space is batch-local
 (`e1`, `e2`, ...; `text.ts:11-12`), so a pointer from one pass never
 collides with another pass's labels: the engine resolves the label to
@@ -185,11 +181,16 @@ named follow-up.
 The pointer's `quote` slot holds a quote the engine has verified. The
 rule, identical on both strategies:
 
-- Grounding on and the verdict **grounded**: `quote` is the fact's first
-  evidence quote (`fact.evidence[0]`), which grounding has proven to be
-  a substring of the source section. The verification runs at the write
-  site on both strategies: `checkGrounding(fact.evidence, ...)`
-  (`ops/apply.ts:76-78`, `legacy.ts:162-164`).
+- Grounding on and the verdict **grounded**: `quote` is the verdict's
+  first retained quote (`verdict.retained[0]`), or null when `retained`
+  is empty. The retained quote — not the model's raw `evidence[0]` — is
+  the honest artifact: `checkGrounding` drops quotes shorter than the
+  minimum length before checking, and it stores retained quotes in
+  normalized, length-capped form (`grounding.ts:68-86`). Persisting
+  `evidence[0]` could persist a quote nobody checked. The write sites
+  already compute the verdict inline (`checkGrounding` at
+  `ops/apply.ts:77`, `legacy.ts:161`); the change captures it so the
+  pointer can read `retained`.
 - Grounding on and the verdict missing or ungrounded: `quote` is null.
   The fact follows the existing draft path (`grounding.ts:92-112`); the
   pointer's `event_id` still persists, because the attribution is
@@ -224,8 +225,15 @@ touches it:
 
 ### Reads
 
-`WikiFact` gains `source_pointer: WikiSourcePointer | null`, and
-`mapRowToFact` (`EntryRepository.ts:55-127`) returns the column. Every
+`WikiFact` gains an optional `source_pointer?: WikiSourcePointer | null`,
+and `mapRowToFact` (`EntryRepository.ts:55-127`) returns the column.
+The field is optional, not required, because `WikiFact` is an exported
+type that host and engine code constructs as object literals
+(`rememberInput.ts:66`, `TemporalService.ts:65-73`, the heal literal at
+`MaintenanceService.ts:1268`); a required field would be a source-level
+break for every one of those literals, which rule 2's additive posture
+forbids. The engine's librarian write sites set the field explicitly;
+an omitted field stores null. Every
 read and search surface that returns full facts then carries the
 pointer. No new read API is added, and no read dereferences the pointer.
 
@@ -315,8 +323,9 @@ it.
   the new migration step that adds it (version 16; the schema currently
   runs through version 15). Additive; rule 2.
 - `packages/core/src/types.ts` — `WikiSourcePointer`;
-  `WikiFact.source_pointer`; the two `WikiDiagnosticCode` entries; the
-  `WikiDiagnosticDetail` additions.
+  `WikiFact.source_pointer` (optional); the two `WikiDiagnosticCode`
+  entries; the new `entryId` key on `WikiDiagnosticDetail`
+  (`factId`, `itemIndex`, and `reason` already exist there).
 - `packages/core/src/services/librarian/ops/extract.ts` — resolve the
   label to an event id on the candidate; emit the unresolved
   diagnostic on ops.
@@ -328,8 +337,8 @@ it.
 - `packages/core/src/repositories/EntryRepository.ts` — `mapRowToFact`
   returns the column; upsert writes it.
 - `packages/core/src/services/MaintenanceService.ts` — the heal pass's
-  fact literal carries `source_pointer: null` (the type requires the
-  field); no attribution logic is added (§Heal restatements).
+  fact literal sets `source_pointer: null` explicitly, stating the
+  non-goal in code; no attribution logic is added (§Heal restatements).
 - `packages/core/src/services/ImportExportService.ts` — round-trip; the
   import validation and the `source_pointer_invalid` diagnostic.
 - `packages/core/src/utils/formatOkfBundle.ts` and
@@ -366,11 +375,14 @@ byte-identical and double as the parity gate.
    pointer is null, and no diagnostic fires.
 5. **Legacy tolerant parse.** A stub returns `source_event` naming a
    batch label; the pointer persists; an unknown label on legacy emits
-   the diagnostic.
+   the diagnostic. This test exercises the tolerant read directly;
+   no shipped legacy prompt elicits the field, so on default hosts the
+   pointer stays null (§Legacy path).
 6. **Quote rule.** Grounding on and grounded: `quote` equals
-   `evidence[0]`. Grounding on and missing: `quote` null, draft path
-   fires, `event_id` still set. Grounding off with model-supplied
-   evidence: `quote` null.
+   `verdict.retained[0]`. A short first evidence quote that grounding
+   never checks stays out of the pointer. Grounding on and missing:
+   `quote` null, draft path fires, `event_id` still set. Grounding off
+   with model-supplied evidence: `quote` null.
 7. **UPDATE boundary.** An ops UPDATE over an existing
    `librarian_inferred` fact with a pointer leaves the pointer
    byte-identical.
@@ -397,8 +409,13 @@ byte-identical and double as the parity gate.
 
 ## Release
 
-Minor; expected 9.1.0. The column, the diagnostic codes, the OKF key,
-and the TypeScript type are additive (rule 2). No prompt text changes,
+Minor; expected 9.1.0. This release builds on 9.0.0, which merged
+before this ladder ran; the legacy goldens in test 4 pin the
+post-9.0.0 prompts, and the `prompts.librarianSystemPrompt` override
+that 9.0.0 removed is not part of any parity claim. The column, the
+diagnostic codes, the OKF key, and the TypeScript type are additive
+(rule 2); the new `WikiFact` field is optional, so no host literal
+breaks (§Reads). No prompt text changes,
 so model behavior is unchanged for every host. The new diagnostics
 report cases that were silent before — a rule 6 improvement, not a
 behavior change. No BREAKING CHANGE footer.
