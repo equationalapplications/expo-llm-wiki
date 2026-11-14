@@ -8,8 +8,9 @@
 > drift.
 >
 > v1.1 amendment (2026-11-14): records the owner's ruling on step 4's
-> scope (the store only), names two follow-ons as exploratory, and adds
-> the done mark that step 1 was missing. No order change.
+> scope (the store only), names three things left out of it as
+> exploratory, and adds the done mark that step 1 was missing. No order
+> change.
 >
 > Scope note: this is the first roadmap for this repository. It starts
 > with the "sharper memory" work ruled in that week. It is not an inventory
@@ -171,6 +172,12 @@ Curated Thoughts needs no change.
   could be replaced or sharpened like any other statement. This changes
   what rule 5 means, so it needs its own ruling before anyone explores
   it.
+- **Working memory in the source store.** Records that are never
+  extracted and that drop out of search with age. Under step 4's ruling
+  nothing in the store is extracted unless the host asks, so only the
+  ageing rule is missing. Left out of step 4 (owner ruling,
+  2026-11-14). Step 4's spec leaves room to add a per-source age later
+  as an additive change, and does not build it.
 
 ## What is intentionally absent
 
