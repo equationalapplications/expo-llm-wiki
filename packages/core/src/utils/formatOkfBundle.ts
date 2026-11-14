@@ -1,4 +1,4 @@
-import type { MemoryDump, WikiEdge, WikiFact, WikiTask, WikiEvent } from '../types';
+import type { MemoryDump, WikiEdge, WikiFact, WikiSourcePointer, WikiTask, WikiEvent } from '../types';
 import {
   appendEventIdComment,
   appendRelatedSection,
@@ -48,6 +48,24 @@ function isoDateOrOmit(ms: number | null | undefined): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Source-pointer frontmatter map (specs/source-pointers §Export, import, and
+ * OKF): emitted only when the pointer is non-null; null slots are omitted.
+ * An all-null pointer therefore emits an empty map, which parses back to a
+ * null pointer with no diagnostic (spec test 9).
+ */
+function sourcePointerFrontmatter(
+  p: WikiSourcePointer | null | undefined,
+): { event_id?: string; ref?: string; quote?: string; position?: { start: number; length: number } } | undefined {
+  if (!p) return undefined;
+  return {
+    ...(p.event_id != null ? { event_id: p.event_id } : {}),
+    ...(p.ref != null ? { ref: p.ref } : {}),
+    ...(p.quote != null ? { quote: p.quote } : {}),
+    ...(p.position != null ? { position: p.position } : {}),
+  };
+}
+
 function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
   return {
     type: f.okf_type ?? 'fact',
@@ -87,6 +105,10 @@ function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
     ...(f.valid_to != null ? { valid_to: f.valid_to } : {}),
     ...(f.superseded_by != null ? { superseded_by: f.superseded_by } : {}),
     ...(f.superseded_at != null ? { superseded_at: f.superseded_at } : {}),
+    // Source pointer (specs/source-pointers): map only when non-null; null slots omitted.
+    ...(sourcePointerFrontmatter(f.source_pointer)
+      ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
+      : {}),
   };
 }
 
@@ -130,6 +152,10 @@ function factFrontmatterV1(f: WikiFact): OkfFrontmatter {
     access_count: f.access_count,
     last_accessed_at: f.last_accessed_at,
     deleted_at: f.deleted_at,
+    // Source pointer (specs/source-pointers): same map rule as the v2 path.
+    ...(sourcePointerFrontmatter(f.source_pointer)
+      ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
+      : {}),
   };
 }
 
