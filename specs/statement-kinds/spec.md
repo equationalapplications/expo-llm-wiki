@@ -1,9 +1,9 @@
 # Statement kinds (rule, decision, lesson, trap) and areas — the 9.0.0 breaking release
 
 **Status:** Implemented (2026-11-13 — implementation PR #380; commits
-6d933cdb schema, 3a67ded3 core, 8bb87097 schema docs/tests,
-1fb27086 benchmarks subcommand, be81d260 docs/ROADMAP/INTENT,
-2027efb6 measured run + Errata. Suites: core 212 files / 2428 tests,
+6d933cdb schema, 7113900d core, a1f98351 schema docs/tests,
+d0ded555 benchmarks subcommand, 6d734cda docs/ROADMAP/INTENT,
+910a279d measured run + Errata. Suites: core 212 files / 2428 tests,
 schema 2 / 46, benchmarks 16 / 153, all 0 failed; golden fixture
 byte-parity; docs site builds (53 pages). Spec gate closed by the
 owner 2026-11-13; written-work ladder converged through T4 Fable
