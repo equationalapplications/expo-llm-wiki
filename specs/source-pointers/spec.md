@@ -163,17 +163,22 @@ The extract parser already resolves the label to a batch event
   `event_id` from the candidate; `quote` by the quote rule below;
   `ref` and `position` null.
 - A missing or unresolved `source_event` produces a null pointer plus a
-  `source_pointer_unresolved` diagnostic (§Diagnostics). Today this case
+  `source_pointer_unresolved` diagnostic (§Diagnostics), emitted at the
+  write site when the fact lands — candidates the gate rejects or
+  merges never become rows and emit nothing. Today this case
   is silent (`extract.ts:89`); the diagnostic is the rule 6 fix.
 - An UPDATE operation on an existing `librarian_inferred` fact never
   adds, changes, or removes its pointer. The UPDATE branch writes title
-  and body only today (`ops/apply.ts`), and that stays true.
+  and body only today (`ops/apply.ts`), and that stays true. One
+  caveat is stated in the docs: the new body may rest on a different
+  event than the pointer names, and this release does not re-attribute
+  on UPDATE.
 
 ### Legacy path
 
-The legacy prompt is unchanged, and the legacy parser never resolves
-`source_event`: legacy facts carry a null
-pointer, always. `LIBRARIAN_SYSTEM_PROMPT` keeps its
+The legacy path changes minimally: it writes no pointer at all — the
+column stays null on every legacy fact. `LIBRARIAN_SYSTEM_PROMPT` keeps
+its
 exact text, so legacy prompts stay byte-identical on upgrade — the same
 upgrade-safety posture that the guidance release (#375) ruled. The
 contract never promises a
@@ -183,7 +188,11 @@ parser still reads the field for presence only: when a legacy model
 volunteers a non-null `source_event`, the engine emits
 `source_pointer_unresolved` with reason `'unsupported_strategy'` — the
 model named a pointer, and rule 6 says that fact is reported, not
-swallowed. The expected result is
+swallowed. The quote rule is ops-only (§Quote rule): a legacy fact
+persists no quote into the pointer, because a verified quote attributed
+to no event is the misleading provenance the quote rule exists to
+prevent; the legacy trust path (grounding verdicts, drafts) works
+exactly as today. The expected result is
 that legacy facts carry a null pointer, and this spec records that gap
 as accepted: the ruled scope covers what the librarian writes from now
 on, and the ops strategy is the default since 8.0.0.
@@ -210,8 +219,9 @@ fix in this pull request.
 
 ### Quote rule
 
-The pointer's `quote` slot holds a quote the engine has verified. The
-rule, identical on both strategies:
+The quote rule applies to the **ops strategy only**; legacy writes no
+pointer (§Legacy path). The pointer's `quote` slot holds a quote the
+engine has verified. The rule:
 
 - Grounding on and the verdict **grounded**: `quote` is the verdict's
   first retained quote (`verdict.retained[0]`). The retained quote —
@@ -236,7 +246,12 @@ rule, identical on both strategies:
   yields `quote: null`; the pointer's `event_id` still persists, and
   the fact follows the grounding verdict as today. Without this check,
   a fact could carry event B's id and event A's verified quote, and
-  the attribution would look checked while being wrong.
+  the attribution would look checked while being wrong. The candidate
+  carries the resolved event id and the event's corpus-part index into
+  the write site, so the check needs no new lookup; the index
+  alignment holds because `event.summary` is always a string —
+  `buildGroundingCorpus` filters non-string parts
+  (`grounding.ts:51-53`), and only `event.summary` feeds it here.
 - Grounding on and the verdict missing or ungrounded: `quote` is null.
   The fact follows the existing draft path (`grounding.ts:102-117`); the
   pointer's `event_id` still persists, because the attribution is
@@ -268,7 +283,14 @@ touches it:
   it, so a pruned target cannot fail a read.
 - A pointer to a pruned event means: "this fact came from the event with
   this id; the event's text is gone." The pointer keeps its value as
-  provenance even when the target is gone. A dump taken before prune
+  provenance even when the target is gone. One retention consequence is
+  stated openly: the pointer's `quote` is verbatim event text, capped
+  at `maxEvidenceChars` (300 by default), and it survives prune, dump
+  export, OKF export, and the outbox as part of the fact's own record.
+  Prune deletes event rows; it does not scrub quotes that landed inside
+  facts. This is the accepted reading of the charter's deletion rules:
+  a fact survives prune with its evidence attached. The provenance docs
+  say so too. A dump taken before prune
   preserves both sides: export round-trips events
   (`ImportExportService`, bundle includes `events`), so a restored dump
   keeps pointer and text together.
@@ -331,7 +353,13 @@ text. A fact object **without** the key — a dump taken before this
 release — imports with no diagnostic, and the import leaves any stored
 pointer untouched: the SET clause omits the column when the key is
 absent, so a pre-release dump can neither null stored pointers nor
-emit a storm of false `source_pointer_invalid` reports. Import never
+emit a storm of false `source_pointer_invalid` reports. This is a
+deliberate departure from the temporal precedent next to it —
+`importDump` calls `setTemporal` with replace semantics, where an
+absent key clears (`ImportExportService.ts:333-340`) — because a
+pre-release dump is the exact case the rule exists for. The default
+import path does reach existing rows (a re-import upserts over them),
+so the untouched-pointer rule is observable, not vacuous. Import never
 rejects the fact over a malformed optional
 provenance field. This departs from the existing import behavior for
 `source_ref`, which throws on an invalid value
@@ -348,17 +376,19 @@ Two new codes join `WikiDiagnosticCode`
 (detail carries identifiers and reason slugs, never fact text — the
 existing `WikiDiagnosticDetail` discipline):
 
-- `source_pointer_unresolved` — the model named a pointer and the engine
-  could not resolve it. Detail: `itemIndex` (the fact's index in the
+- `source_pointer_unresolved` — a stored fact has no pointer because
+  the model's answer could not yield one. Detail: `itemIndex` (the
+  fact's index in the
   response, reusing the `fact_rejected` convention) and `reason` with
   values `'missing'` (the field is absent, or its value is JSON `null`;
   ops only, because the ops
-  contract requires it), `'unknown_label'` (the field is present and
+  contract requires it — this is a prompt-contract-violation report,
+  and it keeps the `warn` severity of the `fact_rejected` convention),
+  `'unknown_label'` (the field is present and
   non-null but is not a string naming exactly one batch label), or
   `'unsupported_strategy'` (the legacy model named a pointer; the
   legacy strategy does not record them). One
-  diagnostic per
-  affected fact, on the existing diagnostics channel.
+  diagnostic per stored fact, on the existing diagnostics channel.
 - `source_pointer_invalid` — import met a malformed pointer value and
   nulled it. Detail: `entryId`.
 
@@ -411,9 +441,12 @@ it.
 
 ## Files touched
 
-- `packages/core/src/db/schema.ts` — the `source_pointer` column and
-  the new migration step that adds it (version 16; the schema currently
-  runs through version 15). Additive; rule 2.
+- `packages/core/src/db/schema.ts` and
+  `packages/core/src/db/migrations.ts` — the `source_pointer` column in
+  the fresh-store DDL, and the new migration step (version 16; the
+  schema currently runs through version 15) in the `MIGRATIONS` array,
+  copying the idempotent PRAGMA-guarded add-column pattern of v13.
+  `CURRENT_SCHEMA_VERSION` moves to 16. Additive; rule 2.
 - `packages/core/src/types.ts` — `WikiSourcePointer`;
   `WikiFact.source_pointer` (optional); the two `WikiDiagnosticCode`
   entries; the new `entryId` key on `WikiDiagnosticDetail`
@@ -423,18 +456,23 @@ it.
   diagnostic on ops.
 - `packages/core/src/services/librarian/ops/apply.ts` — write the
   pointer; quote by the quote rule; UPDATE leaves pointers untouched.
-- `packages/core/src/services/librarian/legacy.ts` — pointer write with
-  `event_id` always null; presence-only read of `source_event` with the
-  `'unsupported_strategy'` diagnostic; quote by the quote rule.
-- `packages/core/src/utils/parseOkfBundle.ts` and
-  `packages/core/src/types.ts` (the `OkfImportOptions` type) — the
-  optional collector parameter that reports dropped pointer values
+- `packages/core/src/services/librarian/legacy.ts` — no pointer write;
+  presence-only read of `source_event` with the
+  `'unsupported_strategy'` diagnostic.
+- `packages/core/src/utils/parseOkfBundle.ts` — the optional collector
+  parameter on its own `OkfImportOptions` type (defined there,
+  `parseOkfBundle.ts:23`) that reports dropped pointer values
   (§Export, import, and OKF).
 - `packages/core/src/repositories/EntryRepository.ts` — both row
-  mappers return the column; `upsert` binds it for INSERT only, out of
+  mappers return the column, reading it with the existing
+  `parseJsonObject` pattern so a malformed stored value reads null
+  without throwing; `upsert` binds it for INSERT only, out of
   its ON CONFLICT SET list, matching the OKF-metadata pattern
   (`EntryRepository.ts:322-324`), so a conflicting update preserves the
-  stored pointer; `upsertForImport` adds it to its INSERT and SET
+  stored pointer — and adds the column to the existing-row SELECT
+  (`:260-263`) and the outbox payload overlay (`:360-377`), so a
+  conflicting update publishes the stored pointer instead of a
+  fabricated null; `upsertForImport` adds it to its INSERT and SET
   lists (authoritative restore).
 - `packages/core/src/utils/diagnostics.ts` — `SEVERITY` and `MESSAGE`
   entries for both new codes (both are exhaustive
@@ -457,7 +495,13 @@ it.
   line states the shipped scope: source and quote; the position and
   host-ref slots stay null with no producer.
 - `INTENT.md` — only the status clause of rule 5's Planned note ("today
-  those facts carry none"), per the intent check.
+  those facts carry none"), per the intent check; INTENT's
+  "How changes are made" step 7 requires a dated entry in the
+  Amendments section for any INTENT.md change, and that entry is added
+  in the same pull request.
+- `packages/core/src/index.ts` — the `WikiSourcePointer` type export,
+  so hosts can name the field's type; the expo and react packages are
+  checked for type mirrors and re-export if they mirror.
 - README and docs site — the provenance section documents the pointer,
   latest version only. `CHANGELOG.md` rides release tooling and is
   never hand-edited.
@@ -471,7 +515,9 @@ byte-identical and double as the parity gate.
 
 1. **Column and migration.** A fresh setup has the column; running the
    new step (version 16) on a database at the previous version (15)
-   adds it; every pre-existing row reads `source_pointer` as null; the
+   adds it; every pre-existing row reads `source_pointer` as null; a
+   malformed stored `source_pointer` value reads as null without
+   throwing; the
    `CURRENT_SCHEMA_VERSION` pin in `setupBudget.test.ts` asserts 16.
 2. **Ops pointer write.** A stub model response names the second event
    of a three-event batch; the stored row carries that event's id; a
@@ -487,7 +533,8 @@ byte-identical and double as the parity gate.
    today's (golden strings captured from the unmodified code), the
    pointer is null, and no diagnostic fires.
 5. **Legacy pointer always null, named pointer reported.** A legacy
-   pass whose stub response names a label persists a null pointer and
+   pass whose stub response names a label persists no pointer (the
+   column stays null, quote included) and
    emits `source_pointer_unresolved` with reason
    `'unsupported_strategy'`; a stub response without the field emits
    no diagnostic; the prompt stays byte-identical in both cases.
@@ -500,7 +547,8 @@ byte-identical and double as the parity gate.
    with model-supplied evidence: `quote` null.
 7. **UPDATE boundary.** An ops UPDATE over an existing
    `librarian_inferred` fact with a pointer leaves the pointer
-   byte-identical.
+   byte-identical, and the UPDATE's outbox payload carries the stored
+   pointer (the overlay), not a null.
 8. **Dump round-trip.** `exportDump` then `importDump` restores the
    pointer exactly. An import payload with a malformed pointer nulls it
    and emits `source_pointer_invalid` with the entry id; the fact
