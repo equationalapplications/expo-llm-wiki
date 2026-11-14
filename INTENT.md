@@ -344,11 +344,12 @@ runs and who schedules it.
    Implemented); investigation notes go in the spec's evidence section.
    Open a draft PR carrying the folder; add `plan.md` and
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
-   same branch; the final cleanup commit — the LAST commit of the
-   implementation PR, pushed after the review loops converge and before
-   the merge ask — flips the Status to Implemented and deletes the plan
-   and ledger. One PR per cycle, no spec-only merges; there is no
-   post-merge cleanup commit and no docs-only cleanup PR.
+   same branch; the final cleanup commit — the PR's last lifecycle commit
+   (Status flip + plan/ledger deletion), pushed after the review loops
+   converge and before the `gh pr ready` flip; valid bot-review fix
+   commits may follow it before merge — flips the Status to Implemented
+   and deletes the plan and ledger. One PR per cycle, no spec-only merges;
+   there is no post-merge cleanup commit and no docs-only cleanup PR.
    `specs/README.md` has the mechanics. The Status line changes in the
    same PR as the behavior.
 2. **Review, then merge.** CI green (build, typecheck, tests, both audit
@@ -389,9 +390,10 @@ runs and who schedules it.
   the only reader path back to the passage once the event is pruned.
   Owner ruling, 2026-11-14. No rule text changed.
 - 2026-11-14 — "How changes are made" step 1 and `specs/README.md` pin
-  the cleanup-commit timing: the cleanup commit is the LAST commit of
-  the implementation PR, pushed after the review loops converge and
-  before the merge ask; there is no post-merge cleanup commit and no
+  the cleanup-commit timing: the cleanup commit is the PR's last
+  lifecycle commit, pushed after the review loops converge and before
+  the `gh pr ready` flip (valid bot-review fix commits may follow it
+  before merge); there is no post-merge cleanup commit and no
   docs-only cleanup PR. Why: the wording previously said only "the
   final cleanup commit", which read both as in-PR and as post-merge;
   owner ruling during the PR #385 ladder (fewest PRs, no busy-work
