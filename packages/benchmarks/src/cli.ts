@@ -573,7 +573,7 @@ export interface StatementKindsDeps {
   argv: string[];
   env?: Record<string, string | undefined>;
   /** The entries from `fixtures/statement-kinds.json`. */
-  entries?: StatementFixtureEntry[];
+  entries: StatementFixtureEntry[];
   fetchImpl?: (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
@@ -595,16 +595,12 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   const dryRun = parsed.flags['dry-run'] === true;
   const yes = parsed.flags.yes === true;
   const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
-  if (!deps.entries) {
-    stderr('Internal error: entries must be provided by the caller\n');
-    return { exitCode: 2 };
-  }
   const tokenEstimate = deps.entries.length * STATEMENT_KINDS_TOKENS_PER_STATEMENT;
   const printEstimate = (model: string): void => {
     stdout(
       [
         `model: ${model}`,
-        `statements: ${deps.entries!.length}`,
+        `statements: ${deps.entries.length}`,
         `input tokens (estimate): ${tokenEstimate.toLocaleString('en-US')}`,
       ].join('\n') + '\n',
     );
