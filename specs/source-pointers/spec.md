@@ -1,15 +1,19 @@
 # Source pointers on librarian facts
 
-**Status:** Draft — the owner gate passed 2026-11-13 for the four
-scope decisions, but one charter-level question surfaced in review
-(whether a verified quote, which is event text, survives prune,
-export, and the outbox — §Pruned events) and INTENT's "How changes are
-made" step 2 holds the PR until the owner answers it. Implementation
-of the quote slot waits for that answer; plan.md and LEDGER.md land
-after it.
-**Date:** 2026-11-13
+**Status:** Draft (rev 9) — converged. The owner gate passed
+2026-11-13 for the four scope decisions, and the owner answered the
+charter-level question on 2026-11-14 (verified quotes survive prune,
+export, and the outbox inside the fact's own record — §Pruned events,
+ruling folded there). Awaiting the reviewer re-gate on this revision,
+then the owner spec stop; plan.md and LEDGER.md land in the same
+commit that flips this Status to Reviewed (INTENT.md §3).
+**Date:** 2026-11-13 (rev 9: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
-additive-schema rule, and the four checks against INTENT.md). This spec
+additive-schema rule, and the four checks against INTENT.md);
+2026-11-14 (§Pruned events: quote retention is accepted — consolidation
+working as designed, not a deletion-request violation — with the
+`forget({ eventId })` deletion path filed as issue #386 before merge
+and named in §forget boundary). This spec
 answers the four questions the issue poses; the owner gates the answers.
 **Intent check:** Rule 2 — this change adds one nullable column, one
 diagnostic code, and one OKF frontmatter key. It drops nothing. Rule 5 —
@@ -298,17 +302,29 @@ touches it:
   it, so a pruned target cannot fail a read.
 - A pointer to a pruned event means: "this fact came from the event with
   this id; the event's text is gone." The pointer keeps its value as
-  provenance even when the target is gone. One retention consequence is
-  stated as an **open owner question**, not a settled reading: the
-  pointer's `quote` is normalized event text, capped at
-  `maxEvidenceChars`, and it survives prune, dump export, OKF export,
-  and the outbox as part of the fact's own record — prune deletes event
-  rows and does not scrub quotes that landed inside facts. Whether that
-  retention sits comfortably with the charter's deletion rules is for
-  the owner to confirm; this spec asserts no charter reading, and the
-  question is on the gate report. The mechanism is unavoidable while
-  facts carry verified quotes at all, so the question is about
-  comfort, not about a code decision in this release. A dump taken
+  provenance even when the target is gone. The retention consequence is
+  **settled by owner ruling, 2026-11-14**: the pointer's `quote` is
+  normalized event text, capped at `maxEvidenceChars`, and it survives
+  prune, dump export, OKF export, and the outbox as part of the fact's
+  own record — prune deletes event rows and does not scrub quotes that
+  landed inside facts. The ruling accepts that retention. The charter's
+  consolidation promise is that events are raw notes the librarian
+  turns into lasting facts, so facts outliving their events is the
+  stated purpose, not a defect; the charter's deletion promise governs
+  deletion *requests* reaching every surface (a scrub at prune time
+  would be the false deletion — dumps already taken and outbox
+  consumers already fed keep the quote, so a local scrub would claim an
+  erasure that did not happen). In function the quote is a pointer:
+  normalized, substring-verified against the source event, capped;
+  after prune the engine holds no source text (the host keeps it, per
+  the Sources-layer ruling), and the quote is the reader's only path
+  back to the passage. The deletion path for quotes is **named, not
+  just possible**: `forget({ eventId })` is filed as issue #386 (see
+  §forget boundary), and today a host removes a quote by forgetting the
+  fact by entry id (test 11). Docs carry one plain line with the
+  ruling's hygiene note: a quote carries whatever its event carried, so
+  secrets stay out of events as they already must out of fact bodies.
+  A dump taken
   before prune
   preserves both sides: export round-trips events
   (`ImportExportService`, bundle includes `events`), so a restored dump
@@ -333,6 +349,24 @@ forbids. The engine's librarian write sites set the field explicitly;
 an omitted field stores null. Every
 read and search surface that returns full facts then carries the
 pointer. No new read API is added, and no read dereferences the pointer.
+
+The pointer cannot reach embed text or a search index. Every such path
+reduces the row to an explicit column or field list before any copy —
+never a whole-object serialization: the embed template names only
+`title`, `body`, `tags` (`EmbeddingService.ts:125-157`); the keyword
+index reads only `MINI_SEARCH_COLUMNS = 'id, entity_id, title, body,
+tags'` (`EntryRepository.ts:143`, consumed by
+`findMiniSearchRowsByIds` at `:1153` and the full rebuild) and
+`toIndexDoc` copies exactly those five fields (`indexDoc.ts`); the
+default `'auto'` strategy prefers FTS5, whose SQL likewise names its
+columns — the virtual table (`fts5Sql.ts:51-53`), the ledger and
+rebuild `INSERT … SELECT` chunks (`:101-104`, `:182-184`), and the
+`insertDocs` bindings (`Fts5IndexStrategy.ts:505-508`) — and its update
+trigger fires only on those columns (`:75`), so a write that changes
+only `source_pointer` does not even queue a reindex. The safety is
+therefore a set of hand-maintained lists, not a structural guarantee:
+test 14 pins it behaviorally under both index strategies so a future
+refactor toward whole-row serialization fails loudly.
 
 ### Export, import, and OKF
 
@@ -450,9 +484,10 @@ keep their exact semantics. The issue asks whether librarian facts
 should become removable by source; this release decides **no**: a
 `forget({ eventId })` selector is new deletion semantics on a JSON
 column, it is not in the ruled scope (persist, return on reads, carry
-through export and import), and it is a small additive follow-up issue
-that the pointer shape already supports. Nothing in this release blocks
-it.
+through export and import), and it is a small additive follow-up,
+filed as **issue #386** per the 2026-11-14 owner ruling — the ruling
+requires the deletion path for retained quotes to be named before
+merge, and #386 is it. Nothing in this release blocks it.
 
 ## Rejected alternatives
 
@@ -639,6 +674,16 @@ byte-identical and double as the parity gate.
 13. **Heal gap pinned.** A heal restatement writes a librarian fact
     whose pointer is null and emits no source-pointer diagnostic; the
     documented gap stays observable.
+14. **No-leak pin (behavioral, both strategies).** Run under
+    `indexStrategy: 'fts5'` and again under `'minisearch'`. Store a
+    fact whose pointer quote holds a sentinel token. A keyword search
+    for the sentinel returns nothing (a token from the fact's body
+    still hits). A stub `llmProvider.embed` records its inputs; none
+    contain the sentinel. The stored `body` never contained the quote.
+    An update that changes only `source_pointer` adds no `fts_pending`
+    row. This pins the §Reads column-list mechanism: a refactor to
+    whole-row serialization leaks into vectors and the keyword index,
+    and this test fails.
 
 ## Release
 
@@ -657,7 +702,8 @@ behavior change. No BREAKING CHANGE footer.
 
 - Pointer attribution for heal restatements (§Heal restatements; named
   follow-up).
-- A `forget({ eventId })` selector (named follow-up; the pointer shape
+- A `forget({ eventId })` selector (named follow-up, filed as
+  issue #386 per the 2026-11-14 owner ruling; the pointer shape
   supports it).
 - A host-supplied ref channel (no producer exists; the source store,
   roadmap step 4, revisits how sources are named).
