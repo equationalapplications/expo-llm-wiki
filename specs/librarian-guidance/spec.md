@@ -263,7 +263,9 @@ before `appendGrounding` runs (`PromptService.ts:37`).
 ### Deprecation
 
 `prompts.librarianSystemPrompt` is marked `@deprecated` in
-`WikiConfig` docs in this release, with "removed in 9.0.0". The
+`WikiConfig` docs in this release, with "removed in 9.0.0" (planned
+for 8.5.0; that release never published, so no npm version carries
+the notice — see Release below). The
 `changedDefaultWarnings` message for an override under ops
 (`engineDefaults.ts:36-42`) now points at `prompts.guidance` instead of
 only telling the host to pin `legacy`. A **second message** covers a
