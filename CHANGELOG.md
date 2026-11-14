@@ -1,3 +1,31 @@
+## [9.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.5.0...v9.0.0) (2026-11-14)
+
+### ⚠ BREAKING CHANGES
+
+* **core-llm-wiki:** the prompts.librarianSystemPrompt config key is
+removed (owner ruling 2026-11-13: fix now while adoption is near-zero).
+* **schema-software-org:** the handoff and session_recap node types and the
+handoffFor edge rows are removed from the manifest (owner ruling
+2026-11-13: fix now while adoption is near-zero).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Features
+
+* **benchmarks:** statement-kinds classification subcommand ([d0ded55](https://github.com/equationalapplications/expo-llm-wiki/commit/d0ded55500fa61369c76afdab2a18294d346c1b5))
+* **schema-software-org:** statement kinds, area, attach edges; drop handoff types (9.0.0) ([6d933cd](https://github.com/equationalapplications/expo-llm-wiki/commit/6d933cdb6fbec567d8a52a7c2a7b3c8367bc7da9))
+
+### Bug Fixes
+
+* **benchmarks:** capture about edge-drop diagnostics; doc/spec accuracy (T3-Opus round) ([c1fc5bf](https://github.com/equationalapplications/expo-llm-wiki/commit/c1fc5bf3a683165a640c9ac337db3cac82115ce5))
+* **benchmarks:** misalignment guard in statement-kinds runner; review nits ([987e4e9](https://github.com/equationalapplications/expo-llm-wiki/commit/987e4e9fdd3c00e8e10a8ff4dcf14ac07876111a))
+* **core:** remove orphaned [@deprecated](https://github.com/deprecated) JSDoc left by the librarianSystemPrompt removal ([9d75af7](https://github.com/equationalapplications/expo-llm-wiki/commit/9d75af733d7b047435ec2ef1713ce654f94c5b5f)), closes [#380](https://github.com/equationalapplications/expo-llm-wiki/issues/380)
+* upgrade-guide mode preservation, item-6 stub test, runner nits (T1.5-xhigh round) ([08cf0b0](https://github.com/equationalapplications/expo-llm-wiki/commit/08cf0b0269845b73fc50c1e9ba4ccc4c10d4eab9))
+
+### Code Refactoring
+
+* **core-llm-wiki:** remove prompts.librarianSystemPrompt; export buildOntologyPromptAppendix (9.0.0) ([7113900](https://github.com/equationalapplications/expo-llm-wiki/commit/7113900df9db0318b79ac778367c15758dedb6d1))
+
 ## [8.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.3.0...v8.4.0) (2026-11-12)
 
 ### Features
