@@ -1,17 +1,17 @@
 # Source pointers on librarian facts
 
-**Status:** Reviewed (rev 13) — converged. The owner gate passed
+**Status:** Implemented. The owner gate passed
 2026-11-13 for the four scope decisions, the owner answered the
 charter-level question on 2026-11-14 (verified quotes survive prune,
 export, and the outbox inside the fact's own record — §Pruned events,
 ruling folded there), the reviewer re-gate PASSED on this revision
-series, and the owner gave the spec stop 2026-11-14. plan.md and
-LEDGER.md land in this commit per INTENT.md, "How changes are made",
-step 1; the final cleanup commit flips this Status to Implemented and
-deletes both files. Per the owner's 2026-11-14 ruling (recorded in
-LEDGER rows 4–7), that flip is deliberately deferred to the post-merge
-cleanup commit rather than done in PR #385 — do not re-flag it as a
-stale header.
+series, the owner gave the spec stop 2026-11-14, and the review ladder
+converged (Tier 1.5 Haiku/Sonnet, Tier 3 Opus, Tier 4 Fable — all
+APPROVE; adjudications in the PR's LEDGER history, `ec0d28ac`…`f57ca25c`).
+plan.md and LEDGER.md landed per INTENT.md, "How changes are made",
+step 1; this in-PR cleanup commit flips the Status and deletes both
+files, per the owner's 2026-11-14 ruling that cleanup ships in the
+same pull request as the implementation.
 **Date:** 2026-11-13 (revs 9–13: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md);
