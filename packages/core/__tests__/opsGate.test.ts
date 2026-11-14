@@ -72,6 +72,9 @@ describe('gateCandidates', () => {
       index,
       fact: { title, body: 'b', tags: [], confidence: 'certain' },
       sourceLabel: null,
+      sourceEventId: null,
+      sourcePartIndex: null,
+      pointerUnresolved: null,
       validFrom: 0,
     });
 

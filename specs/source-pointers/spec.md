@@ -8,7 +8,10 @@ ruling folded there), the reviewer re-gate PASSED on this revision
 series, and the owner gave the spec stop 2026-11-14. plan.md and
 LEDGER.md land in this commit per INTENT.md, "How changes are made",
 step 1; the final cleanup commit flips this Status to Implemented and
-deletes both files.
+deletes both files. Per the owner's 2026-11-14 ruling (recorded in
+LEDGER rows 4–7), that flip is deliberately deferred to the post-merge
+cleanup commit rather than done in PR #385 — do not re-flag it as a
+stale header.
 **Date:** 2026-11-13 (revs 9–13: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md);
@@ -185,8 +188,10 @@ The extract parser already resolves the label to a batch event
   adds, changes, or removes its pointer. The UPDATE branch writes title
   and body only today (`ops/apply.ts`), and that stays true. One
   caveat is stated in the docs: the new body may rest on a different
-  event than the pointer names, and this release does not re-attribute
-  on UPDATE.
+  event than the pointer names — both on the UPDATE branch and on a
+  SUPERSEDE whose title/body the model merged from the target
+  (`overrides` in `apply.ts`) — and this release does not re-attribute
+  on either.
 
 ### Legacy path
 
@@ -229,7 +234,10 @@ attribution for heal restatements is a
 named follow-up. For the same reason, this release does not touch the
 Rust-side schema check: `crates/graphrag-core/src/schema_check.rs:17`
 already pins `REQUIRED_SCHEMA_VERSION = 11` against a core that runs
-schema 15 — drift that predates this release. This release's version
+schema 15 — drift that predates this release (this release bumps core
+to 16, widening it). Tracked as issue
+[#387](https://github.com/equationalapplications/expo-llm-wiki/issues/387).
+This release's version
 bump is recorded as an owner-visible follow-up issue rather than a
 fix in this pull request.
 

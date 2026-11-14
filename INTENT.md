@@ -70,9 +70,11 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   material; the librarian turns them into facts.
 - **Source pointer** — the structured provenance an ops librarian fact
   can carry: the event it came from (`event_id`) plus, when grounding
-  permits, the verified quote. The quote survives the event's prune and
-  travels with the fact through export and the outbox; it is content,
-  not an edit path.
+  permits, the verified quote. When the librarian merges new text into
+  an UPDATE or SUPERSEDE, the stored body may rest on more than the
+  named event; the pointer is not re-attributed. The quote survives the
+  event's prune and travels with the fact through export and the
+  outbox; it is content, not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
   facts and tasks. Two strategies exist: `legacy` (add-only) and `ops`
   (add, supersede or skip, with a similarity gate).
