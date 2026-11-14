@@ -1,22 +1,25 @@
 # Source pointers on librarian facts
 
-**Status:** Draft (rev 9) — converged. The owner gate passed
+**Status:** Draft (rev 10) — converged. The owner gate passed
 2026-11-13 for the four scope decisions, and the owner answered the
 charter-level question on 2026-11-14 (verified quotes survive prune,
 export, and the outbox inside the fact's own record — §Pruned events,
 ruling folded there). Awaiting the reviewer re-gate on this revision,
 then the owner spec stop; plan.md and LEDGER.md land in the same
-commit that flips this Status to Reviewed (INTENT.md §3).
-**Date:** 2026-11-13 (rev 9: 2026-11-14)
+commit that flips this Status to Reviewed (INTENT.md, "How changes
+are made", step 1).
+**Date:** 2026-11-13 (rev 9: 2026-11-14; rev 10: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md);
 2026-11-14 (§Pruned events: quote retention is accepted — consolidation
 working as designed, not a deletion-request violation — with the
-`forget({ eventId })` deletion path filed as issue #386 before merge
-and named in §forget boundary). This spec
+`forget({ eventId })` deletion path filed as issue #386 (the ruling
+requires it named before merge) and named in §forget boundary). This spec
 answers the four questions the issue poses; the owner gates the answers.
-**Intent check:** Rule 2 — this change adds one nullable column, one
-diagnostic code, and one OKF frontmatter key. It drops nothing. Rule 5 —
+**Intent check:** Rule 2 — this change adds one nullable column, two
+diagnostic codes, one optional `WikiFact` field (`source_pointer`), one
+optional `MemoryDump` result field (`dropped_pointer_values`), and one
+OKF frontmatter key. It drops nothing. Rule 5 —
 unchanged. A pointer is provenance, not an edit path; no code may rewrite
 a stored fact through it. Rule 5's Planned note names this change, and
 this pull request updates only the note's status clause — the rule's
@@ -324,11 +327,9 @@ touches it:
   fact by entry id (test 11). Docs carry one plain line with the
   ruling's hygiene note: a quote carries whatever its event carried, so
   secrets stay out of events as they already must out of fact bodies.
-  A dump taken
-  before prune
-  preserves both sides: export round-trips events
-  (`ImportExportService`, bundle includes `events`), so a restored dump
-  keeps pointer and text together.
+  A dump taken before prune preserves both sides: export round-trips
+  events (`ImportExportService`, bundle includes `events`), so a
+  restored dump keeps pointer and text together.
 
 ### Reads
 
@@ -362,8 +363,14 @@ default `'auto'` strategy prefers FTS5, whose SQL likewise names its
 columns — the virtual table (`fts5Sql.ts:51-53`), the ledger and
 rebuild `INSERT … SELECT` chunks (`:101-104`, `:182-184`), and the
 `insertDocs` bindings (`Fts5IndexStrategy.ts:505-508`) — and its update
-trigger fires only on those columns (`:75`), so a write that changes
-only `source_pointer` does not even queue a reindex. The safety is
+trigger's column list (`:75`) excludes `source_pointer`. A statement
+that sets `source_pointer` alone therefore skips the reindex queue; a
+statement that also sets any trigger column queues one, and the engine
+path that can rewrite a stored pointer (`upsertForImport`'s
+`ON CONFLICT` SET, `EntryRepository.ts:468-495`) names those columns,
+so a pointer-differing re-import reindexes — harmlessly, because every
+reindex copies only the named columns and the pointer is not among
+them. The safety is
 therefore a set of hand-maintained lists, not a structural guarantee:
 test 14 pins it behaviorally under both index strategies so a future
 refactor toward whole-row serialization fails loudly.
@@ -595,7 +602,9 @@ merge, and #386 is it. Nothing in this release blocks it.
   so hosts can name the field's type; the expo and react packages are
   checked for type mirrors and re-export if they mirror.
 - README and docs site — the provenance section documents the pointer,
-  latest version only. `CHANGELOG.md` rides release tooling and is
+  and carries the ruling's hygiene line (a quote carries whatever its
+  event carried, so secrets stay out of events), latest version only.
+  `CHANGELOG.md` rides release tooling and is
   never hand-edited.
 
 ## Test plan
@@ -680,8 +689,13 @@ byte-identical and double as the parity gate.
     for the sentinel returns nothing (a token from the fact's body
     still hits). A stub `llmProvider.embed` records its inputs; none
     contain the sentinel. The stored `body` never contained the quote.
-    An update that changes only `source_pointer` adds no `fts_pending`
-    row. This pins the §Reads column-list mechanism: a refactor to
+    Under fts5 only: an explicit raw-SQL `UPDATE … SET source_pointer = ?`
+    (no other column named) adds no `fts_pending` row — this pins the
+    trigger's column list; and an `importDump` whose payload differs
+    from the stored row only in its pointer queues a reindex row
+    (the `upsertForImport` SET names trigger columns) and the rebuilt
+    index still contains no sentinel. This pins the §Reads column-list
+    mechanism: a refactor to
     whole-row serialization leaks into vectors and the keyword index,
     and this test fails.
 
