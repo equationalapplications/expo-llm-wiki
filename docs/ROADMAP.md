@@ -71,7 +71,8 @@ Guidance is set in two places: one default for the database, and an
 optional value per entity, which wins. The host passes both in; the
 engine stores neither. The older whole-prompt override
 (`prompts.librarianSystemPrompt`) is marked deprecated in this step's
-release and removed in step 2's.
+planned release and removed in step 2's. After the 8.5.0 release
+failure (#391), that deprecation notice reached no published version.
 
 *Gate:* a spec, checked against INTENT.md. Rule 11 applies: the spec says
 how the change is measured, and no accuracy or cost claim is published
