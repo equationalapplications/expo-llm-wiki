@@ -1,3 +1,17 @@
+## [9.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.0.0...v9.1.0) (2026-11-14)
+
+### Features
+
+* **core:** source_pointer column (migration v16) + WikiSourcePointer type, diagnostics, dump parse report (plan step 1, spec §The pointer/§Diagnostics/§Export) ([806fe51](https://github.com/equationalapplications/expo-llm-wiki/commit/806fe513409ca82eff11153fa94cefea65358239))
+* **librarian:** source pointers on ops writes — label resolution split (missing/unknown_label), named-event quote rule, source_pointer_unresolved diagnostics; legacy writes null + unsupported_strategy report (plan steps 2-3) ([cb5578e](https://github.com/equationalapplications/expo-llm-wiki/commit/cb5578e270de4f8ca2504a63dddef3bd67e9b93a))
+* **okf:** source_pointer frontmatter on both fact builders + tolerant parse with dropped_pointer_values report (plan step 4, spec §Export/import/OKF) ([b011d1b](https://github.com/equationalapplications/expo-llm-wiki/commit/b011d1b581a140541ad5cdc679a43c104653c1ab))
+
+### Bug Fixes
+
+* **core:** preserve stored source_pointer on upsert conflicts + review fixes ([ec0d28a](https://github.com/equationalapplications/expo-llm-wiki/commit/ec0d28ac0bc7bfa87e7a1e107430a8f44ba42aa1)), closes [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)
+* **core:** review rung-1 fixes — drop debug scaffold, explicit heal null, guide codes ([5c6e068](https://github.com/equationalapplications/expo-llm-wiki/commit/5c6e068f4553864a1257ee563842840e596fd893))
+* **core:** rung-3 fixes — JSON-semantics pointer presence, ops cross-entity pin, doc honesty ([d06beec](https://github.com/equationalapplications/expo-llm-wiki/commit/d06beec1078b4db0843175a25956eeedfb53fb1e))
+
 ## [9.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.5.0...v9.0.0) (2026-11-14)
 
 ### ⚠ BREAKING CHANGES
