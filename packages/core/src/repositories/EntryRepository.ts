@@ -6,6 +6,7 @@ import { parseJsonArray, parseJsonObject } from './rowMappers';
 import { reanchorRebuildFingerprint } from '../services/search/fts5Progress';
 import { liveAtSql, type LiveMode } from '../utils/temporal';
 import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
+import { parseStoredSourcePointer, serializeSourcePointer } from '../utils/sourcePointer';
 
 /** Subset of temporal columns that {@link EntryRepository.setTemporal} may write (spec 2026-09-29 §4.3). */
 export type TemporalFields = {
@@ -104,6 +105,12 @@ function mapRowToFact(row: any): WikiFact {
     ...(row.valid_to != null ? { valid_to: Number(row.valid_to) } : {}),
     ...(row.superseded_by != null ? { superseded_by: String(row.superseded_by) } : {}),
     ...(row.superseded_at != null ? { superseded_at: Number(row.superseded_at) } : {}),
+    // Source pointer (specs/source-pointers): key appears only when non-null,
+    // same temporal-fields pattern. Tolerant read: a malformed stored value
+    // reads as null without throwing (test 1).
+    ...(parseStoredSourcePointer(row.source_pointer) != null
+      ? { source_pointer: parseStoredSourcePointer(row.source_pointer) }
+      : {}),
   };
 }
 
@@ -280,8 +287,8 @@ export class EntryRepository extends BaseRepository {
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         body = excluded.body,
@@ -299,7 +306,8 @@ export class EntryRepository extends BaseRepository {
         embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
         embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
         embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
-        okf_type = excluded.okf_type
+        okf_type = excluded.okf_type,
+        source_pointer = excluded.source_pointer
       WHERE ${this.prefix}entries.entity_id = excluded.entity_id`,
       [
         fact.id,
@@ -330,6 +338,7 @@ export class EntryRepository extends BaseRepository {
         fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
+        serializeSourcePointer(fact.source_pointer),
       ],
     );
 
