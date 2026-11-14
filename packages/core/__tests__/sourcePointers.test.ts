@@ -262,7 +262,9 @@ describe('source pointers — plain upsert conflict (insert-only rule)', () => {
     const [stored] = await repo.findByIds([id], ['u']);
     const updating = { ...stored, body: 'Body rewritten without a pointer' } as Record<string, unknown>;
     delete updating.source_pointer;
-    await repo.upsert(updating as unknown as Parameters<typeof repo.upsert>[0]);
+    await db.withTransactionAsync(async (tx) => {
+      await repo.upsert(updating as unknown as Parameters<typeof repo.upsert>[0], tx);
+    });
     // The UPDATE actually executed — the body changed, so the pointer
     // assertion below is not vacuously green on an untouched row.
     const row = await db.getFirstAsync<any>(`SELECT body, source_pointer FROM llm_wiki_entries WHERE id = ?`, [id]);
