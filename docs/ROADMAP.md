@@ -9,9 +9,9 @@
 >
 > v1.1 amendment (2026-11-14): records the owner's ruling on step 4's
 > scope (the store only), names three things left out of it as
-> exploratory, adds the done mark that step 1 was missing, adds the
-> done-mark rule's exception for retroactive marks, allows gate lines
-> to note a met gate, links step 4 to its issue #390, and rewords
+> exploratory, adds the done mark that step 1 was missing under the
+> done-mark rule's new exception (issue #392), allows gate lines to
+> gain a dated met note, links step 4 to its issue #390, and rewords
 > step 4's `ingestDocument()` gate bullet to match the ruled scope.
 > No order change.
 >
@@ -41,9 +41,8 @@ request. Exception: a mark a completing PR failed to write may be added
 afterwards by a pull request that says so and cites the issue tracking
 the omission.
 
-**Met gates.** A step's gate line may note that the gate is met, with
-the date and the pull request that met it; beside done marks, this is
-the only status the file carries.
+**Met gates.** When a step's gate opens, the gate line may gain a
+dated note naming the pull request that met it.
 
 **This file carries order, not status.** How much of a charter rule the
 code does today is the rule's Status line in INTENT.md. How far a piece of
@@ -80,7 +79,9 @@ Guidance is set in two places: one default for the database, and an
 optional value per entity, which wins. The host passes both in; the
 engine stores neither. The older whole-prompt override
 (`prompts.librarianSystemPrompt`) is marked deprecated in this step's
-planned release and removed in step 2's.
+planned release and removed in step 2's; the deprecation notice
+reached no published version (see `specs/librarian-guidance/`,
+Release).
 
 *Gate:* a spec, checked against INTENT.md. Rule 11 applies: the spec says
 how the change is measured, and no accuracy or cost claim is published
@@ -122,8 +123,8 @@ is planned in issue
 [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).
 
-*Gate:* a spec — met (`specs/source-pointers/`, owner-approved
-2026-11-14; schema additive only, rule 2).
+*Gate:* a spec — met (`specs/source-pointers/`, PR #385,
+owner-approved 2026-11-14; schema additive only, rule 2).
 
 ### Step 4 — A source store in the engine — PLANNED
 
