@@ -1,6 +1,6 @@
 # Source pointers on librarian facts
 
-**Status:** Draft (2026-11-13 — awaiting the owner's spec gate)
+**Status:** Approved (owner gate passed 2026-11-13, in-thread)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md). This spec
