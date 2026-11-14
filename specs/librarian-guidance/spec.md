@@ -466,7 +466,8 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 
 ## Release
 
-Minor (the number is release tooling's; expected 8.5.0). The setting
+Minor (the number is release tooling's; planned as 8.5.0, first
+published in 9.0.0 — see below). The setting
 and the marked section are additive. The
 built-in prompts change model output **only for hosts that set
 guidance** — new opt-in behavior, not changed behavior for an existing
@@ -484,8 +485,11 @@ first reached npm in **9.0.0**, together with the removal of
 `librarianSystemPrompt`. So no published version carries the
 deprecation notice: npm goes from 8.4.0, where the key works with no
 notice, to 9.0.0, where it is removed. `CHANGELOG.md` has no entry for
-this work, because the 9.0.0 section starts at the `v8.5.0` tag. The
-9.0.0 GitHub Release carries a note instead. The tag stays, by owner
+this work, because the 9.0.0 section starts at the `v8.5.0` tag and
+this spec's commits predate it (the `librarianSystemPrompt` removal
+and prompt-appendix entries in that section are the statement-kinds
+release's work, PR #380 — not this spec's). The 9.0.0 GitHub Release
+carries a note instead. The tag stays, by owner
 ruling 2026-11-14, because the 9.0.0 compare link depends on it.
 
 ## Non-goals
