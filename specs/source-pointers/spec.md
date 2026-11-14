@@ -370,10 +370,10 @@ path that can rewrite a stored pointer (`upsertForImport`'s
 `ON CONFLICT` SET, `EntryRepository.ts:468-495`) names those columns,
 so a pointer-differing re-import reindexes — harmlessly, because every
 reindex copies only the named columns and the pointer is not among
-them. The safety is
-therefore a set of hand-maintained lists, not a structural guarantee:
-test 14 pins it behaviorally under both index strategies so a future
-refactor toward whole-row serialization fails loudly.
+them. The safety is therefore a set of hand-maintained lists, not a
+structural guarantee: test 14 pins it behaviorally under both index
+strategies so a future refactor toward whole-row serialization
+fails loudly.
 
 ### Export, import, and OKF
 
@@ -698,9 +698,11 @@ byte-identical and double as the parity gate.
     because the import path's ledger behavior is not observable after
     `importDump` returns — it drains the ledger for the touched ids
     before returning, and under `merge: true` a pointer-only difference
-    with an equal `updated_at` skips the fact entirely.) This pins the
-    §Reads column-list
-    mechanism: a refactor to
+    with an equal `updated_at` skips the fact entirely.) After a
+    `merge: false` re-import whose pointer differs, a keyword search
+    for the sentinel still returns nothing — the harmless requeue path
+    §Reads describes, observed by outcome. This pins the §Reads
+    column-list mechanism: a refactor to
     whole-row serialization leaks into vectors and the keyword index,
     and this test fails.
 
