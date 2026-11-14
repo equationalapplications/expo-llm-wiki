@@ -302,9 +302,12 @@ export class ImportExportService {
         // `source_pointer_invalid` (fact id only, never fact text). Import
         // never rejects the fact over malformed optional provenance.
         const hasSourcePointerKey = 'source_pointer' in fact;
-        const pointerValidated = hasSourcePointerKey
-          ? validateSourcePointerValue((fact as unknown as Record<string, unknown>)['source_pointer'])
+        const rawPointerValue = hasSourcePointerKey
+          ? (fact as unknown as Record<string, unknown>)['source_pointer']
           : undefined;
+        const pointerValidated = hasSourcePointerKey
+          ? validateSourcePointerValue(rawPointerValue)
+          : null;
         if (pointerValidated === undefined) {
           emitDiagnostic(this.options, {
             code: 'source_pointer_invalid',
@@ -314,7 +317,7 @@ export class ImportExportService {
             detail: { factId: fact.id },
           });
         }
-        const sourcePointer = pointerValidated ?? null;
+        const sourcePointer = pointerValidated === undefined ? null : pointerValidated;
 
         const factObj: WikiFact = {
           id: fact.id,

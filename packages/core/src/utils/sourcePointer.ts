@@ -47,10 +47,12 @@ export function validateSourcePointerValue(
   for (const k of keys) {
     if (!(POINTER_SLOTS as readonly string[]).includes(k)) return undefined;
   }
-  if (!isStringOrNull(o['event_id']) || !isStringOrNull(o['ref']) || !isStringOrNull(o['quote'])) {
+  if (!isStringOrNull(o['event_id'] === undefined ? null : o['event_id']) ||
+      !isStringOrNull(o['ref'] === undefined ? null : o['ref']) ||
+      !isStringOrNull(o['quote'] === undefined ? null : o['quote'])) {
     return undefined;
   }
-  if (!isValidPosition(o['position'])) return undefined;
+  if (!isValidPosition(o['position'] === undefined ? null : o['position'])) return undefined;
   return {
     event_id: (o['event_id'] as string | null) ?? null,
     ref: (o['ref'] as string | null) ?? null,

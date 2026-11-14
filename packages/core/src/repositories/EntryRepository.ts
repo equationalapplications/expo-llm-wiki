@@ -68,8 +68,9 @@ function mapRowToFact(row: any): WikiFact {
   // read. Date.now() is cheap enough that per-row sampling is fine.
   const now = Date.now();
   const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
+  const sourcePointer = parseStoredSourcePointer(row.source_pointer);
 
-  return {
+  const mapped = {
     id: row.id,
     entity_id: row.entity_id,
     title: row.title,
@@ -108,10 +109,9 @@ function mapRowToFact(row: any): WikiFact {
     // Source pointer (specs/source-pointers): key appears only when non-null,
     // same temporal-fields pattern. Tolerant read: a malformed stored value
     // reads as null without throwing (test 1).
-    ...(parseStoredSourcePointer(row.source_pointer) != null
-      ? { source_pointer: parseStoredSourcePointer(row.source_pointer) }
-      : {}),
+    ...(sourcePointer ? { source_pointer: sourcePointer } : {}),
   };
+  return mapped as WikiFact;
 }
 
 function normalizeEmbeddingBlobValue(blob: unknown): Uint8Array | null {
