@@ -198,7 +198,7 @@ document's text as a *source*: stored as it is, searched with no model
 call, and never rewritten. Until that ships, the host keeps the source
 text. A pointer from each fact the librarian writes back to its source
 is planned too (#377); today those facts carry none — **status:
-shipped for the librarian write path** (9.1.0,
+shipped for the librarian write path** (next minor release,
 `specs/source-pointers/`: ops facts carry a `source_pointer`; legacy
 and heal facts carry none, recorded as the accepted gap). This rule's
 text is reworded in the pull request that ships the source store, not

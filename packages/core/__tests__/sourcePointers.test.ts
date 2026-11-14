@@ -82,6 +82,28 @@ describe('source pointers — ops write path (tests 2–3)', () => {
     expect(read.source_pointer).toEqual(pointer);
   });
 
+  it('test 12 (ops half): a pointer can only reach the written entity\'s own batch events, never another entity\'s id', async () => {
+    const { db, wiki, diagnostics } = mk([() => ({ facts: [factWith('e1')], tasks: [] })]);
+    await wiki.setup();
+    await insertEvents(db, ['u entity event summary']);
+    // A second entity's batch exists alongside, with non-colliding ids.
+    for (const [i, s] of ['v entity event summary', 'v entity event two'].entries()) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at, occurred_at)
+         VALUES (?, 'v', 'observation', ?, ?, ?)`,
+        [`evt_v${i + 1}`, s, 500 + i * 10, 500 + i * 10],
+      );
+    }
+    await wiki.runLibrarian('u');
+    const id = (await db.getFirstAsync<any>(`SELECT id FROM llm_wiki_entries WHERE entity_id = 'u'`))!.id;
+    const pointer = JSON.parse(await pointerOf(db, id));
+    // The label resolved inside u's own batch: the batch query is
+    // entity-scoped, so no cross-entity id can reach the pointer.
+    expect(pointer).toEqual({ event_id: 'evt_1', ref: null, quote: null, position: null });
+    expect(ofCode(diagnostics, 'source_pointer_unresolved')).toHaveLength(0);
+    expect(await db.getAllAsync<any>(`SELECT id FROM llm_wiki_entries WHERE entity_id = 'v'`)).toHaveLength(0);
+  });
+
   it('test 3: missing / null / unknown_label / non-string each emit one source_pointer_unresolved with reason + itemIndex and no fact text', async () => {
     for (const [name, source_event, reason] of [
       ['missing (absent)', undefined, 'missing'],
@@ -304,6 +326,18 @@ describe('source pointers — dump round-trip (tests 8 + 12)', () => {
     await target4.wiki.importDump(dumpPre);
     expect(await pointerOf(target4.db, id)).toBe(before);
     expect(ofCode(target4.diagnostics, 'source_pointer_invalid')).toHaveLength(0);
+
+    // Explicit `source_pointer: undefined` on an in-process dump counts as
+    // absent too (JSON semantics): stored pointer untouched, no diagnostic.
+    const target5 = mk([]);
+    await target5.wiki.setup();
+    await target5.wiki.importDump(dump);
+    const dumpUndef = JSON.parse(JSON.stringify(dump));
+    (dumpUndef.entities['u'].facts as any[]).find((f) => f.id === id)!.source_pointer = undefined;
+    const beforeUndef = await pointerOf(target5.db, id);
+    await target5.wiki.importDump(dumpUndef);
+    expect(await pointerOf(target5.db, id)).toBe(beforeUndef);
+    expect(ofCode(target5.diagnostics, 'source_pointer_invalid')).toHaveLength(0);
   });
 });
 

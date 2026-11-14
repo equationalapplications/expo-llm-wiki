@@ -494,8 +494,9 @@ export interface ReadOptions {
  * - `event_id`: the batch event the fact was extracted from (ops strategy),
  *   or null when unresolved/unsupported.
  * - `ref`: host-supplied ref slot; no producer exists in this release — always null.
- * - `quote`: a grounding-verified, normalized, length-capped quote from the
- *   named event's own corpus part (ops only), or null.
+ * - `quote`: a grounding-verified, normalized, length-capped (on the ops
+ *   write path; import restores verbatim) quote from the named event's
+ *   own corpus part (ops only), or null.
  * - `position`: offset slot; no producer exists in this release — always null.
  */
 export type WikiSourcePointer = {

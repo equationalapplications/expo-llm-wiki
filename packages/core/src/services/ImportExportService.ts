@@ -301,7 +301,12 @@ export class ImportExportService {
         // predicate; malformed imports as null and emits
         // `source_pointer_invalid` (fact id only, never fact text). Import
         // never rejects the fact over malformed optional provenance.
-        const hasSourcePointerKey = 'source_pointer' in fact;
+        // Presence is by JSON semantics, not the `in` operator: an explicit
+        // `source_pointer: undefined` on an in-process dump counts as absent.
+        // Treating it as present would emit a false `source_pointer_invalid`
+        // and let the SET CASE wipe the stored pointer.
+        const hasSourcePointerKey =
+          (fact as unknown as Record<string, unknown>)['source_pointer'] !== undefined;
         const rawPointerValue = hasSourcePointerKey
           ? (fact as unknown as Record<string, unknown>)['source_pointer']
           : undefined;
