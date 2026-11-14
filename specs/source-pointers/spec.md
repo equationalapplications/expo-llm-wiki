@@ -115,11 +115,23 @@ A fact carries one pointer. The ops prompt contract already says "the
 single event" (`prompts.ts:85`), so the engine has exactly one named
 event per fact. A list would add shape with no writer.
 
-The parser resolves the pointer only when the model's `source_event`
-value names exactly one label of the current batch. A value that names
-no batch label, names two labels, or names a label outside the batch is
-unresolved. An unresolved pointer stays `null` and, on the ops strategy,
-emits a diagnostic (§Diagnostics). The label space is batch-local
+The parser resolves the pointer only from the raw `source_event` value
+in the model's response. The rule, the same on both strategies:
+
+- The field is absent: no pointer, no resolution attempt. On ops this
+  emits the `missing` diagnostic (§Diagnostics); on legacy it does not.
+- The field is present: its value must be a string that names exactly
+  one label of the current batch. Any other present value — a
+  non-string, a string naming no batch label — is unresolved and emits
+  `unknown_label`. Today the parser resolves absent and invalid values
+  through one expression (`extract.ts:89`); the change splits them so
+  the two reasons are distinguishable.
+
+One pointer per fact, never a list: the ops prompt contract already
+says "the single event" (`prompts.ts:85`), so the engine has exactly one
+named event per fact. A list would add shape with no writer.
+
+The label space is batch-local
 (`e1`, `e2`, ...; `text.ts:11-12`), so a pointer from one pass never
 collides with another pass's labels: the engine resolves the label to
 the real event id at extract time, before any write.
@@ -146,7 +158,8 @@ The extract parser already resolves the label to a batch event
 The legacy prompt is unchanged. `LIBRARIAN_SYSTEM_PROMPT` keeps its
 exact text, so legacy prompts stay byte-identical on upgrade — the same
 upgrade-safety posture that the guidance release (#375) ruled. The
-legacy parser accepts `source_event` tolerantly: when a model returns
+legacy parser gains a tolerant read of `source_event` (new parsing,
+listed in §Files touched): when a model returns
 one and it resolves, the engine writes the pointer; when the field is
 absent, the pointer is null and **no diagnostic fires**, because the
 legacy contract never promised the field. An unknown label on legacy
@@ -155,6 +168,18 @@ legacy facts mostly carry a null pointer, and this spec records that gap
 as accepted: the ruled scope covers what the librarian writes from now
 on, and the ops strategy is the default since 8.0.0.
 
+### Heal restatements
+
+The heal pass writes librarian facts too: it builds a restated
+`WikiFact` with null source fields and upserts it
+(`packages/core/src/services/MaintenanceService.ts:1268-1275`). This
+release does not give heal facts a pointer, and the spec says so
+openly: heal's candidates carry no model-named `source_event` — the
+heal model restates existing facts, and there is no attribution signal
+to persist. Heal's write site keeps writing nulls, and a test pins the
+gap (§Test plan 13). Pointer attribution for heal restatements is a
+named follow-up.
+
 ### Quote rule
 
 The pointer's `quote` slot holds a quote the engine has verified. The
@@ -162,7 +187,9 @@ rule, identical on both strategies:
 
 - Grounding on and the verdict **grounded**: `quote` is the fact's first
   evidence quote (`fact.evidence[0]`), which grounding has proven to be
-  a substring of the source section (`grounding.ts:63-77`).
+  a substring of the source section. The verification runs at the write
+  site on both strategies: `checkGrounding(fact.evidence, ...)`
+  (`ops/apply.ts:76-78`, `legacy.ts:162-164`).
 - Grounding on and the verdict missing or ungrounded: `quote` is null.
   The fact follows the existing draft path (`grounding.ts:92-112`); the
   pointer's `event_id` still persists, because the attribution is
@@ -181,6 +208,11 @@ touches it:
 
 - Prune deletes event rows only. It never rewrites, nulls, or follows
   `source_pointer`.
+- Prune is watermark-guarded: under the ops and deferred strategies it
+  deletes only events the librarian has already processed
+  (`pruneThrough`, `EventRepository.ts:119-127`), so unprocessed events
+  are retention-held, never deleted. The 30-day default retention is
+  `pruneEventsAfter ?? 30` (`MaintenanceService.ts:254`).
 - Reads never dereference the pointer. No read path joins `events` on
   it, so a pruned target cannot fail a read.
 - A pointer to a pruned event means: "this fact came from the event with
@@ -230,9 +262,9 @@ existing `WikiDiagnosticDetail` discipline):
   could not resolve it. Detail: `itemIndex` (the fact's index in the
   response, reusing the `fact_rejected` convention) and `reason` with
   values `'missing'` (the field is absent; ops only, because the ops
-  contract requires it) or `'unknown_label'` (the value names no single
-  batch label). One diagnostic per affected fact, on the existing
-  diagnostics channel.
+  contract requires it) or `'unknown_label'` (the field is present but
+  is not a string naming exactly one batch label). One diagnostic per
+  affected fact, on the existing diagnostics channel.
 - `source_pointer_invalid` — import met a malformed pointer value and
   nulled it. Detail: `entryId`.
 
@@ -251,8 +283,9 @@ it.
 ## Rejected alternatives
 
 - **Reuse `source_ref` on librarian facts.** The `source_ref` machinery
-  is ingest ownership, not generic provenance: the `source_ref_index`
-  table and its partial unique index enforce a re-ingest race invariant
+  is ingest ownership, not generic provenance: the `entries_source_ref_idx`
+  index (`schema.ts:43`), the `source_ref_index` table and its partial
+  unique index enforce a re-ingest race invariant
   (`schema.ts:47-61`), and `forget({ sourceRef })` soft-deletes index
   rows as part of that contract (`MaintenanceService.ts:688-694`).
   Writing event ids into that column entangles librarian rows with
@@ -279,7 +312,8 @@ it.
 ## Files touched
 
 - `packages/core/src/db/schema.ts` — the `source_pointer` column and
-  the migration that adds it (additive; rule 2).
+  the new migration step that adds it (version 16; the schema currently
+  runs through version 15). Additive; rule 2.
 - `packages/core/src/types.ts` — `WikiSourcePointer`;
   `WikiFact.source_pointer`; the two `WikiDiagnosticCode` entries; the
   `WikiDiagnosticDetail` additions.
@@ -293,6 +327,9 @@ it.
   only.
 - `packages/core/src/repositories/EntryRepository.ts` — `mapRowToFact`
   returns the column; upsert writes it.
+- `packages/core/src/services/MaintenanceService.ts` — the heal pass's
+  fact literal carries `source_pointer: null` (the type requires the
+  field); no attribution logic is added (§Heal restatements).
 - `packages/core/src/services/ImportExportService.ts` — round-trip; the
   import validation and the `source_pointer_invalid` diagnostic.
 - `packages/core/src/utils/formatOkfBundle.ts` and
@@ -313,15 +350,16 @@ release, so the existing golden fixtures from #375 and #376 stay
 byte-identical and double as the parity gate.
 
 1. **Column and migration.** A fresh setup has the column; running the
-   new migration on a database at the previous schema version adds it;
-   every pre-existing row reads `source_pointer` as null.
+   new step (version 16) on a database at the previous version (15)
+   adds it; every pre-existing row reads `source_pointer` as null.
 2. **Ops pointer write.** A stub model response names the second event
    of a three-event batch; the stored row carries that event's id; a
    read returns it.
 3. **Ops diagnostics.** A missing `source_event` emits
    `source_pointer_unresolved` with reason `'missing'`; an unknown
-   label emits it with reason `'unknown_label'`; detail carries
-   `itemIndex` and no fact text; pointer null in both cases.
+   label emits it with reason `'unknown_label'`; a non-string value
+   emits it with reason `'unknown_label'`; detail carries
+   `itemIndex` and no fact text; pointer null in all three cases.
 4. **Legacy prompt parity.** With a stub returning facts without
    `source_event`, the built legacy prompt is byte-identical to
    today's (golden strings captured from the unmodified code), the
@@ -353,6 +391,9 @@ byte-identical and double as the parity gate.
 12. **Entity isolation.** The pointer only ever carries an event id
     from the same entity's batch; a test asserts no cross-entity id can
     reach a pointer (rule 3).
+13. **Heal gap pinned.** A heal restatement writes a librarian fact
+    whose pointer is null and emits no source-pointer diagnostic; the
+    documented gap stays observable.
 
 ## Release
 
@@ -364,6 +405,8 @@ behavior change. No BREAKING CHANGE footer.
 
 ## Non-goals
 
+- Pointer attribution for heal restatements (§Heal restatements; named
+  follow-up).
 - A `forget({ eventId })` selector (named follow-up; the pointer shape
   supports it).
 - A host-supplied ref channel (no producer exists; the source store,
