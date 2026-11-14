@@ -375,6 +375,10 @@ export class PromptService {
     return {
       systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian'),
       userPrompt: `Events:\n${lines.join('\n')}`,
+      // Corpus entries are one-per-batch-event in batch order (summaries are
+      // TEXT NOT NULL, so the filter inside buildGroundingCorpus drops
+      // nothing): extract.ts stores a candidate's `sourcePartIndex` as the
+      // batch index and buildSourcePointer reads the quote back by it.
       ...(grounding ? { groundingCorpus: buildGroundingCorpus(events.map((l) => l.event.summary)) } : {}),
     };
   }

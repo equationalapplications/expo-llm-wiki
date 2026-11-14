@@ -46,6 +46,12 @@ function buildSourcePointer(
   if (candidate.sourceEventId === null) return null;
   let quote: string | null = null;
   if (groundingOn && verdict?.status === 'grounded' && candidate.sourcePartIndex !== null) {
+    // `sourcePartIndex` is the batch index, and the grounding corpus is built
+    // one entry per batch event in the same order (PromptService builds it
+    // from the same batch array). `events.summary` is TEXT NOT NULL, so
+    // buildGroundingCorpus's non-string filter can never drop an entry and
+    // shift a later index. Keep these two invariants paired: if either
+    // changes, quotes attribute to the wrong event silently.
     const part = groundingCorpus?.[candidate.sourcePartIndex];
     if (part !== undefined) {
       quote = verdict.retained.find((q) => part.includes(q)) ?? null;

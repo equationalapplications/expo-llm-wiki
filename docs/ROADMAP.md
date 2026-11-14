@@ -98,8 +98,9 @@ from: the source event and, when grounding permits, the verified quote
 (`ref` and `position` slots exist with no producer; heal and legacy
 facts carry no pointer — the accepted gap). Verified quotes survive
 prune inside the fact's own record (owner ruling, 2026-11-14). Today a
-host removes a quote by forgetting its fact by entry id,
-`forget({ entryId })`; deleting quotes by event id, `forget({ eventId })`,
+host hides a quote by forgetting its fact by entry id,
+`forget({ entryId })` — reads and exports drop it immediately, and prune
+purges the row; deleting quotes by event id, `forget({ eventId })`,
 is planned in issue
 [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).

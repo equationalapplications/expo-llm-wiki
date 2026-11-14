@@ -54,7 +54,7 @@ const wiki = createWiki(db, {
 | `classification_low_confidence` / `classification_invalid` | A classifier backfill answer was rejected |
 | `librarian_gate` / `librarian_op_rejected` / `resolve_failed` / `contradicts_document` | Outcomes of the ops librarian |
 | `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one |
-| `source_pointer_invalid` | An import met a malformed source pointer value and stored a null pointer |
+| `source_pointer_invalid` | A dump import met a malformed source pointer value and stored a null pointer (OKF frontmatter reports malformed pointers differently: check `dropped_pointer_values` on the `parseOkfBundle` result) |
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet. To delete them on request, see [Wipe an entity completely](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely) |

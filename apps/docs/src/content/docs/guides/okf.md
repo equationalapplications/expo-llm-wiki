@@ -119,6 +119,11 @@ writes it back from the dump's `edges`.
 - The v0.2 trust and provenance fields have their own write methods: `writeOkfTrust`,
   `writeOkfSources`, `setLifecycleStatus`, `setStaleAfter`, and `setGeneratedBy`. Each has a
   `…Task` variant.
+- Librarian facts can carry a `source_pointer` frontmatter map (the event a fact came from,
+  plus its grounding-verified quote). A map with no non-null slots imports as a null pointer,
+  and a malformed map is dropped at parse time: `parseOkfBundle` reports it in
+  `dropped_pointer_values` instead of failing — check that field on hosts you import into.
+  The `source_pointer_invalid` diagnostic fires only on the JSON dump-import path.
 
 ## OKF across the ecosystem
 
