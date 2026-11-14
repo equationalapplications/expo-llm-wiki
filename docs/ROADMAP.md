@@ -1,10 +1,15 @@
 # ROADMAP — what gets built, in what order
 
-> **ROADMAP.md** · v1.0 · 2026-11-13 ·
+> **ROADMAP.md** · v1.1 · 2026-11-14 ·
 > Authority: derived from [INTENT.md](../INTENT.md) and from owner rulings
-> of 2026-11-12 and 2026-11-13. If this file and INTENT.md disagree,
-> INTENT.md wins on intent and this file is wrong until amended. Changing
-> the order is an amendment: say so in the pull request, don't drift.
+> of 2026-11-12, 2026-11-13 and 2026-11-14. If this file and INTENT.md
+> disagree, INTENT.md wins on intent and this file is wrong until amended.
+> Changing the order is an amendment: say so in the pull request, don't
+> drift.
+>
+> v1.1 amendment (2026-11-14): records the owner's ruling on step 4's
+> scope (the store only), names two follow-ons as exploratory, and adds
+> the done mark that step 1 was missing. No order change.
 >
 > Scope note: this is the first roadmap for this repository. It starts
 > with the "sharper memory" work ruled in that week. It is not an inventory
@@ -48,6 +53,8 @@ straight after it, before step 2, because its librarian does not use
 this engine's prompts.
 
 ### Step 1 — Librarian guidance and the general leave-out rule — PLANNED
+
+Done — merged 2026-11-13, PR #379, spec [librarian-guidance](../specs/librarian-guidance/spec.md)
 
 A host can add a few plain lines of guidance to the librarian, and they
 work on the `ops` chain as well as the `legacy` one. With guidance comes
@@ -114,17 +121,26 @@ The engine stores a document's text as it is, indexes it, and searches it
 with no model call. A read can then return two labelled groups:
 statements the librarian wrote, and passages from sources. A host that
 hands the engine a document no longer has to pay a model to turn it into
-facts before it can be found.
+facts before it can be found. Issue
+[#390](https://github.com/equationalapplications/expo-llm-wiki/issues/390).
+
+**Scope: the store only** (owner ruling, 2026-11-14). `ingestDocument()`
+does not change. A host that also wants facts from a document calls it
+as it does today, and those facts point to the document by its
+`sourceRef`, as today. A host that does not use the store gets exactly
+what it has today, so an upgrade changes nothing for it.
 
 *Gate:* step 3 merged, so pointers and the store agree on how a source is
-named. Then a spec that settles, at least:
+named — met 2026-11-14 (PR #385). Then a spec that settles, at least:
 
 - how rule 5 ("documents are immutable facts") is reworded, in the same
   pull request that ships the store;
 - that the store makes no model call and spends no tokens (rules 1 and 7);
 - that every schema change is additive (rule 2), and that no dependency
   is added (rule 8);
-- what `ingestDocument()` does once the store exists;
+- what links a stored source to the facts `ingestDocument()` writes
+  under the same `sourceRef`, now that the call itself is ruled
+  unchanged;
 - how sources are removed (`forget()`), exported and imported.
 
 *Why here:* it is the largest of the four, and nothing waits on it.
@@ -145,6 +161,16 @@ Curated Thoughts needs no change.
   no better record to point to (a companion app, for example) through
   the old and the new prompts and shows that no fact is lost. Without
   that test, this stays unbuilt.
+- **Extraction that reads from the source store.** `ingestDocument()`
+  pointed at a stored source instead of being sent the text again, with
+  each fact pointing at the passage it came from. It would be the first
+  producer for the source pointer's `ref` and `position` slots. Named on
+  2026-11-14 and left out of step 4; not ruled.
+- **Document facts the librarian may replace.** Once the engine keeps a
+  document's text, the text is the evidence, and facts drawn from it
+  could be replaced or sharpened like any other statement. This changes
+  what rule 5 means, so it needs its own ruling before anyone explores
+  it.
 
 ## What is intentionally absent
 
