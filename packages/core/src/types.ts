@@ -486,6 +486,25 @@ export interface ReadOptions {
   tokenBudget?: number;
 }
 
+/**
+ * A source pointer: the structured reference from a librarian fact to the
+ * event it came from, with its supporting quote and its position
+ * (specs/source-pointers §The pointer). Stored as JSON in the nullable
+ * `source_pointer` column on entries.
+ * - `event_id`: the batch event the fact was extracted from (ops strategy),
+ *   or null when unresolved/unsupported.
+ * - `ref`: host-supplied ref slot; no producer exists in this release — always null.
+ * - `quote`: a grounding-verified, normalized, length-capped quote from the
+ *   named event's own corpus part (ops only), or null.
+ * - `position`: offset slot; no producer exists in this release — always null.
+ */
+export type WikiSourcePointer = {
+  event_id: string | null;
+  ref: string | null;
+  quote: string | null;
+  position: { start: number; length: number } | null;
+};
+
 export interface WikiFact {
   id: string;
   entity_id: string;
@@ -566,6 +585,9 @@ export interface WikiFact {
   superseded_by?: string | null;
   /** Epoch ms the supersession was recorded (transaction time). Audit only. */
   superseded_at?: number | null;
+  // --- Source pointer (specs/source-pointers). Present on mapped facts only when non-null. ---
+  /** Structured provenance from this librarian fact to its source event, with the verified quote. Null for legacy/heal/ingest facts. */
+  source_pointer?: WikiSourcePointer | null;
 }
 
 export interface WikiTask {
@@ -858,7 +880,9 @@ export type WikiDiagnosticCode =
   | 'external_deletion_pending'
   | 'external_deletion_discarded'
   | 'guidance_too_long'
-  | 'guidance_resolver_failed';
+  | 'guidance_resolver_failed'
+  | 'source_pointer_unresolved'
+  | 'source_pointer_invalid';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
@@ -1053,6 +1077,13 @@ export interface MemoryBundle {
 export interface MemoryDump {
   generatedAt: number;
   entities: Record<string, MemoryBundle>;
+  /**
+   * Source-pointer parse report (specs/source-pointers §Export, import, and OKF).
+   * Present ONLY when `parseOkfBundle` dropped a malformed `source_pointer`
+   * value: entry ids and a reason slug — never raw pointer values, because a
+   * pointer can carry quote text. Export-only metadata; `importDump` ignores it.
+   */
+  dropped_pointer_values?: Array<{ factId: string; reason: string }>;
 }
 
 export interface FormattedMemoryDump {

@@ -369,6 +369,21 @@ export const MIGRATIONS: Migration[] = [
       if (row?.n) await db.execAsync(fts5PendingIndexesDdl(prefix));
     },
   },
+  {
+    version: 16,
+    description: 'Source pointers on librarian facts: nullable source_pointer TEXT on entries',
+    run: async (db, prefix) => {
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction —
+      // same constraint as v2/v3/v5/v7/v8/v10/v11/v13. Idempotent PRAGMA guard
+      // (v13 pattern). No backfill: facts stored before this release have no
+      // producer for a pointer; null is the honest value (spec §Non-goals).
+      const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+      const existing = new Set(cols.map((c) => c.name));
+      if (!existing.has('source_pointer')) {
+        await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN source_pointer TEXT`);
+      }
+    },
+  },
 ];
 
 /**
