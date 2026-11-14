@@ -130,7 +130,7 @@ describe('rename-retire (#280 B4, 7(u))', () => {
     await liveStore(10);
     await swapTokenizer();
     await new Fts5IndexStrategy(db, P, meta).init();
-    await meta.setMeta('schema_version', '15', db);
+    await meta.setMeta('schema_version', '16', db);
     await meta.setMeta('source_ref_normalize_stamp', JSON.stringify({ schema_version: 14, normalize_alg: 1 }), db);
     expect(await probePendingWork(db, meta, P)).toBeNull();
   });

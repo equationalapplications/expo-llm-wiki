@@ -11,6 +11,7 @@ import type { VectorRemovalService } from './VectorRemovalService';
 import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
+import { validateSourcePointerValue } from '../utils/sourcePointer';
 import { seedLegacyWatermark } from './legacyWatermark';
 import { parseSourceWatermark, planEventStamps } from './importEventStamps';
 
@@ -293,6 +294,28 @@ export class ImportExportService {
           }
         }
 
+        // Source pointer import rule (specs/source-pointers §Export, import,
+        // and OKF): presence is per-row. Absent key (a pre-release dump) →
+        // null pointer, no diagnostic, stored pointer untouched (the SET
+        // CASE in upsertForImport). Present key → validated with the exact
+        // predicate; malformed imports as null and emits
+        // `source_pointer_invalid` (fact id only, never fact text). Import
+        // never rejects the fact over malformed optional provenance.
+        const hasSourcePointerKey = 'source_pointer' in fact;
+        const pointerValidated = hasSourcePointerKey
+          ? validateSourcePointerValue((fact as unknown as Record<string, unknown>)['source_pointer'])
+          : undefined;
+        if (pointerValidated === undefined) {
+          emitDiagnostic(this.options, {
+            code: 'source_pointer_invalid',
+            operation: 'importDump',
+            trigger: 'call',
+            entityId,
+            detail: { factId: fact.id },
+          });
+        }
+        const sourcePointer = pointerValidated ?? null;
+
         const factObj: WikiFact = {
           id: fact.id,
           entity_id: entityId,
@@ -310,6 +333,7 @@ export class ImportExportService {
           deleted_at: fact.deleted_at,
           embedding_blob: blobData ?? undefined,
           okf_type: fact.okf_type ?? null,
+          source_pointer: sourcePointer,
           // OKF v0.2 — forwarded as-is; parseOkfBundle / the caller is responsible for
           // populating these per spec, importDump does not derive or validate them.
           lifecycle_status: fact.lifecycle_status ?? 'stable',
@@ -328,7 +352,7 @@ export class ImportExportService {
           })(),
         };
 
-        await this.entryRepo.upsertForImport(factObj, tx);
+        await this.entryRepo.upsertForImport(factObj, tx, hasSourcePointerKey);
 
         // Temporal columns (spec §4.4): import is replace semantics, so an
         // absent key clears. Outbox off — upsertForImport already staged the row.

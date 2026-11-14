@@ -451,7 +451,11 @@ export class EntryRepository extends BaseRepository {
     return rows.map((row) => row.id);
   }
 
-  async upsertForImport(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
+  async upsertForImport(
+    fact: WikiFact,
+    tx: SQLiteAdapter,
+    sourcePointerPresent = false,
+  ): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
@@ -466,14 +470,22 @@ export class EntryRepository extends BaseRepository {
     // (`entity_id = excluded.entity_id`, no owner predicate). It is safe only
     // because ImportExportService skips foreign-owned IDs before calling it.
     // Do not model a new write path on this method; use `upsert`.
+    // Source pointer (specs/source-pointers §Export, import, and OKF): a
+    // static SET list cannot express "absent means untouched", so the import
+    // path carries a per-row presence flag and the SET clause switches on it.
+    // A pre-release dump (flag false) can neither null a stored pointer nor
+    // emit a storm of false source_pointer_invalid reports — a deliberate
+    // departure from the temporal replace semantics next to it, because a
+    // pre-release dump is the exact case this rule exists for. No comments
+    // inside the SQL template itself: everything in the backticks is SQL.
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -501,7 +513,8 @@ export class EntryRepository extends BaseRepository {
         last_verified_by = excluded.last_verified_by,
         okf_sources = excluded.okf_sources,
         okf_verified = excluded.okf_verified,
-        okf_usage_window = excluded.okf_usage_window`,
+        okf_usage_window = excluded.okf_usage_window,
+        source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE source_pointer END`,
       [
         fact.id,
         fact.entity_id,
@@ -529,6 +542,10 @@ export class EntryRepository extends BaseRepository {
         fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
+        serializeSourcePointer(fact.source_pointer),
+        // The presence flag binds to the SET clause's CASE, AFTER the INSERT
+        // values above.
+        sourcePointerPresent ? 1 : 0,
       ],
     );
 

@@ -129,7 +129,6 @@ export async function applyOps(
       if (g.candidate.pointerUnresolved !== null) {
         input.diagnostics.push({
           ...diagBase,
-          factId: id,
           code: 'source_pointer_unresolved',
           detail: { factId: id, itemIndex: g.candidate.index, reason: g.candidate.pointerUnresolved },
         });
