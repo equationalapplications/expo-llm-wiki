@@ -176,8 +176,8 @@ Curated Thoughts needs no change.
   extracted and that drop out of search with age. Under step 4's ruling
   nothing in the store is extracted unless the host asks, so only the
   ageing rule is missing. Left out of step 4 (owner ruling,
-  2026-11-14). Step 4's spec leaves room to add a per-source age later
-  as an additive change, and does not build it.
+  2026-11-14). Step 4's spec must leave room to add a per-source age
+  later as an additive change; the ruled scope does not build it.
 
 ## What is intentionally absent
 
