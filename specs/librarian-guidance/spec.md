@@ -274,7 +274,8 @@ and a **second message** covered a host that set
 warning and a silently ignored override, and the existing message's
 "now defaults to 'ops'" text was false for it. The existing message
 and its test assertions (including the `strategy: 'legacy'` substring
-at `engineDefaults.test.ts:83`) stayed; the new case added a message,
+at `engineDefaults.test.ts:83` at the `v8.5.0` tag) stayed; the new
+case added a message,
 it did not replace one. None of that reached npm: 9.0.0 removed the
 key (owner ruling 2026-11-13; the 9.0.0 break covers exactly the
 listed removals and nothing else), and the only warning today is the
@@ -477,25 +478,31 @@ built-in prompts change model output **only for hosts that set
 guidance** — new opt-in behavior, not changed behavior for an existing
 host — because the rule sentence rides the guidance section and nothing
 is added when guidance is absent. The `changedDefaultWarnings` text
-change is a message improvement, not a behavior change. Deprecation
-notice on `librarianSystemPrompt` is the ruling's placement (deprecate
-now, remove in 9.0.0 with the #376 breaks).
+change is a message improvement, not a behavior change. A deprecation
+notice on `librarianSystemPrompt` was the ruling's planned placement
+(deprecate in the 8.5.0 release, remove in 9.0.0 with the #376
+breaks) — see the Release paragraph below for what actually
+published.
 
-**What was published (added 2026-11-14, issue #391).** The release run
-for PR #379 tagged `v8.5.0`, then failed before publishing: the step
-that opens the release PR got `HTTP 401: Bad credentials`. No 8.5.0
-reached npm, and there is no 8.5.0 GitHub Release. This spec's work
-first reached npm in **9.0.0**, together with the removal of
-`librarianSystemPrompt`. So no published version carries the
-deprecation notice: npm goes from 8.4.0, where the key works with no
-notice, to 9.0.0, where it is removed. `CHANGELOG.md` has no entry for
-this work, because the 9.0.0 section starts at the `v8.5.0` tag and
-this spec's commits predate it (the `librarianSystemPrompt` removal
-and prompt-appendix entries in that section are the statement-kinds
-release's work, PR #380 — not this spec's). The 9.0.0 GitHub Release
-carries a note instead. The tag stays for now — deleting a pushed tag
-is the owner's call (issue #391) — and the 9.0.0 compare link depends
-on it.
+**What was published (added 2026-11-14, issue #391).** Release 8.5.0
+was tagged but never published: the release run on `3438c41f` failed
+in Phase 1 with `HTTP 401: Bad credentials` ([run
+43488167548](https://github.com/equationalapplications/expo-llm-wiki/actions/runs/43488167548));
+how the tag reached origin is undetermined (issue #391, "Not
+determined"). No 8.5.0 reached npm, and there is no 8.5.0 GitHub
+Release. This spec's work first reached npm in **9.0.0**, together
+with the removal of `librarianSystemPrompt`. The key is read only
+under `strategy: 'legacy'`; 8.4.0 warns a host that relies on the
+`ops` default to pin `legacy` — but no published version carries a
+notice that the key is deprecated or removed, and 9.0.0 removes it.
+`CHANGELOG.md` has no entry for this work, because the 9.0.0 section
+starts at the `v8.5.0` tag and this spec's commits predate it (the
+`librarianSystemPrompt` removal and prompt-appendix entries in that
+section are the statement-kinds release's work, PR #380 — not this
+spec's). The 9.0.0 GitHub Release carries a note instead. The tag
+`v8.5.0` is a lightweight tag on `3438c41f`; it stays for now —
+deleting a pushed tag is the owner's call (issue #391) — and the
+9.0.0 compare link depends on it.
 
 ## Non-goals
 
