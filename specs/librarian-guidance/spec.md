@@ -5,7 +5,9 @@ tests c01c7809 + 9035ae14, docs ad70e8e6; full core suite 211 files /
 2426 tests green, golden fixture byte-parity, docs site builds. Spec
 gate closed by the owner 2026-11-13 — Fable gate + full written-work
 ladder converged, all findings addressed; merge ask and design points
-ratified in-session)
+ratified in-session). Revision 2026-11-14: first published in 9.0.0.
+The 8.5.0 release was tagged and never published (issue #391); see
+Release.
 **Date:** 2026-11-13
 **Intent check:** Rule 3 — the per-entity value keeps one database's many
 memories separate, and neither value is stored, so nothing mixes. Rule 5 —
@@ -27,8 +29,8 @@ step 1 (`docs/ROADMAP.md`, landed by PR #378 on 2026-11-13, merge
 commit `ff13e74a`). Owner rulings
 2026-11-12 and 2026-11-13 (recorded in the issue #375 body and the
 2026-11-13 handoff; INTENT.md carries no amendment for them — the
-handoff states the design is settled without one). Minor release
-(8.5.0): see Release.
+handoff states the design is settled without one). Minor release,
+planned as 8.5.0; first published in 9.0.0: see Release.
 
 ## Problem
 
@@ -473,6 +475,18 @@ is added when guidance is absent. The `changedDefaultWarnings` text
 change is a message improvement, not a behavior change. Deprecation
 notice on `librarianSystemPrompt` is the ruling's placement (deprecate
 now, remove in 9.0.0 with the #376 breaks).
+
+**What was published (added 2026-11-14, issue #391).** The release run
+for PR #379 tagged `v8.5.0`, then failed before publishing: the step
+that opens the release PR got `HTTP 401: Bad credentials`. No 8.5.0
+reached npm, and there is no 8.5.0 GitHub Release. This spec's work
+first reached npm in **9.0.0**, together with the removal of
+`librarianSystemPrompt`. So no published version carries the
+deprecation notice: npm goes from 8.4.0, where the key works with no
+notice, to 9.0.0, where it is removed. `CHANGELOG.md` has no entry for
+this work, because the 9.0.0 section starts at the `v8.5.0` tag. The
+9.0.0 GitHub Release carries a note instead. The tag stays, by owner
+ruling 2026-11-14, because the 9.0.0 compare link depends on it.
 
 ## Non-goals
 
