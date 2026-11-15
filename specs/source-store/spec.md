@@ -303,9 +303,15 @@ strategies, reusing the machinery that exists:
   strategy. The probe already tests FTS5 and json1 together, which the drain
   needs.
 
-The spec does not assume expo-sqlite ships FTS5 on any device, because no
-device measurement exists (issue #390, "Not checked"). The store works under
-both strategies by construction. The fallback heap is unbounded across
+expo-sqlite ships SQLite with FTS3, FTS4, and FTS5 enabled by default on
+Android and iOS — the config plugin's `enableFTS` defaults to `true` in
+every SDK this cycle targets (55–58, docs.expo.dev/versions/sdk/sqlite) —
+so a normal native build has FTS5; on web the WebAssembly build ships
+without full-text search unless the host supplies a custom build
+(`configureWeb()`, SDK 58), and any build can opt out. The store does not
+rely on that default: the strategy probe tests FTS5 at startup and falls
+back to MiniSearch, so the store works under both strategies by
+construction. The fallback heap is unbounded across
 entities: nothing caps the sum, and this spec publishes no heap number
 (rule 11). What bounds the risk is the store-time per-entity cap plus the
 owner-gated defaults; if a database-wide cap is ever needed, it arrives as
@@ -398,8 +404,11 @@ the sources silently, because those importers strip fields outside their
 typed bundle. This spec proposes that answer, consistent with the existing
 treatment of unknown fields; it adds no version handshake. Rule 6 prefers a
 diagnostic over a silent drop, and no diagnostic is possible in an engine
-that predates the field, so this loss needs the owner's explicit
-acceptance; the controller asks for it at the spec stop. A new
+that predates the field, so this loss needed the owner's explicit
+acceptance — accepted at the spec stop, 2026-11-15 (Kurt VanDusen): the
+downgrade-import path loses stored source texts silently, the facts'
+source pointers survive, and re-fetching the source remains the only
+recovery. A new
 engine importing an old dump sees no `storedSources` field and stores
 nothing —
 correct, because the old engine stored nothing.
@@ -597,6 +606,7 @@ Ruled out, named so nobody builds them by accident:
   through, and the cloud contract.
 - Any change to what a host on today's API gets on upgrade.
 - OKF markdown export of sources.
-- A device measurement of expo-sqlite FTS5 availability — named in the
-  issue as "not checked"; the store works under both strategies by
-  construction, and the gap stays named here rather than closed by a claim.
+- A device measurement of expo-sqlite FTS5 availability on a real device —
+  the docs default (`enableFTS: true`, SDKs 55–58) is now cited in §6, but
+  a runtime probe on shipped hardware remains the ground truth; the store
+  works under both strategies by construction.
