@@ -10,6 +10,7 @@ import type {
   PassageHit,
 } from './search/IndexStrategy';
 import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
+import type { SQLiteAdapter } from '../types';
 
 export interface ScoredRow {
   id: string;
@@ -326,6 +327,35 @@ export class SearchService {
     return results
       .sort((a, b) => this._compareSearchResults(a, b))
       .slice(0, limit);
+  }
+
+  /**
+   * Post-commit passage index sync (spec source-store section 6). FTS5: drains the
+   * passage ledger (per document, entity-scoped when given). MiniSearch: reloads
+   * the entity's stored passages (all stored entities when omitted: the open-time
+   * pass). Serialized on the sync chain; never rejects, like sync().
+   */
+  async syncPassages(
+    db: SQLiteAdapter,
+    prefix: string,
+    entityId?: string,
+    deadline?: number,
+  ): Promise<void> {
+    const s = this.indexStrategy as unknown as {
+      drainPassages?: (o: { entityId?: string; deadline?: number }) => Promise<void>;
+      reindexSourcePassages?: (db: SQLiteAdapter, prefix: string, entityId?: string) => Promise<void>;
+    };
+    if (!s.drainPassages && !s.reindexSourcePassages) return;
+    const work = this.syncChain.then(async () => {
+      try {
+        if (s.drainPassages) await s.drainPassages({ entityId, deadline });
+        else await s.reindexSourcePassages!(db, prefix, entityId);
+      } catch (err) {
+        console.warn(`[WikiMemory] passage index sync failed for ${entityId ?? '*'}:`, err);
+      }
+    });
+    this.syncChain = work;
+    return work;
   }
 
   /**

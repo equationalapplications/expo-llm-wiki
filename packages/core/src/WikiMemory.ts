@@ -26,6 +26,7 @@ import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
+import { SourceStoreService, type StoreSourceResult } from './services/SourceStoreService';
 import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
 import { createIndexStrategy } from './services/search/createIndexStrategy';
 import { monotonicNow } from './utils/monotonicNow';
@@ -125,6 +126,7 @@ export class WikiMemory {
   private importExportService: ImportExportService;
   private retrievalService: RetrievalService;
   private writeService: WriteService;
+  private sourceStoreService: SourceStoreService;
   private promptService: PromptService;
   private ontologyService: OntologyService;
   private graphTraversalService: GraphTraversalService;
@@ -238,6 +240,7 @@ export class WikiMemory {
       this.metadataRepo,
       this.searchService,
     );
+    this.sourceStoreService = new SourceStoreService(this.db, this.prefix, this.options, this.jobManager);
     this.writeService = new WriteService(
       this.db,
       this.options,
@@ -467,6 +470,8 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
+    // Spec source-store §6: FTS5 drains the passage ledger; the fallback re-indexes every stored entity at open.
+    await this.searchService.syncPassages(this.db, this.prefix, undefined, openDeadline);
     await this.startSetupRemovalDrain();
   }
 
@@ -998,6 +1003,7 @@ export class WikiMemory {
             // A new MiniSearch index starts empty and needs the full sync. A ledger
             // strategy gets its one quantum from the syncStale() below (#284 review).
             if (this.searchService.isKeywordAvailable() && !this.searchService.hasLedger()) await this.searchService.sync();
+            if (this.searchService.isKeywordAvailable()) await this.searchService.syncPassages(this.db, this.prefix);
           } finally {
             if (this.searchService.isKeywordAvailable()) {
               this.reinitFailures = 0;
@@ -1044,7 +1050,12 @@ export class WikiMemory {
   }
 
   async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<import('./types').ImportDumpResult> {
-    return this.importExportService.importDump(dump, opts);
+    try {
+      return await this.importExportService.importDump(dump, opts);
+    } finally {
+      // Import re-cuts stored sources inside its transaction; index them once it committed (spec §6, §8).
+      await this.searchService.syncPassages(this.db, this.prefix);
+    }
   }
 
   /**
@@ -1070,7 +1081,37 @@ export class WikiMemory {
     params: ForgetParams,
     opts?: { dryRun?: boolean },
   ): Promise<ForgetResult> {
-    return this.maintenanceService.forget(entityId, params, opts);
+    try {
+      return await this.maintenanceService.forget(entityId, params, opts);
+    } finally {
+      // Spec §5/§6: removal sync for stored passages, after the delete committed (also when the
+      // external-deletion hook threw, since the local delete stays committed). A clearAll
+      // touches every entity, so it syncs all.
+      if (!opts?.dryRun) {
+        await this.searchService.syncPassages(this.db, this.prefix, params.clearAll ? undefined : entityId);
+      }
+    }
+  }
+
+  /** Store a source's text (spec source-store §7). Refusals return `stored: false`; a busy lock throws. */
+  async storeSource(
+    entityId: string,
+    params: { sourceRef: string; sourceHash: string; text: string },
+  ): Promise<StoreSourceResult> {
+    assertEntityId(entityId);
+    const result = await this.sourceStoreService.storeSource(entityId, params);
+    if (result.stored) await this.searchService.syncPassages(this.db, this.prefix, entityId);
+    return result;
+  }
+
+  async getStoredSource(entityId: string, sourceRef: string) {
+    assertEntityId(entityId);
+    return this.sourceStoreService.getStoredSource(entityId, sourceRef);
+  }
+
+  async listStoredSources(entityId: string) {
+    assertEntityId(entityId);
+    return this.sourceStoreService.listStoredSources(entityId);
   }
 
   /**
