@@ -170,7 +170,8 @@ to catch.
 - `source_passages` — one row per indexable passage:
   `id`, `entity_id`, `document_id`, `seq`, `start_offset`, `end_offset`.
   Passage text is not stored: the engine slices it from `source_documents.text`
-  at index and read time, so the text exists once and stays as handed.
+  at index and read time, so the canonical text exists once and stays as
+  handed (FTS5 keeps its own passage copy — §5).
   Every offset is a UTF-16 code-unit offset into the text as handed — JS
   `slice` semantics — and the engine never converts one through SQL
   `substr()`, which counts code points and would drift on astral
@@ -243,9 +244,9 @@ re-ingest: the engine never keeps two versions of one `sourceRef`'s text.
 Storing the same `sourceRef` and same `sourceHash` again is a no-op that
 returns the existing state, only when the engine's `text_hash` matches what
 is stored; if the text differs under the same declared pair, `storeSource`
-refuses with `SOURCE_STORE_HASH_MISMATCH` and changes nothing. A second
+refuses with `source_store_hash_mismatch` and changes nothing. A second
 `sourceRef` carrying a `source_hash` that an existing row of either kind
-already holds refuses with `SOURCE_STORE_DUPLICATE_HASH`, and changes nothing. The check
+already holds refuses with `source_store_duplicate_hash`, and changes nothing. The check
 runs against both tables that carry a hash: the store's own UNIQUE index
 (`source_documents`) and the live rows of the facts registry
 (`source_ref_index`, which is partial on `deleted_at IS NULL`), so a forgotten
@@ -277,7 +278,15 @@ strategies, reusing the machinery that exists:
 
 - FTS5: a `source_passages_fts` virtual table fed through the same
   enqueue-and-drain ledger pattern as `entries_fts`, so writes stay budgeted
-  and crash-safe. The passage FTS objects — the virtual table, its map and
+  and crash-safe. One deliberate departure, stated so the plan writer does
+  not hit it on day one: the passage drain is not all-SQL. The `entries_fts`
+  ledger keeps memory flat because row text never enters JS; passage
+  slicing cannot, since §3 rules the offsets UTF-16 and forbids SQL
+  `substr()`. The passage drain reads the drained document's text into JS,
+  slices there, and writes the rows; transient memory is bounded by
+  `maxCharsPerSource` for the one document being drained, never the whole
+  store. That bounded cost is accepted; the ledger keeps the budgeting and
+  crash-safety properties. The passage FTS objects — the virtual table, its map and
   ledger, and the triggers — are created by the strategy's init, the way the
   `entries_fts` objects are today, not by `setupDatabase`; they appear in
   Files touched for that reason.
@@ -313,7 +322,7 @@ Three new calls on `WikiMemory`, all opt-in:
   return feeds today. The engine computes `text_hash` itself and enforces
   the no-op and refusal rules of §5. Text that cannot round-trip — a lone
   surrogate or an embedded NUL — refuses with
-  `SOURCE_STORE_TEXT_NOT_STORABLE`. Refusals follow the engine's rule-6
+  `source_store_text_not_storable`. Refusals follow the engine's rule-6
   convention: a policy refusal returns a result carrying the diagnostic
   (`{ stored: false, diagnostics }`) and does not throw; only an invalid
   argument throws. The one engine-wide exception is the busy lock: when the
@@ -363,8 +372,9 @@ methods is additive. A host on today's API sees no change on upgrade.
 `MemoryDump` carries stored sources per entity, under a field distinct from
 the read-result `sources`, because `MemoryBundle` serves both shapes:
 `entities[id].storedSources?: StoredSourceDump[]`, each entry carrying
-`sourceRef`, `sourceHash`, `text`, `text_hash`, `charCount`, `storedAt`,
-and its passages. Export writes the field only for entities in the export's
+`sourceRef`, `sourceHash`, `text`, `textHash`, `charCount`, `storedAt`,
+and its passages (`textHash` in the dump; `text_hash` stays the column
+name). Export writes the field only for entities in the export's
 scope; an entity with nothing stored carries none. Import restores the rows
 under that entity, re-derives passages from the text, and re-computes
 `text_hash`; the import honors the §9 limits and refuses with the same
@@ -374,7 +384,14 @@ truth for that ref; other stored sources survive under merge semantics, and
 a `merge: false` import replaces the entity's whole store with the dump's.
 Import processes sources one by one: a source that breaks a limit or hits a
 duplicate hash refuses with its typed diagnostic, is skipped, and is listed
-in the import result; the other sources import.
+in the import result; the other sources import. That result is a new,
+additive return value: today `importDump` returns `Promise<void>`
+(`ImportExportService.ts:65`), so this cycle changes it to resolve
+`{ skippedSources: Array<{ sourceRef, code }> }` — empty when nothing was
+skipped; callers that ignore the value are unaffected. With `merge: false`
+the replace is wipe-then-write inside the import transaction: the old store
+is gone when the transaction commits, and a source that refused during the
+import is absent from the new store, present only in `skippedSources`.
 
 Older engines: a dump with `storedSources` imported into a 8.x/9.x engine loses
 the sources silently, because those importers strip fields outside their
@@ -409,9 +426,12 @@ Two limits, both configurable, both enforced at `storeSource()`:
 
 The defaults are owner-gated; they are refusal guards, not targets. A
 refusal produces a typed, content-free diagnostic in the existing registry —
-proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE`,
-`SOURCE_STORE_BUDGET_EXCEEDED`, `SOURCE_STORE_HASH_MISMATCH`,
-`SOURCE_STORE_DUPLICATE_HASH`, and `SOURCE_STORE_TEXT_NOT_STORABLE` — and
+proposed codes `source_store_too_large`, `source_store_budget_exceeded`,
+`source_store_hash_mismatch`, `source_store_duplicate_hash`, and
+`source_store_text_not_storable` — lowercase snake_case, matching the
+existing `WikiDiagnosticCode` union (`types.ts:858`), with a new
+`WikiDiagnosticOperation` value for the store's diagnostics
+(`types.ts:889`) — and
 stores nothing. The budget check runs inside the write transaction, under
 the call's per-entity `store` lock (§10), so two concurrent stores cannot
 both pass the check and exceed the budget. A read that hits
@@ -422,7 +442,9 @@ ever dropped silently.
 
 Rule 3. Both new tables carry `entity_id`, every query on them filters by it
 in the `WHERE` clause, and both UNIQUE indexes include it — the same
-pattern the ten existing tables follow (`repositories/EntryRepository.ts`
+pattern the nine entity-scoped tables among the ten existing follow — the
+`meta` key/value table carries no `entity_id` —
+(`repositories/EntryRepository.ts`
 scopes all 104
 of its `entity_id` references this way). Store writes take a new
 `OperationType` `store` in `JobManager`'s conflict matrix, on the
@@ -430,8 +452,14 @@ of its `entity_id` references this way). Store writes take a new
 prune, librarian, heal, ontologyBackfill, reembed, forget, and any other
 store of the same entity, so two stores serialize and a store never runs
 under a maintenance operation's lock; the reverse direction is part of the
-ruling — `acquireLock`'s per-operation checks are explicit `if` chains, so
-each existing operation's checks must also treat `store` as blocking.
+ruling — `acquireLock` dispatches through a `switch` with explicit
+per-operation `else if` chains (`JobManager.ts:190-266`), so each existing
+operation's checks must also treat `store` as blocking; `global_reembed`
+matches by key suffix and needs its own `:store` line, `global_import` is
+a separate case, and `WikiBusyOperation` in `types.ts` gains `'store'`.
+A `store` lock blocks ingest entity-wide — ingest's own lock is per
+`sourceRef` while the ingest-active check is entity-wide; that is accepted
+for a one-transaction store write.
 `acquireLock` throws `WikiBusyError`
 when a lock is busy and does not wait (`services/JobManager.ts`); a store
 that loses the busy race throws `WikiBusyError` — the engine-wide exception
@@ -453,17 +481,22 @@ another entity's passage.
   `MiniSearchIndexStrategy.ts` / `createIndexStrategy.ts` — the second
   index on both strategies.
 - `packages/core/src/services/ImportExportService.ts` — the additive
-  `storedSources` dump field.
+  `storedSources` dump field and the additive `{ skippedSources }` return
+  on `importDump`.
 - `packages/core/src/types.ts` — `MemoryBundle.sources?` (read result),
   `MemoryDump.entities[id].storedSources?` (dump; the read-result bundle
   does not carry the field — a separate `DumpBundle` subtype was considered
   and declined: an additive optional field keeps the rule-2 surface
   minimal), option and result types, `listSourceRefs` result field.
 - `packages/core/src/WikiMemory.ts` — public methods and wiring.
+- `packages/core/src/utils/formatContext.ts` — prints the `sources` group
+  under a `Sources` heading (`formatContext.ts:76`).
 - `packages/core/src/utils/sha256.ts` — new pure hasher, no dependency
   (mirrors `packages/okf/src/sha256.ts`).
-- `packages/core/src/diagnostics` (registry) — the refusal codes named in
-  §Limits and diagnostics.
+- `packages/core/src/types.ts` already carries the diagnostic registry —
+  the refusal codes named in §Limits and diagnostics extend the
+  `WikiDiagnosticCode` union and add a `WikiDiagnosticOperation` value
+  (covered by the types.ts bullet below).
 - `INTENT.md` — rule 5 reworded, in the same pull request.
 - Tests under `packages/core/src/__tests__/`.
 
@@ -477,8 +510,10 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    `storeSource`, `getStoredSource`, `listStoredSources`, or a `read()` with
    the `sources` option.
 2. **Migration.** Copy the `migration9.test.ts` pattern: fresh install stamps
-   v17; an old database migrates by DDL; the migration is idempotent; the
-   abort-on-corrupt-precondition path fires before any write.
+   v17; an old database migrates by DDL; the migration is idempotent on a
+   database with no stored sources; the abort-on-corrupt-precondition path
+   (rows present, or a column set that differs from §3) fires before any
+   write.
 3. **Additivity.** A test asserts no column was added to any table in
    curated-thoughts' nine-table guard list, so the CT guard passes
    unchanged.
@@ -496,7 +531,7 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    that takes a hash the store holds under another ref leaves the stored
    text untouched and gives the ingesting ref's facts no `sources` group. A
    same-pair
-   re-store with different text refuses with `SOURCE_STORE_HASH_MISMATCH`.
+   re-store with different text refuses with `source_store_hash_mismatch`.
    After a changed copy, `listSourceRefs` reports `staleHash: true` for the
    old facts.
 5. **Search on both strategies.** The `sources` group returns the right
