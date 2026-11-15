@@ -61,7 +61,23 @@ brief `briefs/t2.md`, cap $0.90).
       deletes store rows. One timing flake observed (idThreading.test.ts,
       passed alone + on re-run) — watch. Controller re-verified: TC=0,
       217 files / 2495 tests EXIT=0 (/tmp/t4-{tc,test}.log). Spend $0.6004.
-- [ ] T5 store read paths + listSourceRefs three-state (§4; items 4, 6)
+- [x] T5 store read paths + listSourceRefs three-state (§4; items 4, 6) — **DONE 2026-11-15**.
+      Commit `433ab9bc`: getStoredSource/listStoredSources (plain reads, no
+      write lock); listSourceRefs LEFT-JOINs source_documents on
+      (entity_id, source_ref) → `{ charCount }` / `{ charCount,
+      staleHash: true }` / `null`; WikiMemory listSourceRefs region only
+      (types.ts untouched — result type is inline). 8 new read tests + 3
+      exact-shape listSourceRefs assertions gained `stored: null` (§4
+      requires null, not omitted). ⚠️ OPEN SPEC-VS-CODE GAP (see handoff):
+      the forgotten-ref test deletes store rows via SQL because the real
+      `forget({ sourceRef })` ALSO soft-deletes the facts, so a real
+      forget drops the ref from listSourceRefs — contradicting §4's
+      "stays listed with stored: null" (a delta-verified ruling from the
+      T3-Opus fix round). Resolution needed at T9 or via spec amendment
+      (options recorded in handoff). One idThreading timeout flake again
+      (passed on re-runs) — second occurrence, watch. Controller
+      re-verified: TC=0, 218 files / 2503 tests EXIT=0
+      (/tmp/t5-{tc,test}.log). Spend $0.4055.
 - [ ] T6 passage index, both strategies (§6; item 5)
 - [ ] T7 `sources` read option + offsets/hard-cut (§7; items 4–5)
 - [ ] T8 dump import/export + skippedSources (§8; item 8)
