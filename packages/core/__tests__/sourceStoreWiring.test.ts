@@ -69,7 +69,8 @@ describe.each<Kind>(['fts5', 'minisearch'])('source store public wiring (%s)', (
     const after = await readSources(wiki, E, 'quokka');
     expect(after.facts).toEqual([]);
     expect(after.sources).toEqual([]);
-    // TODO(owner-ruling-§4): post-forget listing assertion pending — see LEDGER.md
+    const afterListed = await wiki.listSourceRefs(E);
+    expect(afterListed.find((l) => l.sourceRef === 'doc.md')).toBeUndefined();
   });
 
   it('forget({ clearAll }) leaves no passage queryable', async () => {

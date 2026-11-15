@@ -212,9 +212,11 @@ states: `{ charCount }` when the store holds that exact pair;
 `{ charCount, staleHash: true }` when the store holds the ref under a
 different hash, so facts from the old copy are visibly unlinked after a
 changed copy replaces the text; and `null` when the store holds nothing
-for that ref. That includes a ref whose store rows were forgotten:
-`forget` removes the store rows, not the ref's facts, so the ref stays
-listed and reports `stored: null`. The full store listing, including a source
+for that ref. A real `forget({ sourceRef })` soft-deletes the ref's facts
+along with the store rows, and `listSourceRefs` reads live entries, so a
+forgotten ref drops out of the listing entirely. `stored: null` describes
+a ref that IS listed — its facts live in `entries` — while the store holds
+nothing for that pair: never stored, or stored under a different ref. The full store listing, including a source
 stored with no ingest, is `listStoredSources`. An additive optional field
 on a result type is a rule-2 change; the Curated Thoughts guard does not
 read result types.
@@ -553,7 +555,8 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after
    `forget({ sourceRef })`, both groups are gone and
-   `listSourceRefs` still lists the ref, reporting `stored: null`.
+   the ref drops out of `listSourceRefs` (the real forget soft-deletes the
+   ref's facts too).
 7. **Removal.** `forget` hard-deletes store rows under
    `retainSoftDeletedFor: null`; the passage index drops the deleted text
    after the post-commit sync, and a read never surfaces a deleted passage

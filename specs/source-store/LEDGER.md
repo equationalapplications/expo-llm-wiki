@@ -173,6 +173,17 @@ brief `briefs/t2.md`, cap $0.90).
       kept, *Why* and `Status: Built.` kept; Amendments entry added
       dated 2026-11-15 (PR #396, `specs/source-store/`). No test
       asserts on INTENT.md; docs-only commit, no gate exposure.
+- [x] T9b resolve §4 forgotten-ref gap + §9 code-name reconciliation.
+      Spec §4 and test-plan item 6 amended to engine-conform semantics:
+      a real `forget({ sourceRef })` soft-deletes the ref's facts too, so
+      the ref drops OUT of `listSourceRefs`; `stored: null` describes only
+      listed refs whose store holds nothing for the pair. Owner-flagged
+      for the review ladder. `sourceStoreWiring.test.ts` now asserts the
+      ref is absent after a real forget (TODO marker removed). §9 proposed
+      code `source_store_too_large` → landed `source_store_source_too_large`
+      (second commit, "docs(specs): reconcile §9 ..."; SHAs in `git log`
+      — a commit cannot cite its own hash). Gates: core test 222 files /
+      2551 tests green; typecheck clean.
 - [ ] T11 full-suite sweep + cleanup commit (Status → Implemented, delete plan/LEDGER, roadmap mark)
 
 ## Run record
