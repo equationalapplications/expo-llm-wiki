@@ -348,14 +348,20 @@ Three new calls on `WikiMemory`, all opt-in:
   `{ entityId, sourceRef, sourceHash, seq, startOffset, endOffset, truncated,
   text }`, ranked, capped by `maxPassages` (default 8) and `charBudget`
   (default 4,000 UTF-16 code units) per entity. When a matching passage
-  exceeds the budget, the read returns the narrowest whitespace-bounded
-  window around the match that fits, with the true offsets of that window
-  and the cut marked (`truncated: true`); the window never splits a
-  surrogate pair. When no whitespace bounds a window that fits — one long
-  token — or the match itself is wider than the budget, the read hard-cuts
-  a surrogate-safe window of `charBudget` UTF-16 code units starting at the
-  match start, again with true offsets and the cut marked (`truncated:
-  true`); a match is never dropped for size. Match position: after a
+  exceeds the entity's remaining budget, the read returns the widest
+  whitespace-bounded window containing the match that fits the entity's
+  remaining `charBudget` — never smaller than the match — with the true
+  offsets of that window and the cut marked (`truncated: true`); the window
+  never splits a surrogate pair. When the match's own whitespace-delimited
+  run is wider than the remaining budget — one long token — or the match
+  itself is, the read hard-cuts a surrogate-safe window of the remaining
+  budget in UTF-16 code units starting at the match start, again with true
+  offsets and the cut marked (`truncated: true`). The budget is per
+  entity: windows are cut in rank order, each consuming its size from the
+  entity's remaining `charBudget`, so an entity's windows together never
+  exceed `charBudget`; once it is spent, lower-ranked hits for that entity
+  are not returned. A missing or blank `sources.query` throws
+  `WikiInvalidReadOptions`. Match position: after a
   strategy returns a passage, the engine anchors the window at the earliest
   literal occurrence in the passage text of any term the strategy matched
   for that query, compared ASCII-case-insensitively on the text as handed;
@@ -549,8 +555,9 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    passages under FTS5 and under the MiniSearch fallback; budget and
    `maxPassages` caps hold; a cut window reports `truncated: true`; a match
    inside a full-size
-   12,000-unit passage returns a whitespace-bounded window with true
-   offsets, and a long-token match hard-cuts; a two-entity read returns
+   12,000-unit passage returns the widest whitespace-bounded window that
+   fits, with true offsets, an entity's windows together stay within
+   `charBudget`, and a long-token match hard-cuts; a two-entity read returns
    per-entity groups, each capped separately.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after

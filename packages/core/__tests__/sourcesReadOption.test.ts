@@ -79,9 +79,11 @@ describe.each<Kind>(['fts5', 'mini'])('read() sources option (%s)', (kind) => {
     const b = await read(wiki, E, { query: 'zebrafish', charBudget: 14 });
     const it = b.sources![0]!;
     expect(it.truncated).toBe(true);
-    expect(it.text).toBe('zebrafish');
-    expect(it.startOffset).toBe(text.indexOf('zebrafish')); // the EARLIEST of the repeated substrings
-    expect(it.endOffset).toBe(it.startOffset + 9);
+    // Widest whitespace-bounded window containing the EARLIEST zebrafish that fits 14 units.
+    expect(it.text).toBe('😀😀 zebrafish');
+    expect(it.startOffset).toBe(3);
+    expect(it.endOffset).toBe(it.startOffset + 14);
+    expect(it.text.indexOf('zebrafish') + it.startOffset).toBe(text.indexOf('zebrafish'));
     checkOffsets(b.sources!, await storedText(db, E, 'e.md'));
   });
 
@@ -102,11 +104,29 @@ describe.each<Kind>(['fts5', 'mini'])('read() sources option (%s)', (kind) => {
     const b = await read(wiki, E, { query: 'ocelot', charBudget: 50 });
     const it = b.sources!.find((s) => s.sourceRef === 'big.md')!;
     expect(it.truncated).toBe(true);
-    expect(it.text).toBe('ocelot');
+    expect(it.text).toContain('ocelot');
+    expect(it.text.length).toBeGreaterThan('ocelot'.length); // widest fit, not just the match
+    expect(it.text.length).toBeLessThanOrEqual(50);
+    expect(it.text.length).toBeGreaterThan(40); // no further whole token fits
     const full = await storedText(db, E, 'big.md');
-    expect(full.slice(it.startOffset, it.endOffset)).toBe('ocelot');
+    expect(full.slice(it.startOffset, it.endOffset)).toBe(it.text);
     expect(/\s/.test(full[it.startOffset - 1]!)).toBe(true);
     expect(/\s/.test(full[it.endOffset]!)).toBe(true);
+    expect(/^\S/.test(it.text) && /\S$/.test(it.text)).toBe(true);
+  });
+
+  it('charBudget is per entity: windows together never exceed it; blank query throws', async () => {
+    const { wiki, svc, sync } = await setup(kind);
+    const body = 'lorem ipsum '.repeat(100);
+    for (let i = 0; i < 3; i++) {
+      await svc.storeSource(E, { sourceRef: `k${i}.md`, sourceHash: hash(i.toString(16)), text: `${body}okapi ${body}` });
+    }
+    await sync();
+    const b = await read(wiki, E, { query: 'okapi', charBudget: 100 });
+    expect(b.sources!.length).toBeGreaterThanOrEqual(1);
+    expect(b.sources!.reduce((n, s) => n + (s.endOffset - s.startOffset), 0)).toBeLessThanOrEqual(100);
+    expect(b.sources![0]!.text).toContain('okapi');
+    await expect(read(wiki, E, { query: '   ' })).rejects.toThrow(/sources\.query/);
   });
 
   it('hard-cuts a long-token match from the match start and never drops it', async () => {

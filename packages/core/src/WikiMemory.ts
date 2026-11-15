@@ -1055,6 +1055,7 @@ export class WikiMemory {
       return await this.importExportService.importDump(dump, opts);
     } finally {
       // Import re-cuts stored sources inside its transaction; index them once it committed (spec §6, §8).
+      // Also runs after a failed import (e.g. WikiBusyError): intentional and harmless — it reads committed state and never rejects.
       await this.searchService.syncPassages(this.db, this.prefix);
     }
   }
@@ -1086,7 +1087,8 @@ export class WikiMemory {
       return await this.maintenanceService.forget(entityId, params, opts);
     } finally {
       // Spec §5/§6: removal sync for stored passages, after the delete committed (also when the
-      // external-deletion hook threw, since the local delete stays committed). A clearAll
+      // external-deletion hook threw, since the local delete stays committed; a sync after any other
+      // failure is intentional and harmless — it reads committed state and never rejects). A clearAll
       // touches every entity, so it syncs all.
       if (!opts?.dryRun) {
         await this.searchService.syncPassages(this.db, this.prefix, params.clearAll ? undefined : entityId);

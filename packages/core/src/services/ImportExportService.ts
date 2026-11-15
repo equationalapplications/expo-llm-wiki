@@ -91,6 +91,8 @@ export class ImportExportService {
     return typeof this.prefix === 'string' ? this.prefix : undefined;
   }
 
+  // `source_ref_index` needs no check: the v9 migration (add_source_ref_index) creates it, and the
+  // store tables come from v17, which only runs after v9 — so it exists whenever they do.
   private async storePresent(prefix: string, tx?: SQLiteAdapter): Promise<boolean> {
     return (await this.metadataRepo.tableExists(`${prefix}source_documents`, tx))
       && (await this.metadataRepo.tableExists(`${prefix}source_passages`, tx));
@@ -139,6 +141,7 @@ export class ImportExportService {
     sources: StoredSourceDump[] | undefined,
     merge: boolean,
     skipped: ImportDumpResult['skippedSources'],
+    deferredDiagnostics: Parameters<typeof emitDiagnostic>[1][],
   ): Promise<void> {
     const prefix = this.storePrefix();
     if (prefix === undefined) return;
@@ -152,7 +155,7 @@ export class ImportExportService {
       await tx.runAsync(`DELETE FROM ${docs} WHERE entity_id = ?`, [entityId]);
     }
 
-    const cfg = (this.options.config as { sourceStore?: { maxCharsPerSource?: number; maxTotalChars?: number } } | undefined)?.sourceStore;
+    const cfg = this.options.config?.sourceStore;
     const lim = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
     const limits = {
       maxCharsPerSource: lim(cfg?.maxCharsPerSource, DEFAULT_MAX_CHARS_PER_SOURCE),
@@ -172,7 +175,7 @@ export class ImportExportService {
         limits,
         (code) => {
           skipped.push({ sourceRef, code });
-          emitDiagnostic(this.options, { code, operation: 'importDump', trigger: 'call', entityId, detail: { sourceRef } });
+          deferredDiagnostics.push({ code, operation: 'importDump', trigger: 'call', entityId, detail: { sourceRef } });
         },
       );
     }
@@ -238,6 +241,7 @@ export class ImportExportService {
     merge: boolean,
   ): Promise<ImportDumpResult['skippedSources']> {
     const skippedSources: ImportDumpResult['skippedSources'] = [];
+    const refusalDiagnostics: Parameters<typeof emitDiagnostic>[1][] = [];
     const upsertedFactIds = new Set<string>();
     const upsertedDeletedFactIds = new Set<string>();
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
@@ -606,8 +610,10 @@ export class ImportExportService {
         );
       }
 
-      await this.importStoredSources(tx, entityId, bundle.storedSources, merge, skippedSources);
+      await this.importStoredSources(tx, entityId, bundle.storedSources, merge, skippedSources, refusalDiagnostics);
     });
+    // Committed: only now may the host hear about refusals (a failed commit emits nothing).
+    for (const d of refusalDiagnostics) emitDiagnostic(this.options, d);
 
     if (clampedEvents > 0) {
       emitDiagnostic(this.options, {

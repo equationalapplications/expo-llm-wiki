@@ -36,13 +36,14 @@ export async function hydratePassageHits(
   const out: PassageHit[] = [];
   for (const r of raw) {
     const pas = await db.getFirstAsync<{ seq: number; start_offset: number; end_offset: number }>(
-      `SELECT seq, start_offset, end_offset FROM ${prefix}source_passages WHERE id = ?`, [r.id]);
+      `SELECT seq, start_offset, end_offset FROM ${prefix}source_passages WHERE id = ? AND entity_id = ?`, [r.id, r.entity_id]);
     if (!pas) continue;
-    if (!docs.has(r.document_id)) {
-      docs.set(r.document_id, (await db.getFirstAsync<{ source_ref: string; source_hash: string; text: string }>(
-        `SELECT source_ref, source_hash, text FROM ${prefix}source_documents WHERE id = ?`, [r.document_id])) ?? null);
+    const dk = `${r.entity_id}\u0000${r.document_id}`;
+    if (!docs.has(dk)) {
+      docs.set(dk, (await db.getFirstAsync<{ source_ref: string; source_hash: string; text: string }>(
+        `SELECT source_ref, source_hash, text FROM ${prefix}source_documents WHERE id = ? AND entity_id = ?`, [r.document_id, r.entity_id])) ?? null);
     }
-    const doc = docs.get(r.document_id);
+    const doc = docs.get(dk);
     if (!doc) continue;
     const start = Number(pas.start_offset);
     const end = Number(pas.end_offset);
@@ -124,23 +125,24 @@ export class Fts5IndexStrategy implements IndexStrategy {
       let ran = false;
       await this.db.withTransactionAsync(async (tx) => {
         const first = opts.entityId === undefined
-          ? await tx.getFirstAsync<{ doc_id: string }>(
-            `SELECT doc_id FROM ${p}source_passages_fts_pending ORDER BY seq LIMIT 1`)
-          : await tx.getFirstAsync<{ doc_id: string }>(
-            `SELECT doc_id FROM ${p}source_passages_fts_pending WHERE entity_id = ? ORDER BY seq LIMIT 1`,
+          ? await tx.getFirstAsync<{ doc_id: string; entity_id: string }>(
+            `SELECT doc_id, entity_id FROM ${p}source_passages_fts_pending ORDER BY seq LIMIT 1`)
+          : await tx.getFirstAsync<{ doc_id: string; entity_id: string }>(
+            `SELECT doc_id, entity_id FROM ${p}source_passages_fts_pending WHERE entity_id = ? ORDER BY seq LIMIT 1`,
             [opts.entityId]);
         if (!first) return;
         const docId = first.doc_id;
+        const ent = first.entity_id;
         const hi = await tx.getFirstAsync<{ hi: number }>(
-          `SELECT max(seq) AS hi FROM ${p}source_passages_fts_pending WHERE doc_id = ?`, [docId]);
+          `SELECT max(seq) AS hi FROM ${p}source_passages_fts_pending WHERE doc_id = ? AND entity_id = ?`, [docId, ent]);
         await tx.runAsync(
           `DELETE FROM ${p}source_passages_fts WHERE rowid IN (SELECT fts_rowid FROM ${p}source_passages_fts_map WHERE doc_id = ?)`,
           [docId]);
         await tx.runAsync(`DELETE FROM ${p}source_passages_fts_map WHERE doc_id = ?`, [docId]);
-        const doc = await tx.getFirstAsync<{ text: string }>(`SELECT text FROM ${p}source_documents WHERE id = ?`, [docId]);
+        const doc = await tx.getFirstAsync<{ text: string }>(`SELECT text FROM ${p}source_documents WHERE id = ? AND entity_id = ?`, [docId, ent]);
         if (doc) {
           const rows = await tx.getAllAsync<{ id: string; entity_id: string; start_offset: number; end_offset: number }>(
-            `SELECT id, entity_id, start_offset, end_offset FROM ${p}source_passages WHERE document_id = ? ORDER BY seq`, [docId]);
+            `SELECT id, entity_id, start_offset, end_offset FROM ${p}source_passages WHERE document_id = ? AND entity_id = ? ORDER BY seq`, [docId, ent]);
           for (const r of rows) {
             const { lastInsertRowId } = await tx.runAsync(
               `INSERT INTO ${p}source_passages_fts_map (passage_id, doc_id) VALUES (?, ?)`, [r.id, docId]);
@@ -174,13 +176,13 @@ export class Fts5IndexStrategy implements IndexStrategy {
          SELECT passage_id, entity_id, doc_id, bm25(${t}, 0.0, 0.0, 0.0, 1.0) AS raw
            FROM ${t}
           WHERE ${t} MATCH ? AND entity_id IN (SELECT value FROM json_each(?))
-            AND passage_id IN (SELECT id FROM ${p}source_passages)
+            AND passage_id IN (SELECT id FROM ${p}source_passages WHERE entity_id IN (SELECT value FROM json_each(?)))
           ORDER BY raw, passage_id
           LIMIT ?)
         ORDER BY raw, id`,
-      [match, JSON.stringify(options.entityIds), limit],
+      [match, JSON.stringify(options.entityIds), JSON.stringify(options.entityIds), limit],
     );
-    return hydratePassageHits(this.db, p, raw);
+return hydratePassageHits(this.db, p, raw);
   }
 
   private async initEntries(opts: { entriesExisted?: boolean }): Promise<void> {

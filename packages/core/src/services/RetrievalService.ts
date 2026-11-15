@@ -35,10 +35,12 @@ function queryTerms(query: string): string[] {
 /**
  * Window `text` (one passage) to at most `budget` UTF-16 units; offsets are
  * relative to `text` (spec section 7). Anchor: earliest literal occurrence of
- * any term, ASCII-case-insensitive; none -> passage start. The narrowest
- * whitespace-bounded window around the match is the whitespace-delimited run
- * holding it; if that run (or the match) exceeds the budget, hard-cut `budget`
- * units from the match start, never splitting a surrogate pair.
+ * any term, ASCII-case-insensitive; none -> passage start. The window is the
+ * WIDEST whitespace-bounded one (edges on whitespace-delimited token
+ * boundaries) containing the whole match that fits `budget`, never smaller
+ * than the match's own tokens; if those tokens (or the match) exceed the
+ * budget, hard-cut `budget` units from the match start, never splitting a
+ * surrogate pair.
  */
 function windowPassage(text: string, terms: readonly string[], budget: number): { start: number; end: number; truncated: boolean } {
   if (text.length <= budget) return { start: 0, end: text.length, truncated: false };
@@ -56,12 +58,25 @@ function windowPassage(text: string, terms: readonly string[], budget: number): 
   };
   if (a < 0) return hardCut(0);
   if (len > budget) return hardCut(a);
-  let s = a;
-  while (s > 0 && !/\s/.test(text[s - 1]!)) s--;
-  let e = a + len;
-  while (e < text.length && !/\s/.test(text[e]!)) e++;
-  if (e - s > budget) return hardCut(a);
-  return { start: s, end: e, truncated: true };
+  const toks: Array<[number, number]> = [];
+  for (const m of text.matchAll(/\S+/g)) toks.push([m.index!, m.index! + m[0].length]);
+  const mEnd = a + len;
+  const ti = toks.findIndex(([, e]) => e > a);
+  if (ti < 0) return hardCut(a);
+  let tj = ti;
+  while (tj + 1 < toks.length && toks[tj]![1] < mEnd) tj++;
+  if (toks[tj]![1] - toks[ti]![0] > budget) return hardCut(a);
+  // Widest token-aligned window [l..r] with l <= ti, r >= tj. As l moves left the
+  // furthest fitting r only shrinks, so r is one moving pointer.
+  let r = toks.length - 1;
+  let best = { start: toks[ti]![0], end: toks[tj]![1] };
+  for (let l = ti; l >= 0; l--) {
+    const s = toks[l]![0];
+    while (r > tj && toks[r]![1] - s > budget) r--;
+    if (toks[r]![1] - s > budget) break;
+    if (toks[r]![1] - s > best.end - best.start) best = { start: s, end: toks[r]![1] };
+  }
+  return { ...best, truncated: true };
 }
 
 export class RetrievalService {
@@ -838,8 +853,8 @@ export class RetrievalService {
   /**
    * The `sources` group (spec source-store section 7). One search per entity,
    * so ranking and caps never cross entities. No model call anywhere.
-   * Choice (section 7 vs 9): `charBudget` bounds each item's window, so a match
-   * is never dropped for size.
+   * `charBudget` is per entity: windows are cut in rank order against the
+   * entity's remaining budget, and once it is spent lower-ranked hits are not returned.
    */
   private async _readSources(
     entityIds: readonly string[],
@@ -849,14 +864,20 @@ export class RetrievalService {
       typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : d;
     const maxPassages = pos(opt.maxPassages, DEFAULT_SOURCE_PASSAGES);
     const charBudget = pos(opt.charBudget, DEFAULT_SOURCE_CHAR_BUDGET);
-    const query = typeof opt.query === 'string' ? opt.query : '';
+    const query = opt.query;
+    if (typeof query !== 'string' || query.trim() === '') {
+      throw new WikiInvalidReadOptions('sources.query', 'must be a non-empty string');
+    }
     const terms = queryTerms(query);
     const out: SourcePassage[] = [];
     if (terms.length === 0) return out;
     for (const entityId of entityIds) {
       const hits = await this.searchService.searchPassages(query, entityId, maxPassages);
+      let remaining = charBudget; // per entity: this entity's windows together never exceed charBudget
       for (const h of hits) {
-        const w = windowPassage(h.text, terms, charBudget);
+        if (remaining <= 0) break;
+        const w = windowPassage(h.text, terms, remaining);
+        remaining -= w.end - w.start;
         out.push({
           entityId, sourceRef: h.source_ref, sourceHash: h.source_hash, seq: h.seq,
           startOffset: h.start_offset + w.start, endOffset: h.start_offset + w.end,

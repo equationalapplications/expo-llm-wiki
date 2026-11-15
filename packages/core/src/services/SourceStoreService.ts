@@ -33,9 +33,7 @@ export class SourceStoreService {
   ) {}
 
   private limits(): { maxCharsPerSource: number; maxTotalChars: number } {
-    // `sourceStore` is not yet on WikiConfig (types.ts is outside Task 4); read it structurally.
-    const cfg = (this.options.config as { sourceStore?: { maxCharsPerSource?: number; maxTotalChars?: number } } | undefined)
-      ?.sourceStore;
+    const cfg = this.options.config?.sourceStore;
     return {
       maxCharsPerSource: limitOr(cfg?.maxCharsPerSource, DEFAULT_MAX_CHARS_PER_SOURCE),
       maxTotalChars: limitOr(cfg?.maxTotalChars, DEFAULT_MAX_TOTAL_CHARS),
