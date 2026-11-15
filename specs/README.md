@@ -43,13 +43,13 @@ history carries the dates.
    closes. There are no spec-only merges.
 3. Implement on the same branch. Conventional commits name the spec
    section they fulfill. Tick ledger boxes after verification.
-4. When review loops converge: one final cleanup commit on the same PR —
-   the PR's last lifecycle commit — flips the spec to **Implemented**
+4. When implementation is done (review loops have converged): one
+   cleanup commit on the same PR flips the spec to **Implemented**
    and deletes `plan.md` and `LEDGER.md` (never a separate cleanup PR,
    and no post-merge cleanup commit). It is pushed before the `gh pr
-   ready` flip; valid bot-review fix commits may follow it before
-   merge, and a fix that changes specified behavior also amends
-   `spec.md` in the same commit. Then
+   ready` flip. Whether any other commit follows the cleanup commit
+   before merge does not matter; a fix that changes specified behavior
+   also amends `spec.md` in the same commit. Then
    `gh pr ready`; bot reviews that skip drafts fire on the ready flip.
    CI runs on every push to the PR, draft included.
 5. After merge, the status-carrying `spec.md` and the code are the record.
