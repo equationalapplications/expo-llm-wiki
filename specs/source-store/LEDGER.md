@@ -78,7 +78,30 @@ brief `briefs/t2.md`, cap $0.90).
       (passed on re-runs) — second occurrence, watch. Controller
       re-verified: TC=0, 218 files / 2503 tests EXIT=0
       (/tmp/t5-{tc,test}.log). Spend $0.4055.
-- [ ] T6 passage index, both strategies (§6; item 5)
+- [x] T6 passage index, both strategies (§6; item 5) — **DONE 2026-11-15**.
+      Commit `e4e8cbd1`: offset-tracking cutter
+      `utils/passageCutter.ts` (≤12,000 UTF-16 units, whitespace ends the
+      passage, pair-safe hard cut, no trim/overlap, NOT chunkText);
+      SourceStoreService inserts offset-only `source_passages` rows inside
+      the write transaction (TODO(task-6) slot consumed; passage text never
+      stored); FTS5 `source_passages_fts` virtual table + map + ledger +
+      triggers created by strategy init (pre-v17 guard; once-only backfill
+      enqueue); `drainPassages` reads the ONE drained document's text into
+      JS and slices at stored offsets (§6's stated departure,
+      maxCharsPerSource-bounded); `searchPassages` joins live
+      `source_passages` rows (stalled-drain guard); MiniSearch second
+      in-heap instance with `reindexSourcePassages` post-commit sync.
+      Choices beyond brief (all disclosed): passage FTS objects use
+      `doc_id` (migration17.test reserves `document_id`); drain slices at
+      stored offsets rather than re-cutting; `drain()` untouched —
+      **⚠️ T9 CARRIER: `drainPassages` (FTS5) and `reindexSourcePassages`
+      (fallback, incl. after forget/clearAll) are NOT yet called from
+      service wiring — T9 must wire drain()+drainPassages on the FTS5
+      path and reindex after strategy pick + removal sync**; 5 existing
+      tests updated (placeholder passageCount / hand-inserted rows /
+      trigger counts scoped to entries_fts) — no test-only logic changes.
+      Controller re-verified: TC=0, 219 files / 2513 tests EXIT=0
+      (runs/t6-controller-gates.log). Spend $0.9836.
 - [ ] T7 `sources` read option + offsets/hard-cut (§7; items 4–5)
 - [ ] T8 dump import/export + skippedSources (§8; item 8)
 - [ ] T9 WikiMemory wiring + formatContext (§7; items 1, 5–6)
@@ -87,6 +110,10 @@ brief `briefs/t2.md`, cap $0.90).
 
 ## Run record
 
+- 2026-11-15 T6 landed (`e4e8cbd1`) and controller-verified (219/2513,
+  TC=0, $0.9836). Passage drain/reindex wiring deliberately deferred —
+  carried as a T9 obligation in the T6 ledger entry above; T9's brief
+  MUST include it.
 - 2026-11-15 lane pivoted to SINGLE-PR delivery (owner msgs
   `1571548310672769026` / `1571548355681853451`): spec merges together
   with implementation on this branch; ready-flip and cleanup commit are
