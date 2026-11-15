@@ -344,13 +344,15 @@ runs and who schedules it.
    Implemented); investigation notes go in the spec's evidence section.
    Open a draft PR carrying the folder; add `plan.md` and
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
-   same branch. The final cleanup commit flips the Status to Implemented
-   and deletes the plan and ledger. It is the PR's last lifecycle commit,
-   pushed after the review loops converge and before the `gh pr ready`
-   flip; valid bot-review fix commits may follow it before merge, and a
-   fix that changes specified behavior also amends `spec.md` in the same
-   commit. One PR per cycle, no spec-only merges. There is no post-merge
-   cleanup commit and no docs-only cleanup PR.
+   same branch. When implementation is done, make one cleanup commit: it
+   flips the Status to Implemented and deletes the plan and ledger. Push
+   it after the tiered review loops (step 2 below) converge and before
+   the `gh pr ready` flip; bot reviews start at the ready flip and are
+   not part of this gate. Whether any other commit follows it before
+   merge does not matter; any later commit that changes specified
+   behavior also amends `spec.md` in the same commit. One PR per cycle,
+   no spec-only merges. There is no post-merge cleanup commit and no
+   docs-only cleanup PR.
    `specs/README.md` has the mechanics. The Status line changes in the
    same PR as the behavior.
 2. **Review, then merge.** CI green (build, typecheck, tests, both audit
@@ -386,6 +388,20 @@ runs and who schedules it.
   docs-only cleanup PR. Why: the wording previously said only "the
   final cleanup commit", which read both as in-PR and as post-merge;
   owner ruling during the PR #385 ladder (fewest PRs, no busy-work
+  housekeeping). No other INTENT rule text changed. (Superseded the
+  same day by the next bullet.)
+- 2026-11-14 — The cleanup-commit rule is simplified by owner ruling:
+  the cleanup commit closes the plan-and-ledger phase: it flips the
+  Status to Implemented and deletes `plan.md` and `LEDGER.md`, in the
+  PR. The last-lifecycle-commit framing and the bot-only follow-commit
+  exception are removed — the owner ruled the follow-commit question
+  immaterial, so the rule widens from bot-only to any commit. Behavior
+  the spec does not describe stays governed by the spec-silent rule
+  (`specs/README.md`, Authority chain: stop and ask) no matter where
+  the commit lands. A behavior-changing commit after the cleanup commit
+  carries its verification evidence in the commit or PR thread, since
+  the ledger is already gone. The no-separate-cleanup-PR and
+  no-post-merge-cleanup-commit parts stand (fewest PRs, no busy-work
   housekeeping). No other INTENT rule text changed.
 - 2026-11-14 — Rule 5's Planned note gains its status line: librarian
   facts now carry a source pointer (ops strategy) — the event they came
