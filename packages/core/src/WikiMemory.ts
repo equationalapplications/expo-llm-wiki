@@ -231,6 +231,7 @@ export class WikiMemory {
       this.embeddingService,
       this.options,
       this.vectorRemovalService,
+      this.prefix,
     );
     this.retrievalService = new RetrievalService(
       this.options,

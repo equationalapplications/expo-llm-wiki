@@ -13,13 +13,7 @@ import { hydratePassageHits } from './Fts5IndexStrategy';
 
 interface PassageDoc { id: string; entity_id: string; document_id: string; text: string }
 
-/** One passage hit: `id` is the `source_passages.id`. */
-export interface PassageSearchResult {
-  id: string;
-  entity_id: string;
-  document_id: string;
-  score: number;
-}
+export type { PassageSearchResult } from './Fts5IndexStrategy';
 
 /**
  * Passage slices of one entity, cut from `source_documents.text` at the stored
@@ -208,8 +202,9 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
    * entity, and the heap grows with the number of stored entities, spec §6).
    * It is also the post-commit sync after forget/clearAll: deleted passages
    * drop out because the reload no longer finds their rows (spec §5).
-   * Reads happen first; the swap below never awaits, so a concurrent search
-   * sees the index wholly before or wholly after.
+   * Reads happen first; the discard and add are synchronous, so the swap is
+   * atomic (a concurrent search sees the index wholly before or wholly after),
+   * and the vacuum runs after the swap.
    */
   async reindexSourcePassages(db: SQLiteAdapter, prefix: string, entityId?: string): Promise<void> {
     this.passageSource = { db, prefix };

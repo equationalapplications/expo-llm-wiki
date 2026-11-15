@@ -1,10 +1,8 @@
 import type { SQLiteAdapter, WikiDiagnostic, WikiOptions } from '../types';
 import type { JobManager } from './JobManager';
 import { emitDiagnostic, type WikiDiagnosticInput } from '../utils/diagnostics';
-import { generateId } from '../utils/ids';
-import { cutPassages } from '../utils/passageCutter';
 import { normalizeSourceHash, normalizeSourceRef } from '../utils/pure';
-import { sha256Hex } from '../utils/sha256';
+import { upsertStoredSource } from './sourceStoreUpsert';
 
 /** Spec source-store §9 defaults: owner-gated refusal guards, not targets. UTF-16 code units. */
 export const DEFAULT_MAX_CHARS_PER_SOURCE = 200_000;
@@ -20,18 +18,6 @@ export type StoreSourceResult =
       storedAt: number;
     }
   | { stored: false; diagnostics: WikiDiagnostic[] };
-
-// A surrogate half with no partner cannot round-trip through UTF-8 storage.
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
-interface DocRow {
-  id: string;
-  source_ref: string;
-  source_hash: string;
-  text_hash: string;
-  char_count: number;
-  created_at: number;
-}
 
 function limitOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
@@ -79,87 +65,18 @@ export class SourceStoreService {
     // Busy lock throws WikiBusyError; never converted to a refusal (spec §7).
     this.jobManager.acquireLock('store', entityId);
     try {
-      if (text.includes('\u0000') || LONE_SURROGATE.test(text)) {
-        return this.refuse(entityId, 'source_store_text_not_storable', sourceRef);
-      }
-      const { maxCharsPerSource, maxTotalChars } = this.limits();
-      if (text.length > maxCharsPerSource) {
-        return this.refuse(entityId, 'source_store_source_too_large', sourceRef);
-      }
-
-      const textHash = sha256Hex(text);
-      const charCount = text.length;
-      const docs = `${this.prefix}source_documents`;
-      const passages = `${this.prefix}source_passages`;
-      const registry = `${this.prefix}source_ref_index`;
-
+      const limits = this.limits();
       // Every check re-reads inside the transaction, under the store lock (§9).
-      const outcome = await this.db.withTransactionAsync(async (tx) => {
-        const db = tx;
-        const existing = await db.getFirstAsync<DocRow>(
-          `SELECT id, source_ref, source_hash, text_hash, char_count, created_at FROM ${docs}
-           WHERE entity_id = ? AND source_ref = ?`,
-          [entityId, sourceRef],
-        );
-
-        if (existing && existing.source_hash === sourceHash) {
-          if (existing.text_hash !== textHash) return { refused: 'source_store_hash_mismatch' as const };
-          const row = await db.getFirstAsync<{ n: number }>(
-            `SELECT COUNT(*) AS n FROM ${passages} WHERE entity_id = ? AND document_id = ?`,
-            [entityId, existing.id],
-          );
-          return {
-            charCount: existing.char_count,
-            passageCount: row?.n ?? 0,
-            storedAt: existing.created_at,
-          };
-        }
-
-        // Duplicate hash: the store's own index AND live registry rows (tombstones block nothing).
-        const heldByStore = await db.getFirstAsync<{ source_ref: string }>(
-          `SELECT source_ref FROM ${docs} WHERE entity_id = ? AND source_hash = ? AND source_ref <> ?`,
-          [entityId, sourceHash, sourceRef],
-        );
-        const heldByFacts = await db.getFirstAsync<{ source_ref: string }>(
-          `SELECT source_ref FROM ${registry}
-           WHERE entity_id = ? AND source_hash = ? AND deleted_at IS NULL AND source_ref <> ?`,
-          [entityId, sourceHash, sourceRef],
-        );
-        if (heldByStore || heldByFacts) return { refused: 'source_store_duplicate_hash' as const };
-
-        // A changed copy replaces the old text, so its size leaves the total.
-        const total = await db.getFirstAsync<{ n: number | null }>(
-          `SELECT COALESCE(SUM(char_count), 0) AS n FROM ${docs} WHERE entity_id = ? AND source_ref <> ?`,
-          [entityId, sourceRef],
-        );
-        if ((total?.n ?? 0) + charCount > maxTotalChars) return { refused: 'source_store_budget_exceeded' as const };
-
-        if (existing) {
-          // §5: changed copy is a real delete of the old text row and its passages.
-          await db.runAsync(`DELETE FROM ${passages} WHERE entity_id = ? AND document_id = ?`, [entityId, existing.id]);
-          await db.runAsync(`DELETE FROM ${docs} WHERE entity_id = ? AND id = ?`, [entityId, existing.id]);
-        }
-
-        const id = generateId('sdoc_');
-        const storedAt = Date.now();
-        await db.runAsync(
-          `INSERT INTO ${docs} (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [id, entityId, sourceRef, sourceHash, text, textHash, charCount, storedAt],
-        );
-        // Offsets only (spec §3): passage text is sliced from source_documents.text in JS, never stored.
-        const spans = cutPassages(text);
-        for (let seq = 0; seq < spans.length; seq++) {
-          await db.runAsync(
-            `INSERT INTO ${passages} (id, entity_id, document_id, seq, start_offset, end_offset) VALUES (?, ?, ?, ?, ?, ?)`,
-            [generateId('spas_'), entityId, id, seq, spans[seq]!.start, spans[seq]!.end],
-          );
-        }
-        return { charCount, passageCount: spans.length, storedAt };
-      });
-
-      if ('refused' in outcome && outcome.refused) return this.refuse(entityId, outcome.refused, sourceRef);
-      return { stored: true, sourceRef, sourceHash, ...outcome };
+      let refused: WikiDiagnosticInput['code'] | undefined;
+      const outcome = await this.db.withTransactionAsync((tx) => upsertStoredSource(
+        tx, this.prefix, entityId, { sourceRef, sourceHash, text }, limits,
+        (code) => { refused = code; }, { idempotentSamePair: true },
+      ));
+      if (outcome.status === 'refused') return this.refuse(entityId, refused!, sourceRef);
+      return {
+        stored: true, sourceRef, sourceHash,
+        charCount: outcome.charCount, passageCount: outcome.passageCount, storedAt: outcome.storedAt,
+      };
     } finally {
       this.jobManager.releaseLock('store', entityId);
     }

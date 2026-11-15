@@ -9,6 +9,13 @@ import {
   passageFtsTablesDdl, passageFtsTriggersDdl,
 } from './fts5Sql';
 
+import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
+import { parseJsonArray } from '../../repositories/rowMappers';
+import { monotonicNow } from '../../utils/monotonicNow';
+import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
+import { buildFtsMatchQuery } from './ftsQuery';
+import { extractSqliteCode } from '../../db/sqliteCodes';
+
 /** One passage hit: `id` is the `source_passages.id`. */
 export interface PassageSearchResult {
   id: string;
@@ -46,12 +53,6 @@ export async function hydratePassageHits(
   }
   return out;
 }
-import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
-import { parseJsonArray } from '../../repositories/rowMappers';
-import { monotonicNow } from '../../utils/monotonicNow';
-import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
-import { buildFtsMatchQuery } from './ftsQuery';
-import { extractSqliteCode } from '../../db/sqliteCodes';
 
 /**
  * Keyword index stored in SQLite FTS5, kept consistent with `entries` by a
@@ -74,8 +75,17 @@ export class Fts5IndexStrategy implements IndexStrategy {
    */
   async init(opts: { entriesExisted?: boolean } = {}): Promise<void> {
     await this.initEntries(opts);
-    await this.ensurePassageObjects();
+    // A passage-side failure must not take down fact keyword search (entries FTS is already live).
+    try {
+      await this.ensurePassageObjects();
+    } catch (err) {
+      this.passagesDisabled = true;
+      console.warn('[WikiMemory] passage index init failed; passage search returns [] until a later open:', err);
+    }
   }
+
+  /** Set when passage-index init failed; passage drain and search become no-ops. */
+  private passagesDisabled = false;
 
   /**
    * Source-store passage index objects (spec source-store §6): created here,
@@ -106,6 +116,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
    * is one transaction. `entityId` limits the drain to that entity's ledger rows.
    */
   async drainPassages(opts: { entityId?: string; deadline?: number } = {}): Promise<void> {
+    if (this.passagesDisabled) return;
     const p = this.prefix;
     if (!(await this.metadataRepo.tableExists(`${p}source_passages_fts_pending`))) return;
     for (;;) {
@@ -152,7 +163,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
    * passage (spec §5).
    */
   async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageHit[]> {
-    if (options.entityIds.length === 0) return [];
+    if (this.passagesDisabled || options.entityIds.length === 0) return [];
     const match = buildFtsMatchQuery(query);
     if (match === null) return [];
     const p = this.prefix;

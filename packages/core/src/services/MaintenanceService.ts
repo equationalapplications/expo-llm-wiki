@@ -834,12 +834,6 @@ export class MaintenanceService {
    * pre-existing limit out of scope here. Await setup() before other calls,
    * as WikiMemory.setup() documents.
    */
-  /** A never-set-up store has no source-store tables (#316 recovery); nothing to delete there. */
-  private async sourceStorePresent(tx: SQLiteAdapter): Promise<boolean> {
-    return (await this.metadataRepo.tableExists(`${this.prefix}source_documents`, tx))
-      && (await this.metadataRepo.tableExists(`${this.prefix}source_passages`, tx));
-  }
-
   private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
     if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;
     const raw = await this.metadataRepo.getMeta('schema_version', tx);
@@ -847,6 +841,12 @@ export class MaintenanceService {
     const version = Number.isFinite(parsed) ? parsed : 0;
     if (version < 9) return false;
     throw new Error(`forget(): source_ref_index is missing on a schema_version=${version} database; run setup()`);
+  }
+
+  /** A never-set-up store has no source-store tables (#316 recovery); nothing to delete there. */
+  private async sourceStorePresent(tx: SQLiteAdapter): Promise<boolean> {
+    return (await this.metadataRepo.tableExists(`${this.prefix}source_documents`, tx))
+      && (await this.metadataRepo.tableExists(`${this.prefix}source_passages`, tx));
   }
 
   /**
