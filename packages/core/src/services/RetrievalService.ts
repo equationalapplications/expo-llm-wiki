@@ -1,5 +1,5 @@
 import type { SQLiteAdapter } from '../types';
-import type { WikiOptions, MemoryBundle, WikiFact, ReadOptions } from '../types';
+import type { WikiOptions, MemoryBundle, WikiFact, ReadOptions, SourcePassage } from '../types';
 import { WikiInvalidReadOptions, isWikiSearchUnavailableError } from '../types';
 import { EntryRepository, EntryRowMetadata, EntryRowWithEmbeddings } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -16,6 +16,53 @@ type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
+const DEFAULT_SOURCE_PASSAGES = 8;
+const DEFAULT_SOURCE_CHAR_BUDGET = 4000;
+
+const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase()); // length-preserving
+const isHigh = (c: number): boolean => c >= 0xD800 && c <= 0xDBFF;
+const isLow = (c: number): boolean => c >= 0xDC00 && c <= 0xDFFF;
+
+/**
+ * Terms the engine anchors on. Strategies return no matched-term list, so the
+ * query's own tokens stand in for "terms the strategy matched" (spec section 7).
+ */
+function queryTerms(query: string): string[] {
+  return [...new Set(asciiLower(query).split(/[^\p{L}\p{N}_]+/u).filter((t) => t.length > 0))];
+}
+
+/**
+ * Window `text` (one passage) to at most `budget` UTF-16 units; offsets are
+ * relative to `text` (spec section 7). Anchor: earliest literal occurrence of
+ * any term, ASCII-case-insensitive; none -> passage start. The narrowest
+ * whitespace-bounded window around the match is the whitespace-delimited run
+ * holding it; if that run (or the match) exceeds the budget, hard-cut `budget`
+ * units from the match start, never splitting a surrogate pair.
+ */
+function windowPassage(text: string, terms: readonly string[], budget: number): { start: number; end: number; truncated: boolean } {
+  if (text.length <= budget) return { start: 0, end: text.length, truncated: false };
+  const lower = asciiLower(text);
+  let a = -1;
+  let len = 0;
+  for (const t of terms) {
+    const i = lower.indexOf(t);
+    if (i >= 0 && (a < 0 || i < a || (i === a && t.length > len))) { a = i; len = t.length; }
+  }
+  const hardCut = (from: number): { start: number; end: number; truncated: boolean } => {
+    let end = Math.min(text.length, from + budget);
+    if (end < text.length && end > from + 1 && isHigh(text.charCodeAt(end - 1)) && isLow(text.charCodeAt(end))) end -= 1;
+    return { start: from, end, truncated: from > 0 || end < text.length };
+  };
+  if (a < 0) return hardCut(0);
+  if (len > budget) return hardCut(a);
+  let s = a;
+  while (s > 0 && !/\s/.test(text[s - 1]!)) s--;
+  let e = a + len;
+  while (e < text.length && !/\s/.test(text[e]!)) e++;
+  if (e - s > budget) return hardCut(a);
+  return { start: s, end: e, truncated: true };
+}
 
 export class RetrievalService {
   constructor(
@@ -37,6 +84,7 @@ export class RetrievalService {
 
     if (entityIds.length === 0) {
       const empty: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
+      if (options?.sources) empty.sources = [];
       if (exposeMetadata) {
         empty.metadata = { query, entityIds: [] };
         if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) empty.metadata.tierWeights = sanitizedTierWeights;
@@ -775,6 +823,7 @@ export class RetrievalService {
     }
 
     const bundle: MemoryBundle = { facts, tasks, events: events.reverse(), edges: [] };
+    if (options?.sources) bundle.sources = await this._readSources(entityIds, options.sources);
 
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };
@@ -784,6 +833,38 @@ export class RetrievalService {
     }
 
     return bundle;
+  }
+
+  /**
+   * The `sources` group (spec source-store section 7). One search per entity,
+   * so ranking and caps never cross entities. No model call anywhere.
+   * Choice (section 7 vs 9): `charBudget` bounds each item's window, so a match
+   * is never dropped for size.
+   */
+  private async _readSources(
+    entityIds: readonly string[],
+    opt: NonNullable<ReadOptions['sources']>,
+  ): Promise<SourcePassage[]> {
+    const pos = (v: unknown, d: number): number =>
+      typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : d;
+    const maxPassages = pos(opt.maxPassages, DEFAULT_SOURCE_PASSAGES);
+    const charBudget = pos(opt.charBudget, DEFAULT_SOURCE_CHAR_BUDGET);
+    const query = typeof opt.query === 'string' ? opt.query : '';
+    const terms = queryTerms(query);
+    const out: SourcePassage[] = [];
+    if (terms.length === 0) return out;
+    for (const entityId of entityIds) {
+      const hits = await this.searchService.searchPassages(query, entityId, maxPassages);
+      for (const h of hits) {
+        const w = windowPassage(h.text, terms, charBudget);
+        out.push({
+          entityId, sourceRef: h.source_ref, sourceHash: h.source_hash, seq: h.seq,
+          startOffset: h.start_offset + w.start, endOffset: h.start_offset + w.end,
+          truncated: w.truncated, text: h.text.slice(w.start, w.end),
+        });
+      }
+    }
+    return out;
   }
 
   /**

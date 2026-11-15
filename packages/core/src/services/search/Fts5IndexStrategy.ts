@@ -1,7 +1,7 @@
 // packages/core/src/services/search/Fts5IndexStrategy.ts
 import type { SQLiteAdapter } from '../../types';
 import type { MetadataRepository } from '../../repositories/MetadataRepository';
-import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
+import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy, PassageHit } from './IndexStrategy';
 import {
   FTS5_DRAIN_CHUNK, FTS5_RECLAIM_MERGE_PAGES, FTS5_RETIRED_COUNTER_KEY, FTS5_RETIRED_TABLES_KEY, isRetiredTableName, retiredTableName, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
   sweepChunkSql, sweepHiSql, windowChunkSql, windowHiSql, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
@@ -15,6 +15,36 @@ export interface PassageSearchResult {
   entity_id: string;
   document_id: string;
   score: number;
+}
+
+/**
+ * Attach offsets, source pair and passage text to raw hits. Text is sliced in
+ * JS from `source_documents.text` (spec section 7); a hit whose passage or
+ * document row is gone is dropped.
+ */
+export async function hydratePassageHits(
+  db: SQLiteAdapter, prefix: string, raw: readonly PassageSearchResult[],
+): Promise<PassageHit[]> {
+  const docs = new Map<string, { source_ref: string; source_hash: string; text: string } | null>();
+  const out: PassageHit[] = [];
+  for (const r of raw) {
+    const pas = await db.getFirstAsync<{ seq: number; start_offset: number; end_offset: number }>(
+      `SELECT seq, start_offset, end_offset FROM ${prefix}source_passages WHERE id = ?`, [r.id]);
+    if (!pas) continue;
+    if (!docs.has(r.document_id)) {
+      docs.set(r.document_id, (await db.getFirstAsync<{ source_ref: string; source_hash: string; text: string }>(
+        `SELECT source_ref, source_hash, text FROM ${prefix}source_documents WHERE id = ?`, [r.document_id])) ?? null);
+    }
+    const doc = docs.get(r.document_id);
+    if (!doc) continue;
+    const start = Number(pas.start_offset);
+    const end = Number(pas.end_offset);
+    out.push({
+      ...r, seq: Number(pas.seq), start_offset: start, end_offset: end,
+      source_ref: doc.source_ref, source_hash: doc.source_hash, text: doc.text.slice(start, end),
+    });
+  }
+  return out;
 }
 import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
 import { parseJsonArray } from '../../repositories/rowMappers';
@@ -121,14 +151,14 @@ export class Fts5IndexStrategy implements IndexStrategy {
    * `source_passages` row exists, so a stalled drain never surfaces a deleted
    * passage (spec §5).
    */
-  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageSearchResult[]> {
+  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageHit[]> {
     if (options.entityIds.length === 0) return [];
     const match = buildFtsMatchQuery(query);
     if (match === null) return [];
     const p = this.prefix;
     const t = `${p}source_passages_fts`;
     const limit = options.limit >= Number.MAX_SAFE_INTEGER ? -1 : options.limit;
-    return this.db.getAllAsync<PassageSearchResult>(
+    const raw = await this.db.getAllAsync<PassageSearchResult>(
       `SELECT passage_id AS id, entity_id, doc_id AS document_id, max(0.0, -raw) AS score FROM (
          SELECT passage_id, entity_id, doc_id, bm25(${t}, 0.0, 0.0, 0.0, 1.0) AS raw
            FROM ${t}
@@ -139,6 +169,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
         ORDER BY raw, id`,
       [match, JSON.stringify(options.entityIds), limit],
     );
+    return hydratePassageHits(this.db, p, raw);
   }
 
   private async initEntries(opts: { entriesExisted?: boolean }): Promise<void> {

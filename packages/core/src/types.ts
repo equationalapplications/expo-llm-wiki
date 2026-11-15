@@ -291,6 +291,8 @@ export interface LibrarianConfig {
 }
 
 export interface WikiConfig {
+  /** Source-store limits (spec source-store section 9). Defaults live in SourceStoreService. */
+  sourceStore?: { maxCharsPerSource?: number; maxTotalChars?: number };
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
    * `^[A-Za-z][A-Za-z0-9_]{0,30}_$` (letter, then alphanumeric/underscore,
@@ -428,6 +430,12 @@ export interface WikiConfig {
 }
 
 export interface ReadOptions {
+  /**
+   * Opt in to stored-source passages (spec source-store section 7). Per entity:
+   * at most `maxPassages` (default 8) windows, each at most `charBudget`
+   * (default 4,000) UTF-16 code units.
+   */
+  sources?: { query: string; maxPassages?: number; charBudget?: number };
   maxResults?: number;
   /**
    * undefined → use WikiConfig.preFilterLimit (or no pre-filter if also unset).
@@ -1058,8 +1066,25 @@ export interface WikiOptions {
   onDiagnostic?: (diagnostic: WikiDiagnostic) => void;
 }
 
+/** One windowed stored-source passage in a `read()` `sources` group (spec source-store section 7). */
+export interface SourcePassage {
+  entityId: string;
+  sourceRef: string;
+  sourceHash: string;
+  seq: number;
+  /** UTF-16 offset of `text` within the stored source, inclusive. */
+  startOffset: number;
+  /** UTF-16 offset, exclusive: `storedText.slice(startOffset, endOffset) === text`. */
+  endOffset: number;
+  /** True when `text` is a window cut from a larger passage. */
+  truncated: boolean;
+  text: string;
+}
+
 export interface MemoryBundle {
   facts: WikiFact[];
+  /** Present only when `read()` was given the `sources` option. Per-entity groups, never merged. */
+  sources?: SourcePassage[];
   tasks: WikiTask[];
   events: WikiEvent[];
   edges?: WikiEdge[];

@@ -38,6 +38,24 @@ export interface IndexSearchResult {
   entity_id: string;
 }
 
+/**
+ * One passage hit with everything the read window needs. `text` is the whole
+ * passage, sliced in JS from `source_documents.text` at [start_offset,
+ * end_offset) (spec source-store section 7; never SQL substr).
+ */
+export interface PassageHit {
+  id: string;
+  entity_id: string;
+  document_id: string;
+  score: number;
+  seq: number;
+  start_offset: number;
+  end_offset: number;
+  source_ref: string;
+  source_hash: string;
+  text: string;
+}
+
 /** One drain turn's shape (spec #280 Change 3 "drain interface"). */
 export interface DrainOptions {
   /** `monotonicNow()` timestamp, checked between chunk transactions. Full mode only; default now + the strategy's budget. */
@@ -147,5 +165,12 @@ export interface IndexStrategy {
    * transactions.
    */
   drain?(opts?: DrainOptions): Promise<void>;
+
+  /**
+   * Best-match-first stored-source passage search (spec source-store section 7),
+   * optional like `drain?`. A strategy without it, or the degraded stand-in,
+   * yields no passages.
+   */
+  searchPassages?(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageHit[]>;
 
 }

@@ -7,6 +7,7 @@ import type {
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
+  PassageHit,
 } from './search/IndexStrategy';
 import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
 
@@ -325,6 +326,17 @@ export class SearchService {
     return results
       .sort((a, b) => this._compareSearchResults(a, b))
       .slice(0, limit);
+  }
+
+  /**
+   * Stored-source passage search for ONE entity (spec source-store section 7:
+   * ranking and caps are per entity). Rides the active strategy; a strategy
+   * without passage search yields none.
+   */
+  async searchPassages(query: string, entityId: string, limit: number): Promise<PassageHit[]> {
+    if (!this.indexStrategy.searchPassages) return [];
+    const hits = await this.indexStrategy.searchPassages(query, { entityIds: [entityId], limit });
+    return hits.filter((h) => Number.isFinite(h.score) && h.entity_id === entityId).slice(0, limit);
   }
 
   /**

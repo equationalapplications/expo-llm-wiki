@@ -7,7 +7,9 @@ import type {
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
+  PassageHit,
 } from './IndexStrategy';
+import { hydratePassageHits } from './Fts5IndexStrategy';
 
 interface PassageDoc { id: string; entity_id: string; document_id: string; text: string }
 
@@ -188,6 +190,8 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
 
   private passageIndex: MiniSearch<PassageDoc> = this.createPassageIndex();
   private passageIdsByEntity = new Map<string, Set<string>>();
+  /** Handle `reindexSourcePassages` last indexed from; `searchPassages` hydrates hits through it. */
+  private passageSource: { db: SQLiteAdapter; prefix: string } | null = null;
 
   private createPassageIndex(): MiniSearch<PassageDoc> {
     return new MiniSearch({
@@ -208,6 +212,7 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
    * sees the index wholly before or wholly after.
    */
   async reindexSourcePassages(db: SQLiteAdapter, prefix: string, entityId?: string): Promise<void> {
+    this.passageSource = { db, prefix };
     const entityIds = entityId !== undefined
       ? [entityId]
       : [...new Set([
@@ -228,14 +233,15 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
   }
 
   /** Best-match-first passage search over the entities in `options.entityIds`. */
-  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageSearchResult[]> {
-    if (options.entityIds.length === 0) return [];
+  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageHit[]> {
+    if (options.entityIds.length === 0 || !this.passageSource) return [];
     const allowed = new Set(options.entityIds);
     const raw = this.passageIndex.search(query, { filter: (r) => allowed.has(r.entity_id as string), combineWith: 'OR' });
     raw.sort((a, b) => (b.score - a.score) || a.id.localeCompare(b.id));
-    return raw.slice(0, options.limit).map((r) => ({
-      id: r.id, entity_id: r.entity_id as string, document_id: r.document_id as string, score: r.score,
+    const hits = raw.slice(0, options.limit).map((r) => ({
+      id: r.id as string, entity_id: r.entity_id as string, document_id: r.document_id as string, score: r.score,
     }));
+    return hydratePassageHits(this.passageSource.db, this.passageSource.prefix, hits);
   }
 
   /**
