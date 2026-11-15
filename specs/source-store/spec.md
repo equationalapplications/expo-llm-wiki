@@ -561,9 +561,11 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
 
 ## Rejected alternatives
 
-- **Store passages with their text in `source_passages`.** Rejected: the
-  text would exist twice, and a rewrite of the passage cutter could not
-  re-derive it. Slicing from one immutable text row keeps the text as handed.
+- **Store passages with their text in `source_passages`.** Rejected: a
+  rewrite of the passage cutter could not re-derive the stored rows from
+  the canonical text. Slicing from one immutable text row keeps the text
+  as handed and leaves exactly one canonical copy (FTS5's index copy is
+  derived text, not a second canonical row — §3, §5, §6).
 - **Embed passages.** Rejected: an `embed` call is a model call and spends
   tokens, which rules 1 and 7 forbid for this lane and the owner ruled out.
 - **Add a `text` column to `entries`.** Rejected: curated-thoughts#353 fails
