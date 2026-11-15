@@ -143,11 +143,14 @@ added to any existing table, so the Curated Thoughts guard passes without a
 mirror. The store adds two tables, following the v9 `add_source_ref_index`
 pattern (`db/migrations.ts:153-240`): `CREATE TABLE IF NOT EXISTS`, a
 partial UNIQUE index, a pre-check that aborts with an actionable error
-before any write — the precondition is that neither
-`${prefix}source_documents` nor `${prefix}source_passages` already exists,
-which catches a corrupt or half-applied prior attempt — and an idempotent
-backfill, here a no-op backfill, since no source text exists on any
-database today.
+before any write, and an idempotent backfill — here a no-op backfill, since
+no source text exists on any database today. The pre-check's precondition:
+under the v9 pattern the every-open DDL has already created both tables,
+empty, by the time v17 runs (`db/migrations.ts:175`), so an empty table with
+exactly the §3 column set is the expected state and passes; the migration
+aborts only when a table exists that carries rows or a column set that
+differs from §3 — the corrupt or half-applied prior attempt the check exists
+to catch.
 
 - `source_documents` — one row per stored source:
   `id`, `entity_id`, `source_ref`, `source_hash`, `text`, `text_hash`,
@@ -426,7 +429,10 @@ of its `entity_id` references this way). Store writes take a new
 `${prefix}:${entityId}:store` key: a store conflicts with ingest, import,
 prune, librarian, heal, ontologyBackfill, reembed, forget, and any other
 store of the same entity, so two stores serialize and a store never runs
-under a maintenance operation's lock. `acquireLock` throws `WikiBusyError`
+under a maintenance operation's lock; the reverse direction is part of the
+ruling — `acquireLock`'s per-operation checks are explicit `if` chains, so
+each existing operation's checks must also treat `store` as blocking.
+`acquireLock` throws `WikiBusyError`
 when a lock is busy and does not wait (`services/JobManager.ts`); a store
 that loses the busy race throws `WikiBusyError` — the engine-wide exception
 noted in §7, not a policy refusal. A read for one entity can never return
