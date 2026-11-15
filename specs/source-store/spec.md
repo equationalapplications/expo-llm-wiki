@@ -1,10 +1,10 @@
 # The source store
 
 **Status:** Draft.
-**Date:** 2026-11-15 (Step-0 code reads done 2026-11-14/15 at `main` `92878cc3`, `packages/core` 9.1.0, schema v16).
+**Date:** 2026-11-14 (Step-0 code reads done 2026-11-14 at `main` `92878cc3`, `packages/core` 9.1.0, schema v16).
 **Issue:** [#390](https://github.com/equationalapplications/expo-llm-wiki/issues/390). Roadmap step 4 (`docs/ROADMAP.md`).
 **Owner rulings this spec answers:** 2026-11-14 — scope is the store only; `ingestDocument()` does not change; a host that does not use the store sees no change on upgrade. Working memory, extraction that reads from the store, and librarian-replaceable document facts are named exploratory and stay out.
-**Intent check:** Rule 1 — the store makes no model call; §No model call. Rule 2 — every schema change is additive; two new tables, no new column on any existing table; §Schema. Rule 3 — every new table and read path is row-scoped by `entity_id`; §Entity isolation. Rule 5 — this pull request rewords rule 5; §Rule 5 reworded. Rule 6 — refusals and cuts produce typed, content-free diagnostics; §Limits and diagnostics. Rule 7 — the store spends no tokens; §No model call. Rule 8 — no dependency is added; §Dependencies. Rule 10 — this spec exists before any code. Rule 11 — measurement is cheap targeted tests; §Test plan publishes no accuracy or cost claim.
+**Intent check:** Rule 1 — the store makes no model call; §No model call. Rule 2 — every schema change is additive; two new tables, no new column on any existing table; §Schema: two new tables, additive. Rule 3 — every new table and read path is row-scoped by `entity_id`; §Entity isolation. Rule 5 — this pull request rewords rule 5; §Rule 5 reworded. Rule 6 — refusals and cuts produce typed, content-free diagnostics; §Limits and diagnostics. Rule 7 — the store spends no tokens; §No model call. Rule 8 — no dependency is added; §Files touched. Rule 10 — this spec exists before any code. Rule 11 — measurement is cheap targeted tests; §Test plan publishes no accuracy or cost claim.
 
 ## Problem
 
