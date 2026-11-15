@@ -1133,7 +1133,8 @@ export type WikiBusyOperation =
   | 'reembed'
   | 'import'
   | 'forget'
-  | 'ontologyBackfill';
+  | 'ontologyBackfill'
+  | 'store';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.

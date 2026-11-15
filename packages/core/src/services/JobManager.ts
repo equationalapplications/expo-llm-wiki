@@ -10,7 +10,8 @@ export type OperationType =
   | 'import'
   | 'global_import'
   | 'forget'
-  | 'ontologyBackfill';
+  | 'ontologyBackfill'
+  | 'store';
 
 export class JobManager {
   private activeMaintenanceJobs = new Set<string>();
@@ -90,6 +91,7 @@ export class JobManager {
   private _globalImportKey() { return `${this.prefix}:import`; }
   private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
+  private _storeKey(entityId: string) { return `${this.prefix}:${entityId}:store`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
   private _ontologyBackfillKey(entityId: string) { return `${this.prefix}:${entityId}:ontologyBackfill`; }
 
@@ -110,6 +112,7 @@ export class JobManager {
     import: (id) => this._importKey(id),
     forget: (id) => this._forgetKey(id),
     ontologyBackfill: (id) => this._ontologyBackfillKey(id),
+    store: (id) => this._storeKey(id),
   };
 
   private _isReembedActive(entityId: string): boolean {
@@ -138,6 +141,10 @@ export class JobManager {
   private _isImportActiveFor(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._importKey(entityId)) ||
            this.activeMaintenanceJobs.has(this._globalImportKey());
+  }
+
+  private _isStoreActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._storeKey(entityId));
   }
 
   private _isForgetActiveFor(entityId: string): boolean {
@@ -197,6 +204,7 @@ export class JobManager {
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        else if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
         break;
 
       case 'librarian':
@@ -208,6 +216,7 @@ export class JobManager {
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        else if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
         break;
       }
 
@@ -221,6 +230,7 @@ export class JobManager {
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        else if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
         break;
 
       case 'global_reembed':
@@ -233,6 +243,7 @@ export class JobManager {
         else if (this.activeIngestJobs.size > 0) blockingOperation = 'ingest';
         else if (this._isAnyMaintenanceActiveWithSuffix(':import')) blockingOperation = 'import';
         else if (this._isAnyMaintenanceActiveWithSuffix(':forget')) blockingOperation = 'forget';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':store')) blockingOperation = 'store';
         break;
 
       case 'import':
@@ -247,11 +258,25 @@ export class JobManager {
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        else if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
         break;
       }
 
+      case 'store':
+        if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
+        else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
+        else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) blockingOperation = 'librarian';
+        else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) blockingOperation = 'heal';
+        else if (this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId))) blockingOperation = 'ontologyBackfill';
+        else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
+        else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
+        else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
+        else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        break;
+
       case 'global_import':
         if (this.activeMaintenanceJobs.has(this._globalImportKey())) blockingOperation = 'import';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':store')) blockingOperation = 'store';
         break;
 
       case 'ingest': {
@@ -261,6 +286,7 @@ export class JobManager {
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
+        else if (this._isStoreActiveFor(entityId)) blockingOperation = 'store';
         break;
       }
     }
@@ -314,7 +340,8 @@ export class JobManager {
                this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this._isReembedActive(entityId) ||
                this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
+               this._isForgetActiveFor(entityId) ||
+               this._isStoreActiveFor(entityId);
       case 'prune':
         return this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
@@ -323,7 +350,8 @@ export class JobManager {
                this._isReembedActive(entityId) ||
                this._isIngestActiveFor(entityId) ||
                this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
+               this._isForgetActiveFor(entityId) ||
+               this._isStoreActiveFor(entityId);
       case 'reembed':
         return this.activeMaintenanceJobs.has(this._reembedKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
@@ -333,7 +361,8 @@ export class JobManager {
                this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId)) ||
                this._isIngestActiveFor(entityId) ||
                this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
+               this._isForgetActiveFor(entityId) ||
+               this._isStoreActiveFor(entityId);
       case 'global_reembed':
         return this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
                this._isAnyMaintenanceActiveWithSuffix(':reembed') ||
@@ -343,7 +372,8 @@ export class JobManager {
                this._isAnyMaintenanceActiveWithSuffix(':ontologyBackfill') ||
                this.activeIngestJobs.size > 0 ||
                this._isAnyMaintenanceActiveWithSuffix(':import') ||
-               this._isAnyMaintenanceActiveWithSuffix(':forget');
+               this._isAnyMaintenanceActiveWithSuffix(':forget') ||
+               this._isAnyMaintenanceActiveWithSuffix(':store');
       case 'import':
       case 'forget': {
         const selfKey = operation === 'import' ? this._importKey(entityId) : this._forgetKey(entityId);
@@ -355,16 +385,29 @@ export class JobManager {
                this._isReembedActive(entityId) ||
                this._isIngestActiveFor(entityId) ||
                this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
+               this._isForgetActiveFor(entityId) ||
+               this._isStoreActiveFor(entityId);
       }
+      case 'store':
+        return this._isStoreActiveFor(entityId) ||
+               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId)) ||
+               this._isReembedActive(entityId) ||
+               this._isIngestActiveFor(entityId) ||
+               this._isImportActiveFor(entityId) ||
+               this._isForgetActiveFor(entityId);
       case 'global_import':
-        return this.activeMaintenanceJobs.has(this._globalImportKey());
+        return this.activeMaintenanceJobs.has(this._globalImportKey()) ||
+               this._isAnyMaintenanceActiveWithSuffix(':store');
       case 'ingest':
         return this._hasIngestJob(entityId) ||
                this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this._isReembedActive(entityId) ||
                this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
+               this._isForgetActiveFor(entityId) ||
+               this._isStoreActiveFor(entityId);
       default:
         return false;
     }
@@ -446,6 +489,7 @@ export class JobManager {
       if (this._isReembedActive(entityId)) throw new WikiBusyError('reembed', entityId);
       if (this._isIngestActiveFor(entityId)) throw new WikiBusyError('ingest', entityId);
       if (this._isForgetActiveFor(entityId)) throw new WikiBusyError('forget', entityId);
+      if (this._isStoreActiveFor(entityId)) throw new WikiBusyError('store', entityId);
     }
     if (this.activeMaintenanceJobs.has(this._globalImportKey())) throw new WikiBusyError('import', '*');
 
