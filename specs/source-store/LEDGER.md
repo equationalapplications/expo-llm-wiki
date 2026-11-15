@@ -5,11 +5,16 @@ Plan: `specs/source-store/plan.md`. Baseline logs:
 `.superpowers/sdd/source-store/` (gitignored scratch, absolute path
 `/home/kv-thinkpad-t420-ubuntu/code/github/equationalapplications/expo-llm-wiki/.superpowers/sdd/source-store/`).
 
-**Baseline:** in flight at plan commit (`pnpm install --frozen-lockfile` +
-`pnpm test` full suite, first run of this lane). Counts recorded below
-when green.
+**Baseline:** GREEN (2026-11-15, run2 after clearing a stale shared
+`node_modules/.vitest-cache` — ENOTEMPTY race, environment not code):
+`pnpm test` full suite EXIT=0, 286 test files passed / 286, **3253 tests
+passed / 3253**, zero failures. Log:
+`.superpowers/sdd/source-store/baseline-test-run2.log`. Install:
+`pnpm install --frozen-lockfile` clean.
 
-**In flight:** nothing dispatched yet — Task 1 brief next.
+**In flight:** T1 dispatched (Claude Code sonnet/low, brief
+`.superpowers/sdd/source-store/briefs/t1.md`, runner `run-task.sh 1`,
+announce ≈$0.60 hard cap $0.90).
 
 ## Tasks
 
