@@ -384,6 +384,64 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 17,
+    description: 'add_source_store',
+    run: async (db, prefix) => {
+      // Spec §3. Pure DDL; the every-open DDL has already created both tables,
+      // empty. Abort (before any write) only on a table carrying rows or a
+      // column set that differs from §3 — a corrupt or half-applied attempt.
+      const expected: Record<string, string[]> = {
+        source_documents: ['id', 'entity_id', 'source_ref', 'source_hash', 'text', 'text_hash', 'char_count', 'created_at'],
+        source_passages: ['id', 'entity_id', 'document_id', 'seq', 'start_offset', 'end_offset'],
+      };
+      for (const [table, want] of Object.entries(expected)) {
+        const full = `${prefix}${table}`;
+        const cols = (await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${full})`)).map((c) => c.name);
+        if (cols.length === 0) continue; // absent: created below
+        const same = cols.length === want.length && want.every((c) => cols.includes(c));
+        if (!same) {
+          throw new Error(
+            `Migration v17 (add_source_store) failed: table ${full} exists with columns [${cols.join(', ')}], ` +
+            `expected [${want.join(', ')}]. Drop the stray table (it predates the source store) and re-run setup().`
+          );
+        }
+        const row = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${full}`);
+        if (row && row.n > 0) {
+          throw new Error(
+            `Migration v17 (add_source_store) failed: table ${full} already holds ${row.n} row(s), ` +
+            `but no source text exists before v17. Back up and drop the table, then re-run setup().`
+          );
+        }
+      }
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS ${prefix}source_documents (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          text TEXT NOT NULL,
+          text_hash TEXT NOT NULL,
+          char_count INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_ref
+          ON ${prefix}source_documents (entity_id, source_ref);
+        CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_hash
+          ON ${prefix}source_documents (entity_id, source_hash);
+        CREATE TABLE IF NOT EXISTS ${prefix}source_passages (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          start_offset INTEGER NOT NULL,
+          end_offset INTEGER NOT NULL
+        );`
+      );
+      // Backfill: intentionally a no-op — no source text exists on any
+      // database today, so re-running v17 is trivially idempotent.
+    },
+  },
 ];
 
 /**

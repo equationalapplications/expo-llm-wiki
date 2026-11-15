@@ -82,14 +82,14 @@ describe('normalizeSourceRef', () => {
 
 describe('migration v14 legacy index through v16 (specs/source-pointers)', () => {
   it('is the current schema version', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(16);
-    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(16);
+    expect(CURRENT_SCHEMA_VERSION).toBe(17);
+    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(17);
   });
 
   it('fresh store gets the index, the stamp, and the current schema_version', async () => {
     const db = await freshDb();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('16');
+    expect(await meta(db, 'schema_version')).toBe('17');
     expect(JSON.parse((await meta(db, NORMALIZE_STAMP_KEY))!)).toEqual({ schema_version: 14, normalize_alg: 1 });
   });
 
@@ -101,7 +101,7 @@ describe('migration v14 legacy index through v16 (specs/source-pointers)', () =>
     await insertEntry(db, 'f1', ' mail/a.md ');
     await new WikiMemory(db, stubOptions).setup();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('16');
+    expect(await meta(db, 'schema_version')).toBe('17');
     expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('maila.md');
   });
 
@@ -120,7 +120,7 @@ describe('migration v14 legacy index through v16 (specs/source-pointers)', () =>
     failIndex = false;
     await new WikiMemory(db, stubOptions).setup();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('16');
+    expect(await meta(db, 'schema_version')).toBe('17');
   });
 
   it('setupDatabase does not create the index on an existing store', async () => {
@@ -259,8 +259,8 @@ describe('probePendingWork + migration gate', () => {
     await db.runAsync(`UPDATE ${P}meta SET value = '13' WHERE key = 'schema_version'`);
     const err = await new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' }).catch((e) => e);
     expect(err).toBeInstanceOf(WikiMigrationRequiredError);
-    expect(err.pendingWork).toEqual({ type: 'schema_migration', fromVersion: 13, toVersion: 16 });
-    expect(err.message).toContain('v13 -> v16');
+    expect(err.pendingWork).toEqual({ type: 'schema_migration', fromVersion: 13, toVersion: 17 });
+    expect(err.message).toContain('v13 -> v17');
     expect(await meta(db, 'schema_version')).toBe('13');
     expect(await indexNames(db)).not.toContain(LEGACY_IDX);
   });

@@ -63,6 +63,33 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       ON ${prefix}source_ref_index (entity_id, source_hash)
       WHERE deleted_at IS NULL;
 
+    -- source_documents / source_passages: the source store (specs/source-store §3).
+    -- New tables only; hard delete, so no deleted_at and both UNIQUE indexes are plain.
+    -- Passage text is not stored: offsets (UTF-16 code units) slice source_documents.text.
+    CREATE TABLE IF NOT EXISTS ${prefix}source_documents (
+      id TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      text TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      char_count INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_ref
+      ON ${prefix}source_documents (entity_id, source_ref);
+    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_hash
+      ON ${prefix}source_documents (entity_id, source_hash);
+
+    CREATE TABLE IF NOT EXISTS ${prefix}source_passages (
+      id TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      start_offset INTEGER NOT NULL,
+      end_offset INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ${prefix}tasks (
       id TEXT PRIMARY KEY,
       entity_id TEXT NOT NULL,
