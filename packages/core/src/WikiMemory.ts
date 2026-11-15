@@ -26,7 +26,8 @@ import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
-import { SourceStoreService, type StoreSourceResult } from './services/SourceStoreService';
+import { SourceStoreService } from './services/SourceStoreService';
+import type { StoreSourceResult, StoredSource, StoredSourceSummary } from './types';
 import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
 import { createIndexStrategy } from './services/search/createIndexStrategy';
 import { monotonicNow } from './utils/monotonicNow';
@@ -1056,7 +1057,10 @@ export class WikiMemory {
     } finally {
       // Import re-cuts stored sources inside its transaction; index them once it committed (spec §6, §8).
       // Also runs after a failed import (e.g. WikiBusyError): intentional and harmless — it reads committed state and never rejects.
-      await this.searchService.syncPassages(this.db, this.prefix);
+      // Scoped to the dump's entities so MiniSearch does not re-read every stored entity.
+      for (const entityId of Object.keys(dump?.entities ?? {})) {
+        await this.searchService.syncPassages(this.db, this.prefix, entityId);
+      }
     }
   }
 
@@ -1107,12 +1111,12 @@ export class WikiMemory {
     return result;
   }
 
-  async getStoredSource(entityId: string, sourceRef: string) {
+  async getStoredSource(entityId: string, sourceRef: string): Promise<StoredSource | null> {
     assertEntityId(entityId);
     return this.sourceStoreService.getStoredSource(entityId, sourceRef);
   }
 
-  async listStoredSources(entityId: string) {
+  async listStoredSources(entityId: string): Promise<StoredSourceSummary[]> {
     assertEntityId(entityId);
     return this.sourceStoreService.listStoredSources(entityId);
   }

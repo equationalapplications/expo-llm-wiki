@@ -42,6 +42,9 @@ function assertSourcesQuery(opt: NonNullable<ReadOptions['sources']> | undefined
   if (typeof query !== 'string' || query.trim() === '') {
     throw new WikiInvalidReadOptions('sources.query', 'must be a non-empty string');
   }
+  if (queryTerms(query).length === 0) {
+    throw new WikiInvalidReadOptions('sources.query', 'must contain at least one searchable term');
+  }
 }
 
 /**
@@ -887,7 +890,6 @@ export class RetrievalService {
     const query = opt.query as string;
     const terms = queryTerms(query);
     const out: SourcePassage[] = [];
-    if (terms.length === 0) return out;
     for (const entityId of entityIds) {
       const hits = await this.searchService.searchPassages(query, entityId, maxPassages);
       let remaining = charBudget; // per entity: this entity's windows together never exceed charBudget

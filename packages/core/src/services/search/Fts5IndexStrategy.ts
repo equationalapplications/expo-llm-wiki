@@ -182,7 +182,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
         ORDER BY raw, id`,
       [match, JSON.stringify(options.entityIds), JSON.stringify(options.entityIds), limit],
     );
-return hydratePassageHits(this.db, p, raw);
+    return hydratePassageHits(this.db, p, raw);
   }
 
   private async initEntries(opts: { entriesExisted?: boolean }): Promise<void> {

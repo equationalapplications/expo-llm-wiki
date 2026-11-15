@@ -1,4 +1,6 @@
-import type { SQLiteAdapter, WikiDiagnostic, WikiOptions } from '../types';
+import type {
+  SQLiteAdapter, StoredSource, StoredSourceSummary, StoreSourceResult, WikiDiagnostic, WikiOptions,
+} from '../types';
 import type { JobManager } from './JobManager';
 import { emitDiagnostic, type WikiDiagnosticInput } from '../utils/diagnostics';
 import { normalizeSourceHash, normalizeSourceRef } from '../utils/pure';
@@ -8,16 +10,6 @@ import { upsertStoredSource } from './sourceStoreUpsert';
 export const DEFAULT_MAX_CHARS_PER_SOURCE = 200_000;
 export const DEFAULT_MAX_TOTAL_CHARS = 5_000_000;
 
-export type StoreSourceResult =
-  | {
-      stored: true;
-      sourceRef: string;
-      sourceHash: string;
-      charCount: number;
-      passageCount: number;
-      storedAt: number;
-    }
-  | { stored: false; diagnostics: WikiDiagnostic[] };
 
 function limitOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
@@ -84,7 +76,7 @@ export class SourceStoreService {
   async getStoredSource(
     entityId: string,
     sourceRef: string,
-  ): Promise<{ sourceRef: string; sourceHash: string; text: string; charCount: number; storedAt: number } | null> {
+  ): Promise<StoredSource | null> {
     const ref = normalizeSourceRef(sourceRef);
     if (!ref) return null;
     const row = await this.db.getFirstAsync<{
@@ -105,9 +97,7 @@ export class SourceStoreService {
   }
 
   /** Spec §4/§7: full store listing, including sources stored with no ingest. */
-  async listStoredSources(entityId: string): Promise<Array<{
-    sourceRef: string; sourceHash: string; charCount: number; passageCount: number; storedAt: number;
-  }>> {
+  async listStoredSources(entityId: string): Promise<StoredSourceSummary[]> {
     const rows = await this.db.getAllAsync<{
       source_ref: string; source_hash: string; char_count: number; created_at: number; passage_count: number;
     }>(

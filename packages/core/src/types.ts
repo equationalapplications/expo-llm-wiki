@@ -1106,6 +1106,36 @@ export interface MemoryBundle {
   };
 }
 
+/** Result of `storeSource` (spec source-store §7). Refusals return `stored: false` with their diagnostics. */
+export type StoreSourceResult =
+  | {
+      stored: true;
+      sourceRef: string;
+      sourceHash: string;
+      charCount: number;
+      passageCount: number;
+      storedAt: number;
+    }
+  | { stored: false; diagnostics: WikiDiagnostic[] };
+
+/** A stored source's text and metadata, as returned by `getStoredSource`. */
+export interface StoredSource {
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  charCount: number;
+  storedAt: number;
+}
+
+/** One entry of `listStoredSources`. */
+export interface StoredSourceSummary {
+  sourceRef: string;
+  sourceHash: string;
+  charCount: number;
+  passageCount: number;
+  storedAt: number;
+}
+
 /** One stored source in a `MemoryDump` (spec source-store §8). Import re-derives passages and `text_hash` from `text`. */
 export interface StoredSourceDump {
   sourceRef: string;

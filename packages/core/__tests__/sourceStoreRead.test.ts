@@ -112,8 +112,8 @@ describe('listSourceRefs stored three-state (spec §4)', () => {
     await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hello' });
     expect((await wiki.listSourceRefs(E))[0].stored).toEqual({ charCount: 5 });
     // Remove the store rows only, as the spec §4 forget semantics describe
-    // (facts stay). Done in SQL because forget({sourceRef}) in the current
-    // engine also soft-deletes the facts; that wiring is outside Task 5.
+    // (facts stay). Done in SQL because forget hard-deletes the store rows
+    // while the facts soft-delete separately.
     await db.runAsync(`DELETE FROM ${PREFIX}source_passages WHERE entity_id = ?`, [E]);
     await db.runAsync(`DELETE FROM ${PREFIX}source_documents WHERE entity_id = ?`, [E]);
     const refs = await wiki.listSourceRefs(E);

@@ -188,8 +188,10 @@ to catch.
 The migration appends to `MIGRATIONS[]` as v17. `CURRENT_SCHEMA_VERSION` is
 derived from the array's last entry (`db/migrations.ts:401-414`), so no
 constant is bumped. Old databases migrate by pure DDL; fresh installs stamp
-v17 in one transaction. A pre-v9-style runtime guard lets every store call
-fail with a typed error instead of crashing on a database that predates v17.
+v17 in one transaction. A database that predates v17 has no store tables.
+`forget`, `clearAll` and `importDump` detect that absence and leave the store
+alone; a direct store call on such a database fails with the engine's
+underlying missing-table error.
 
 ### 4. Naming, and what links the store to the facts
 
@@ -360,7 +362,7 @@ Three new calls on `WikiMemory`, all opt-in:
   entity: windows are cut in rank order, each consuming its size from the
   entity's remaining `charBudget`, so an entity's windows together never
   exceed `charBudget`; once it is spent, lower-ranked hits for that entity
-  are not returned. A missing or blank `sources.query` throws
+  are not returned. A missing or blank `sources.query`, or one that contains no searchable terms, throws
   `WikiInvalidReadOptions`. Match position: after a
   strategy returns a passage, the engine anchors the window at the earliest
   literal occurrence in the passage text of any term the strategy matched
@@ -489,13 +491,14 @@ another entity's passage.
   `source_passages` (every-open DDL, per the v9 pattern).
 - `packages/core/src/db/migrations.ts` — migration v17, appended.
 - `packages/core/src/services/SourceStoreService.ts` — new service: store,
-  list, get, search, remove.
+  list, get (search lives in the index strategies and `RetrievalService`;
+  removal lives in `MaintenanceService`).
 - `packages/core/src/services/MaintenanceService.ts` — `forget` and
   `clearAll` delete store rows in the existing transaction.
 - `packages/core/src/services/RetrievalService.ts` — the `sources` read
   option and the labelled group.
 - `packages/core/src/services/search/fts5Sql.ts` and
-  `MiniSearchIndexStrategy.ts` / `createIndexStrategy.ts` — the second
+  `MiniSearchIndexStrategy.ts` — the second
   index on both strategies.
 - `packages/core/src/services/ImportExportService.ts` — the additive
   `storedSources` dump field and the additive `{ skippedSources }` return
@@ -535,8 +538,8 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    curated-thoughts' nine-table guard list, so the CT guard passes
    unchanged.
 4. **Round-trip.** Store, list, get — text is byte-identical to what was
-   handed, including non-ASCII text, an astral-character (non-BMP) fixture,
-   and the 255-character ref boundary. Leading-whitespace and
+   handed, including non-ASCII text, an astral-character (non-BMP) fixture.
+   Leading-whitespace and
    repeated-substring fixtures pin the offsets against the handed text, and
    an emoji fixture pins UTF-16 offsets across the FTS and MiniSearch paths.
    A wrong-shaped `sourceHash` throws. A lone surrogate and an embedded NUL
@@ -544,9 +547,7 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    with a duplicate hash refuses — including the cross-table case, where
    `source_ref_index` already holds the hash under another ref, the
    negative case, where a forgotten source's tombstoned registry row does
-   not block the store, and the bounded ingest-side case, where an ingest
-   that takes a hash the store holds under another ref leaves the stored
-   text untouched and gives the ingesting ref's facts no `sources` group. A
+   not block the store. A
    same-pair
    re-store with different text refuses with `source_store_hash_mismatch`.
    After a changed copy, `listSourceRefs` reports `staleHash: true` for the
