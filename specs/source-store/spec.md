@@ -248,8 +248,9 @@ under different refs. `ingestDocument()` and its duplicate-hash rule are
 unchanged in this cycle, so a later ingest can still take a hash the store
 already holds under another ref; the consequence is bounded: the read joins
 facts and passages on the exact `(entityId, sourceRef, sourceHash)` pair, so
-the re-taken ref's facts read with no `sources` group, and `listSourceRefs`
-is ref-keyed — neither result silently mixes the two.
+the facts under the ref that ingested the held hash read with no `sources`
+group, and `listSourceRefs` is ref-keyed — neither result silently mixes the
+two.
 `created_at` is the basis a later per-source ageing rule can key on; such a
 rule arrives, if ever, as an additive change and stays out of this cycle.
 
@@ -450,9 +451,12 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    A wrong-shaped `sourceHash` throws. A lone surrogate and an embedded NUL
    each refuse with their typed diagnostics and store nothing. A second ref
    with a duplicate hash refuses — including the cross-table case, where
-   `source_ref_index` already holds the hash under another ref, and the
+   `source_ref_index` already holds the hash under another ref, the
    negative case, where a forgotten source's tombstoned registry row does
-   not block the store. A same-pair
+   not block the store, and the bounded ingest-side case, where an ingest
+   that takes a hash the store holds under another ref leaves the stored
+   text untouched and gives the ingesting ref's facts no `sources` group. A
+   same-pair
    re-store with different text refuses with `SOURCE_STORE_HASH_MISMATCH`.
    After a changed copy, `listSourceRefs` reports `staleHash: true` for the
    old facts.
