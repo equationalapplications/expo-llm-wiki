@@ -346,10 +346,11 @@ runs and who schedules it.
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
    same branch. When implementation is done, make one cleanup commit: it
    flips the Status to Implemented and deletes the plan and ledger. Push
-   it after the review loops converge and before the `gh pr ready` flip.
-   Whether any other commit follows it before merge does not matter; a
-   fix that changes specified behavior also amends `spec.md` in the same
-   commit. One PR per cycle, no spec-only merges. There is no post-merge
+   it after the tiered review loops (rule 2) converge and before the
+   `gh pr ready` flip; bot reviews start at the ready flip and are not
+   part of this gate. Whether any other commit follows it before merge
+   does not matter; a fix that changes specified behavior also amends
+   `spec.md` in the same commit. One PR per cycle, no spec-only merges. There is no post-merge
    cleanup commit and no docs-only cleanup PR.
    `specs/README.md` has the mechanics. The Status line changes in the
    same PR as the behavior.
@@ -386,13 +387,17 @@ runs and who schedules it.
   docs-only cleanup PR. Why: the wording previously said only "the
   final cleanup commit", which read both as in-PR and as post-merge;
   owner ruling during the PR #385 ladder (fewest PRs, no busy-work
-  housekeeping). No other INTENT rule text changed.
+  housekeeping). No other INTENT rule text changed. (Superseded the
+  same day by the next bullet.)
 - 2026-11-14 — The cleanup-commit rule is simplified by owner ruling:
   the substance is that implementation ends with one cleanup commit
   (Status flip plus plan and ledger deletion, in the PR). The
   last-lifecycle-commit framing and the bot-only follow-commit
-  exception are removed — whether another commit follows the cleanup
-  commit does not matter. The no-separate-cleanup-PR and
+  exception are removed — the owner ruled the follow-commit question
+  immaterial, so the rule widens from bot-only to any commit. Behavior
+  the spec does not describe stays governed by the spec-silent rule
+  (stop and ask) no matter where the commit lands. The
+  no-separate-cleanup-PR and
   no-post-merge-cleanup-commit parts stand (fewest PRs, no busy-work
   housekeeping). No other INTENT rule text changed.
 - 2026-11-14 — Rule 5's Planned note gains its status line: librarian

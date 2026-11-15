@@ -43,8 +43,10 @@ history carries the dates.
    closes. There are no spec-only merges.
 3. Implement on the same branch. Conventional commits name the spec
    section they fulfill. Tick ledger boxes after verification.
-4. When implementation is done (review loops have converged): one
-   cleanup commit on the same PR flips the spec to **Implemented**
+4. When implementation is done (the tiered review loops have
+   converged; bot reviews start at the ready flip and are not part of
+   this gate): one cleanup commit on the same PR flips the spec to
+   **Implemented**
    and deletes `plan.md` and `LEDGER.md` (never a separate cleanup PR,
    and no post-merge cleanup commit). It is pushed before the `gh pr
    ready` flip. Whether any other commit follows the cleanup commit
