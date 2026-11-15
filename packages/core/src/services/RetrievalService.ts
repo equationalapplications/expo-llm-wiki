@@ -33,6 +33,18 @@ function queryTerms(query: string): string[] {
 }
 
 /**
+ * Spec source-store section 7: the sources read-option requires a non-empty
+ * query on EVERY read path — including the zero-entity early return — so
+ * callers get one consistent contract instead of a silent empty group.
+ */
+function assertSourcesQuery(opt: NonNullable<ReadOptions['sources']> | undefined): void {
+  const query = opt?.query;
+  if (typeof query !== 'string' || query.trim() === '') {
+    throw new WikiInvalidReadOptions('sources.query', 'must be a non-empty string');
+  }
+}
+
+/**
  * Window `text` (one passage) to at most `budget` UTF-16 units; offsets are
  * relative to `text` (spec section 7). Anchor: earliest literal occurrence of
  * any term, ASCII-case-insensitive; none -> passage start. The window is the
@@ -53,7 +65,10 @@ function windowPassage(text: string, terms: readonly string[], budget: number): 
   }
   const hardCut = (from: number): { start: number; end: number; truncated: boolean } => {
     let end = Math.min(text.length, from + budget);
-    if (end < text.length && end > from + 1 && isHigh(text.charCodeAt(end - 1)) && isLow(text.charCodeAt(end))) end -= 1;
+    if (end < text.length && isHigh(text.charCodeAt(end - 1)) && isLow(text.charCodeAt(end))) {
+      if (end - 1 > from) end -= 1; // keep whole units only: step back inside the window
+      else return { start: from, end: from, truncated: true }; // budget 1: no surrogate-safe cut fits
+    }
     return { start: from, end, truncated: from > 0 || end < text.length };
   };
   if (a < 0) return hardCut(0);
@@ -96,6 +111,10 @@ export class RetrievalService {
       ? sanitizeTierWeights(entityIds, options?.tierWeights)
       : undefined;
     const exposeMetadata = shouldExposeReadMetadata(entityId);
+
+    // Spec source-store §7: the sources query rule holds on every read path —
+    // a blank query throws even when no entities resolve (delta finding A).
+    if (options?.sources) assertSourcesQuery(options.sources);
 
     if (entityIds.length === 0) {
       const empty: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
@@ -864,10 +883,8 @@ export class RetrievalService {
       typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : d;
     const maxPassages = pos(opt.maxPassages, DEFAULT_SOURCE_PASSAGES);
     const charBudget = pos(opt.charBudget, DEFAULT_SOURCE_CHAR_BUDGET);
-    const query = opt.query;
-    if (typeof query !== 'string' || query.trim() === '') {
-      throw new WikiInvalidReadOptions('sources.query', 'must be a non-empty string');
-    }
+    assertSourcesQuery(opt);
+    const query = opt.query as string;
     const terms = queryTerms(query);
     const out: SourcePassage[] = [];
     if (terms.length === 0) return out;
@@ -877,6 +894,7 @@ export class RetrievalService {
       for (const h of hits) {
         if (remaining <= 0) break;
         const w = windowPassage(h.text, terms, remaining);
+        if (w.end === w.start) continue; // budget 1 on an astral boundary: nothing surrogate-safe to show
         remaining -= w.end - w.start;
         out.push({
           entityId, sourceRef: h.source_ref, sourceHash: h.source_hash, seq: h.seq,
