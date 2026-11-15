@@ -391,15 +391,16 @@ runs and who schedules it.
   housekeeping). No other INTENT rule text changed. (Superseded the
   same day by the next bullet.)
 - 2026-11-14 — The cleanup-commit rule is simplified by owner ruling:
-  the substance is that implementation ends with one cleanup commit
-  (Status flip plus plan and ledger deletion, in the PR). The
-  last-lifecycle-commit framing and the bot-only follow-commit
+  the cleanup commit closes the plan-and-ledger phase: it flips the
+  Status to Implemented and deletes `plan.md` and `LEDGER.md`, in the
+  PR. The last-lifecycle-commit framing and the bot-only follow-commit
   exception are removed — the owner ruled the follow-commit question
   immaterial, so the rule widens from bot-only to any commit. Behavior
   the spec does not describe stays governed by the spec-silent rule
   (`specs/README.md`, Authority chain: stop and ask) no matter where
-  the commit lands. The
-  no-separate-cleanup-PR and
+  the commit lands. A behavior-changing commit after the cleanup commit
+  carries its verification evidence in the commit or PR thread, since
+  the ledger is already gone. The no-separate-cleanup-PR and
   no-post-merge-cleanup-commit parts stand (fewest PRs, no busy-work
   housekeeping). No other INTENT rule text changed.
 - 2026-11-14 — Rule 5's Planned note gains its status line: librarian
