@@ -199,11 +199,13 @@ carries `source_ref` and `source_hash` columns, and the store
 keys its rows on the same values, so a read can join the two labelled groups on
 `(entityId, sourceRef, sourceHash)` with no new pointer, column or table on
 the fact side. `listSourceRefs` reads from `entries`, so its one new
-optional result field, `stored: { charCount: number } | null`, is keyed on
-the `(sourceRef, sourceHash)` pair, not the ref alone: after a changed
-copy replaces the text, the old facts' hash no longer matches, and the
-decoration reports `stored: null` for them — the mismatch is visible, not
-silent. The full store listing, including a source
+optional result field, `stored`, is keyed on the
+`(sourceRef, sourceHash)` pair, not the ref alone, and distinguishes three
+states: `{ charCount }` when the store holds that exact pair;
+`{ charCount, staleHash: true }` when the store holds the ref under a
+different hash, so facts from the old copy are visibly unlinked after a
+changed copy replaces the text; and `null` when the store holds nothing
+for that ref. The full store listing, including a source
 stored with no ingest, is `listStoredSources`. An additive optional field
 on a result type is a rule-2 change; the Curated Thoughts guard does not
 read result types.
@@ -234,11 +236,13 @@ Storing the same `sourceRef` and same `sourceHash` again is a no-op that
 returns the existing state, only when the engine's `text_hash` matches what
 is stored; if the text differs under the same declared pair, `storeSource`
 refuses with `SOURCE_STORE_HASH_MISMATCH` and changes nothing. A second
-`sourceRef` carrying a `source_hash` an existing row of either kind already
-refuses with `SOURCE_STORE_DUPLICATE_HASH`, and changes nothing. The check
+`sourceRef` carrying a `source_hash` that an existing row of either kind
+already holds refuses with `SOURCE_STORE_DUPLICATE_HASH`, and changes nothing. The check
 runs against both tables that carry a hash: the store's own UNIQUE index
-(`source_documents`) and the facts registry (`source_ref_index`), so a hash
-cannot name one ref in facts and another in the store — the cross-table
+(`source_documents`) and the live rows of the facts registry
+(`source_ref_index`, which is partial on `deleted_at IS NULL`), so a hash
+cannot name one ref in facts and another in the store, while a forgotten
+source's tombstoned registry row blocks nothing — the cross-table
 case `ingestDocument()`'s duplicate-hash rule also forbids.
 `created_at` is the basis a later per-source ageing rule can key on; such a
 rule arrives, if ever, as an additive change and stays out of this cycle.
@@ -286,9 +290,10 @@ Three new calls on `WikiMemory`, all opt-in:
 
 - `storeSource(entityId, { sourceRef, sourceHash, text })` — store or
   replace a source. `sourceHash` is the host's join key, exactly the value
-  it hands `ingestDocument()`; the engine shape-checks it with
-  `normalizeSourceHash`, computes `text_hash` itself, and enforces the
-  no-op and refusal rules of §5. Text that cannot round-trip — a lone
+  it hands `ingestDocument()`; a wrong-shaped `sourceHash` is an invalid
+  argument and throws, the same convention `normalizeSourceHash`'s `null`
+  return feeds today. The engine computes `text_hash` itself and enforces
+  the no-op and refusal rules of §5. Text that cannot round-trip — a lone
   surrogate or an embedded NUL — refuses with
   `SOURCE_STORE_TEXT_NOT_STORABLE`. Refusals follow the engine's rule-6
   convention: a policy refusal returns a result carrying the diagnostic
@@ -307,7 +312,11 @@ Three new calls on `WikiMemory`, all opt-in:
   4,000 characters) per entity. When a matching passage exceeds the budget,
   the read returns the narrowest whitespace-bounded window around the match
   that fits, with the true offsets of that window and the cut marked; the
-  window never splits a surrogate pair. Ranking and caps are per entity: a
+  window never splits a surrogate pair. When no whitespace bounds a window
+  that fits — one long token — or the match itself is wider than the
+  budget, the read hard-cuts a surrogate-safe window of `charBudget` units
+  starting at the match start, again with true offsets and the cut marked;
+  a match is never dropped for size. Ranking and caps are per entity: a
   multi-entity read gets one group per entity, each capped separately, and
   the engine never ranks passages across entities. Every item carries
   `entityId`, so two entities storing the same `sourceRef` stay
@@ -377,7 +386,8 @@ stores cannot both pass the check and exceed the budget. A read that hits
 
 Rule 3. Both new tables carry `entity_id`, every query on them filters by it
 in the `WHERE` clause, and both UNIQUE indexes include it — the same
-pattern the nine existing tables follow (`EntryRepository.ts` scopes all 104
+pattern the nine existing tables follow (`repositories/EntryRepository.ts`
+scopes all 104
 of its `entity_id` references this way). Per-entity locking follows
 `JobManager`'s `${prefix}:${entityId}:<op>` key convention for store writes.
 A read for one entity can never return another entity's passage.
@@ -429,18 +439,20 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    and the 255-character ref boundary. Leading-whitespace and
    repeated-substring fixtures pin the offsets against the handed text, and
    an emoji fixture pins UTF-16 offsets across the FTS and MiniSearch paths.
-   A wrong-shaped `sourceHash`, a lone surrogate, and an embedded NUL each
-   refuse with their typed diagnostics and store nothing. A second ref with
-   a duplicate hash refuses — including the cross-table case, where
-   `source_ref_index` already holds the hash under another ref. A same-pair
+   A wrong-shaped `sourceHash` throws. A lone surrogate and an embedded NUL
+   each refuse with their typed diagnostics and store nothing. A second ref
+   with a duplicate hash refuses — including the cross-table case, where
+   `source_ref_index` already holds the hash under another ref, and the
+   negative case, where a forgotten source's tombstoned registry row does
+   not block the store. A same-pair
    re-store with different text refuses with `SOURCE_STORE_HASH_MISMATCH`.
-   After a changed copy, `listSourceRefs` reports `stored: null` for the
+   After a changed copy, `listSourceRefs` reports `staleHash: true` for the
    old facts.
 5. **Search on both strategies.** The `sources` group returns the right
    passages under FTS5 and under the MiniSearch fallback; budget and
    `maxPassages` caps hold; the cut is marked; a match inside a full-size
    12,000-unit passage returns a whitespace-bounded window with true
-   offsets; a two-entity read returns
+   offsets, and a long-token match hard-cuts; a two-entity read returns
    per-entity groups, each capped separately.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after
