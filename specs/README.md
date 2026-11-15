@@ -13,8 +13,8 @@ Each spec cycle gets one folder, `specs/<name>/`, holding three files:
 | File | What it is | Lifetime |
 |---|---|---|
 | `spec.md` | Problem, root cause with evidence from real runs or logs, proposed change, files touched, test plan. Carries a Status line: **Draft → Reviewed → Implemented**. | Durable: stays after merge. |
-| `plan.md` | The ordered implementation plan. | Transient: deleted by the final cleanup commit (step 4) — before the `gh pr ready` flip. |
-| `LEDGER.md` | One checkbox per plan task, an evidence link per tick, and a "what's in flight" line. | Transient: deleted by the final cleanup commit (step 4) — before the `gh pr ready` flip. |
+| `plan.md` | The ordered implementation plan. | Transient: deleted by the cleanup commit (step 4) — before the `gh pr ready` flip. |
+| `LEDGER.md` | One checkbox per plan task, an evidence link per tick, and a "what's in flight" line. | Transient: deleted by the cleanup commit (step 4) — before the `gh pr ready` flip. |
 
 Everything in the folder is tracked in git. Nothing under `specs/` is
 gitignored. `.superpowers/` (runtime working state, never source) stays
