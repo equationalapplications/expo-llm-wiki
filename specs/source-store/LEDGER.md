@@ -164,7 +164,15 @@ brief `briefs/t2.md`, cap $0.90).
       in test; t9b will add it + any §4 amendment once the owner
       rules.** Controller re-verified: TC=0, 222 files / 2551 tests
       EXIT=0 (runs/t9-controller-gates.log). Spend $0.5601.
-- [ ] T10 INTENT rule 5 reword (§1) — controller-applied (protection hook)
+- [x] T10 INTENT rule 5 reword (§1) — **DONE 2026-11-15**. Commit
+      `a1dd1b6e`, controller-applied in-session (hook-protected file,
+      spec + owner approval on record, per plan): rule 5 heading and
+      body now exactly spec §1's proposed wording — store paragraph
+      added, Planned paragraph's store commitments removed,
+      source-pointer shipped-status line + roadmap cross-reference
+      kept, *Why* and `Status: Built.` kept; Amendments entry added
+      dated 2026-11-15 (PR #396, `specs/source-store/`). No test
+      asserts on INTENT.md; docs-only commit, no gate exposure.
 - [ ] T11 full-suite sweep + cleanup commit (Status → Implemented, delete plan/LEDGER, roadmap mark)
 
 ## Run record
