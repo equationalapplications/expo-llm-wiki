@@ -45,7 +45,22 @@ brief `briefs/t2.md`, cap $0.90).
       WikiDiagnosticCode; WikiDiagnosticOperation gains `'sourceStore'`
       (camelCase per `externalDeletion` neighbor). 216 files / 2482 tests
       EXIT=0 controller-verified (/tmp/t3-{tc,test}.log). Spend $0.3046.
-- [ ] T4 store write path — SourceStoreService + Maintenance deletes (§5, §7, §9; items 4, 7)
+- [x] T4 store write path — SourceStoreService + Maintenance deletes (§5, §7, §9; items 4, 7) — **DONE 2026-11-15**.
+      Commit `ba86744c`: new SourceStoreService (`storeSource` full refusal
+      matrix — invalid-arg throw, surrogate/NUL, mismatch no-op rules,
+      duplicate-hash vs store + LIVE `source_ref_index` rows with
+      `deleted_at IS NULL AND source_ref <> ?`, budget re-read INSIDE the
+      write transaction, changed-copy hard delete, `TODO(task-6)` passage
+      marker inside the transaction); MaintenanceService forget/clearAll
+      hard-delete store rows in existing transactions (6 refs); 13 tests.
+      Beyond-brief choices recorded: used registered
+      `source_store_source_too_large` (brief typo); config read
+      structurally (types.ts off-limits — add `sourceStore` to WikiConfig
+      when types.ts next opens, T7/T8); refusals also fire onDiagnostic;
+      budget total excludes the replaced copy; forget({sourceHash}) also
+      deletes store rows. One timing flake observed (idThreading.test.ts,
+      passed alone + on re-run) — watch. Controller re-verified: TC=0,
+      217 files / 2495 tests EXIT=0 (/tmp/t4-{tc,test}.log). Spend $0.6004.
 - [ ] T5 store read paths + listSourceRefs three-state (§4; items 4, 6)
 - [ ] T6 passage index, both strategies (§6; item 5)
 - [ ] T7 `sources` read option + offsets/hard-cut (§7; items 4–5)
