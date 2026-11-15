@@ -4,7 +4,7 @@
 **Date:** 2026-11-14 (Step-0 code reads done 2026-11-14 at `main` `92878cc3`, `packages/core` 9.1.0, schema v16).
 **Issue:** [#390](https://github.com/equationalapplications/expo-llm-wiki/issues/390). Roadmap step 4 (`docs/ROADMAP.md`).
 **Owner rulings this spec answers:** 2026-11-14 — scope is the store only; `ingestDocument()` does not change; a host that does not use the store sees no change on upgrade. Working memory, extraction that reads from the store, and librarian-replaceable document facts are named exploratory and stay out.
-**Intent check:** Rule 1 — the store makes no model call; §No model call. Rule 2 — every schema change is additive; two new tables, no new column on any existing table; §Schema: two new tables, additive. Rule 3 — every new table and read path is row-scoped by `entity_id`; §Entity isolation. Rule 5 — this pull request rewords rule 5; §Rule 5 reworded. Rule 6 — refusals and cuts produce typed, content-free diagnostics; §Limits and diagnostics. Rule 7 — the store spends no tokens; §No model call. Rule 8 — no dependency is added; §Files touched. Rule 10 — this spec exists before any code. Rule 11 — measurement is cheap targeted tests; §Test plan publishes no accuracy or cost claim.
+**Intent check:** Rule 1 — the store makes no model call; §No model call. Rule 2 — every schema change is additive; two new tables, no new column on any existing table; §Schema: two new tables, additive. Rule 3 — every new table and read path is row-scoped by `entity_id`; §Entity isolation. Rule 5 — the implementation pull request rewords rule 5; §1. Rule 6 — refusals and cuts produce typed, content-free diagnostics; §Limits and diagnostics. Rule 7 — the store spends no tokens; §No model call. Rule 8 — no dependency is added; §Files touched. Rule 10 — this spec exists before any code. Rule 11 — measurement is cheap targeted tests; §Test plan publishes no accuracy or cost claim.
 
 ## Problem
 
@@ -41,7 +41,10 @@ The engine has no place that keeps source text. Two reads of the live tree at
    (`utils/pure.ts:722`), exported at `src/index.ts:17`, with defaults
    12,000 and 400 (`utils/chunkingDefaults.ts:6,16`). It returns
    `{ chunks: string[]; truncated: boolean }` — strings only, no offsets, and
-   the overlap is clamped to `maxChunkLength - 1` (`utils/pure.ts:732`).
+   it throws unless `overlap` is an integer in `[0, maxChunkLength)`
+   (`utils/pure.ts:731-733`). The store's own boundary pass never calls it
+   with an out-of-range overlap, and `storeSource` treats the throw as a
+   typed refusal, not an uncaught error.
 4. **The keyword index is tied to `entries`.** FTS5 lives in `entries_fts`
    (`services/search/fts5Sql.ts:49-66`). Its triggers enqueue into a
    `fts_pending` ledger; a budgeted background drain does the indexing — the
@@ -147,9 +150,14 @@ no source text exists on any database today.
   `id`, `entity_id`, `document_id`, `seq`, `start_offset`, `end_offset`.
   Passage text is not stored: the engine slices it from `source_documents.text`
   at index and read time, so the text exists once and stays as handed.
-  Offsets are computed deterministically from the same `chunkText`
-  segmentation the facts path uses, so a future extraction lane can cite
-  `(ref, position)` without a new cutter.
+  Every offset indexes the text as handed. The store computes passage
+  boundaries with its own offset-tracking pass: it walks the handed text and
+  cuts contiguous passages at the same size rule `chunkText` uses, without
+  trimming and without overlap. `chunkText` itself trims its input
+  (`utils/pure.ts:725`) and produces overlapping chunks, so it cannot supply
+  offsets, and the store does not use it for this pass. A future extraction
+  lane can cite `(ref, position)` against `getStoredSource().text` with no
+  new cutter.
 
 The migration appends to `MIGRATIONS[]` as v17. `CURRENT_SCHEMA_VERSION` is
 derived from the array's last entry (`db/migrations.ts:401-414`), so no
@@ -210,8 +218,10 @@ strategies, reusing the machinery that exists:
   enqueue-and-drain ledger pattern as `entries_fts`, so writes stay budgeted
   and crash-safe.
 - MiniSearch fallback: a second in-heap instance over the same passage
-  slices. The heap cost is bounded by the limits in §Limits, not by the
-  database size.
+  slices. `maxTotalChars` bounds one entity's contribution. The instance
+  holds every stored entity of the database, so the fallback heap grows with
+  the number of stored entities; the MiniSearch overhead multiplier over raw
+  text is unmeasured. This spec publishes no heap number (rule 11).
 - Strategy selection follows the existing `'auto'` probe unchanged
   (`createIndexStrategy.ts:35-47`); the store adds no probe and no new
   strategy. The probe already tests FTS5 and json1 together, which the drain
@@ -227,7 +237,10 @@ limits table below, not a measurement claim.
 Three new calls on `WikiMemory`, all opt-in:
 
 - `storeSource(entityId, { sourceRef, sourceHash, text })` — store or
-  replace a source. Returns the stored state or a refusal diagnostic.
+  replace a source. The engine computes SHA-256 over `text` itself and
+  refuses a mismatch with the supplied `sourceHash`, with typed diagnostic
+  `SOURCE_STORE_HASH_MISMATCH`, so the join key always names the stored
+  text. Returns the stored state or a refusal diagnostic.
 - `listStoredSources(entityId)` — list what is stored:
   `sourceRef`, `sourceHash`, `charCount`, `passageCount`, `storedAt`.
 - `getStoredSource(entityId, sourceRef)` — return one source's text as
@@ -238,7 +251,9 @@ Three new calls on `WikiMemory`, all opt-in:
   optional `sources` field: a labelled array of
   `{ sourceRef, sourceHash, seq, startOffset, endOffset, text }`, ranked,
   capped by `maxPassages` (default 8) and `charBudget` (default 4,000
-  characters). When the option is absent, the bundle is byte-identical in
+  characters). Ranking and caps are per entity: a multi-entity read gets one
+  group per entity, each capped separately, and the engine never ranks
+  passages across entities. When the option is absent, the bundle is byte-identical in
   shape to today: the second labelled group exists only for a host that asks
   for it. `formatContext` prints the group under a `Sources` heading after
   the facts, and only when the group is present.
@@ -255,8 +270,11 @@ it when present and restores the rows, re-deriving passages from the text.
 
 Older engines: a dump with `sources` imported into a 8.x/9.x engine loses
 the sources silently, because those importers strip fields outside their
-typed bundle. This spec names that loss as accepted, consistent with the
-existing treatment of unknown fields; it adds no version handshake. A new
+typed bundle. This spec proposes that answer, consistent with the existing
+treatment of unknown fields; it adds no version handshake. Rule 6 prefers a
+diagnostic over a silent drop, and no diagnostic is possible in an engine
+that predates the field, so this loss needs the owner's explicit
+acceptance; the controller asks for it at the spec stop. A new
 engine importing an old dump sees no `sources` field and stores nothing —
 correct, because the old engine stored nothing.
 
@@ -272,13 +290,15 @@ Two limits, both configurable, both enforced at `storeSource()`:
 - `sourceStore.maxCharsPerSource` — proposed default 200,000 characters
   (about 16 chunks at current defaults).
 - `sourceStore.maxTotalChars` — proposed default 5,000,000 characters per
-  entity across all stored sources. This bounds the MiniSearch heap, because
-  the fallback index never holds more than this much text.
+  entity across all stored sources. This bounds one entity's contribution
+  to the MiniSearch heap; the fallback's total heap is the sum over stored
+  entities (§6).
 
 The defaults are owner-gated; they are refusal guards, not targets. A
 refusal produces a typed, content-free diagnostic in the existing registry —
-proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE` and
-`SOURCE_STORE_BUDGET_EXCEEDED` — and stores nothing. A read that hits
+proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE`,
+`SOURCE_STORE_BUDGET_EXCEEDED`, and `SOURCE_STORE_HASH_MISMATCH` — and
+stores nothing. A read that hits
 `charBudget` marks the cut on the result. No text is ever dropped silently.
 
 ### 10. Entity isolation
@@ -331,9 +351,13 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    unchanged.
 4. **Round-trip.** Store, list, get — text is byte-identical to what was
    handed, including non-ASCII text and the 255-character ref boundary.
+   A leading-whitespace fixture and a repeated-substring fixture pin the
+   offsets against the handed text. A wrong `sourceHash` refuses with
+   `SOURCE_STORE_HASH_MISMATCH` and stores nothing.
 5. **Search on both strategies.** The `sources` group returns the right
    passages under FTS5 and under the MiniSearch fallback; budget and
-   `maxPassages` caps hold; the cut is marked.
+   `maxPassages` caps hold; the cut is marked; a two-entity read returns
+   per-entity groups, each capped separately.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after
    `forget({ sourceRef })`, both groups are gone and
