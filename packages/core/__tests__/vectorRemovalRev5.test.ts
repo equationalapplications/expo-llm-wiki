@@ -70,7 +70,7 @@ describe('revision 5', () => {
     tomb.entities.e1.facts[0].deleted_at = tombAt;
     tomb.entities.e1.facts[0].updated_at = tombAt;
     const before = t.calls.length;
-    await expect(t.wiki.importDump(tomb, { merge: true })).resolves.toBeUndefined();
+    await expect(t.wiki.importDump(tomb, { merge: true })).resolves.toEqual({ skippedSources: [] });
     // The tombstone is owed again and delivered by the import itself.
     expect(t.calls.slice(before).filter((c) => c.factId === f.id).map((c) => c.vector)).toEqual([null]);
   });

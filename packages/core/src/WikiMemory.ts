@@ -1043,7 +1043,7 @@ export class WikiMemory {
     return this.metadataRepo.getMeta(entitySummaryMetaKey(entityId));
   }
 
-  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
+  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<import('./types').ImportDumpResult> {
     return this.importExportService.importDump(dump, opts);
   }
 

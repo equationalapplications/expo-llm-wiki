@@ -114,7 +114,7 @@ describe('importDump: a throwing hook for a fact with no vector', () => {
     const { wiki, diagnostics } = await makeDiagnosticWiki({
       extra: ranker((_e, factId) => { calls.push(factId); if (factId === 'X') throw new Error('ann down'); }),
     });
-    await expect(wiki.importDump(dump({ e1: [fact('A', 'e1'), fact('X', 'e1'), fact('B', 'e1')], e2: [fact('C', 'e2')] }))).resolves.toBeUndefined();
+    await expect(wiki.importDump(dump({ e1: [fact('A', 'e1'), fact('X', 'e1'), fact('B', 'e1')], e2: [fact('C', 'e2')] }))).resolves.toEqual({ skippedSources: [] });
     const e1 = await wiki.__testAccess.importExportService.getFullBundle('e1');
     const e2 = await wiki.__testAccess.importExportService.getFullBundle('e2');
     expect(e1.facts.map((f) => f.id).sort()).toEqual(['A', 'B', 'X']);
@@ -139,7 +139,7 @@ describe('importDump: a throwing hook for a fact with no vector', () => {
       embed: async () => { throw new Error('provider down'); },
       extra: ranker(() => { throw new Error('ann down'); }),
     });
-    await expect(wiki.importDump(dump({ e1: [fact('X', 'e1')] }))).resolves.toBeUndefined();
+    await expect(wiki.importDump(dump({ e1: [fact('X', 'e1')] }))).resolves.toEqual({ skippedSources: [] });
     expect(ofCode(diagnostics, 'embedding_failed').map((d) => [d.detail?.factId, d.detail?.reason])).toEqual([['X', 'embed_threw']]);
     expect(ofCode(diagnostics, 'hook_failed').map((d) => d.detail?.factId)).toEqual(['X']);
   });
@@ -147,7 +147,7 @@ describe('importDump: a throwing hook for a fact with no vector', () => {
   it('a rejected promise behaves like a throw', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { wiki, diagnostics } = await makeDiagnosticWiki({ extra: ranker(async () => { throw new Error('ann down'); }) });
-    await expect(wiki.importDump(dump({ e1: [fact('X', 'e1')], e2: [fact('C', 'e2')] }))).resolves.toBeUndefined();
+    await expect(wiki.importDump(dump({ e1: [fact('X', 'e1')], e2: [fact('C', 'e2')] }))).resolves.toEqual({ skippedSources: [] });
     expect(ofCode(diagnostics, 'hook_failed').map((d) => d.detail?.factId)).toEqual(['X', 'C']);
   });
 

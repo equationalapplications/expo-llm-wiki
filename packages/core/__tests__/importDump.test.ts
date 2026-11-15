@@ -395,7 +395,7 @@ describe('importDump', () => {
       },
     };
 
-    await expect(wiki.importDump(dump)).resolves.toBeUndefined();
+    await expect(wiki.importDump(dump)).resolves.toEqual({ skippedSources: [] });
 
     const out = await wiki.exportDump(['e-null']);
     expect(out.entities['e-null'].facts).toHaveLength(1);

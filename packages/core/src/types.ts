@@ -1091,8 +1091,9 @@ export interface MemoryBundle {
   /** Entity summary prose for OKF profile ≥ 1 round-trip. Omitted = no summary (Clanker default). */
   summary?: string;
   /**
-   * The source store's librarian position. Set by export only; the importer
-   * trusts events at or before it as consolidated at the source.
+   * The exporting database's librarian position. Set by export only; the
+   * importer trusts events at or before it as consolidated at the exporting
+   * database. (Not the source text store; spec source-store §8 naming note.)
    */
   librarian_watermark?: { at: number; id: string };
   factScores?: Record<string, number>;
@@ -1105,9 +1106,29 @@ export interface MemoryBundle {
   };
 }
 
+/** One stored source in a `MemoryDump` (spec source-store §8). Import re-derives passages and `text_hash` from `text`. */
+export interface StoredSourceDump {
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  textHash: string;
+  charCount: number;
+  storedAt: number;
+  /** Fidelity only: import ignores this and re-cuts from `text`. */
+  passages: Array<{ seq: number; startOffset: number; endOffset: number }>;
+}
+
+/** Result of `importDump` (spec source-store §8): sources the import refused. */
+export interface ImportDumpResult {
+  skippedSources: Array<{ sourceRef: string; code: WikiDiagnosticCode }>;
+}
+
+/** A dump entity: the bundle plus its stored sources (dump-only; `MemoryBundle` stays the read shape). */
+export type MemoryDumpEntity = MemoryBundle & { storedSources?: StoredSourceDump[] };
+
 export interface MemoryDump {
   generatedAt: number;
-  entities: Record<string, MemoryBundle>;
+  entities: Record<string, MemoryDumpEntity>;
   /**
    * Source-pointer parse report (specs/source-pointers §Export, import, and OKF).
    * Present ONLY when `parseOkfBundle` dropped a malformed `source_pointer`
