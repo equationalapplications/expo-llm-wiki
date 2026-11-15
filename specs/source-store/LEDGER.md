@@ -145,7 +145,25 @@ brief `briefs/t2.md`, cap $0.90).
       — reconcile (amend spec text or rename code) before merge.**
       Controller re-verified: TC=0, 221 files / 2537 tests EXIT=0
       (runs/t8-controller-gates.log). Spend $0.8035 + $0.1747 (t8b).
-- [ ] T9 WikiMemory wiring + formatContext (§7; items 1, 5–6)
+- [x] T9 WikiMemory wiring + formatContext (§7; items 1, 5–6) — **DONE
+      2026-11-15**. Commit `2bea0425`: public `storeSource` /
+      `getStoredSource` / `listStoredSources` passthroughs (locks stay
+      in the service); `SearchService.syncPassages` runs the passage
+      sync at 5 sites — open/strategy-pick (§6 fallback re-index at
+      open), post-search-re-init, post-`forget` (finally, skips
+      dryRun, clearAll syncs all entities), post-`storeSource` (only
+      when stored), and post-`importDump` (necessary extension: T8's
+      imported rows must index); FTS5 → drainPassages, fallback →
+      reindexSourcePassages, via a structural cast (IndexStrategy
+      interface extension = T11 cleanup candidate); formatContext
+      prints `### Sources` (markdown) / `SOURCES:` (plain) last, only
+      when present, `(excerpt)` on truncated, entity ID per
+      includeEntityIds; read() already forwarded options (untouched).
+      14 wiring tests, both strategies. **§4 post-forget listing
+      assertion intentionally omitted — TODO(owner-ruling-§4) marker
+      in test; t9b will add it + any §4 amendment once the owner
+      rules.** Controller re-verified: TC=0, 222 files / 2551 tests
+      EXIT=0 (runs/t9-controller-gates.log). Spend $0.5601.
 - [ ] T10 INTENT rule 5 reword (§1) — controller-applied (protection hook)
 - [ ] T11 full-suite sweep + cleanup commit (Status → Implemented, delete plan/LEDGER, roadmap mark)
 
