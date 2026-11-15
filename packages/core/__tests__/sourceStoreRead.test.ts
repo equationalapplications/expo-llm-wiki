@@ -64,7 +64,7 @@ describe('SourceStoreService reads', () => {
       sourceRef: 'b.md',
       sourceHash: H2,
       charCount: 5,
-      passageCount: 0,
+      passageCount: 1,
       storedAt: (r as { storedAt: number }).storedAt,
     });
   });

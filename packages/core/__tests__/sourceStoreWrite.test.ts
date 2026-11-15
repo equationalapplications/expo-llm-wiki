@@ -39,7 +39,7 @@ describe('SourceStoreService.storeSource', () => {
     const { db, svc } = await setup();
     const text = 'hello 😀 world';
     const res = await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text });
-    expect(res).toMatchObject({ stored: true, sourceRef: 'a.md', sourceHash: H1, charCount: text.length, passageCount: 0 });
+    expect(res).toMatchObject({ stored: true, sourceRef: 'a.md', sourceHash: H1, charCount: text.length, passageCount: 1 });
     const row = await db.getFirstAsync<{ text: string; text_hash: string; char_count: number }>(
       `SELECT text, text_hash, char_count FROM ${DOCS} WHERE entity_id = ?`, [E]);
     expect(row).toEqual({ text, text_hash: sha256Hex(text), char_count: text.length });
@@ -130,14 +130,15 @@ describe('SourceStoreService.storeSource', () => {
   it('a changed copy replaces the text: one row for the ref, old text gone', async () => {
     const { db, svc } = await setup();
     await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'old text' });
-    await db.runAsync(
-      `INSERT INTO ${PASSAGES} (id, entity_id, document_id, seq, start_offset, end_offset)
-       SELECT 'p1', entity_id, id, 0, 0, 3 FROM ${DOCS}`);
     const res = await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H2, text: 'new text' });
     expect(res.stored).toBe(true);
     const rows = await db.getAllAsync<{ text: string; source_hash: string }>(`SELECT text, source_hash FROM ${DOCS}`);
     expect(rows).toEqual([{ text: 'new text', source_hash: H2 }]);
-    expect((await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PASSAGES}`))?.n).toBe(0);
+    // Old passages are gone; only the new copy's single passage remains.
+    const passages = await db.getAllAsync<{ end_offset: number }>(
+      `SELECT p.end_offset FROM ${PASSAGES} p JOIN ${DOCS} d ON d.id = p.document_id`);
+    expect(passages).toEqual([{ end_offset: 8 }]);
+    expect((await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PASSAGES}`))?.n).toBe(1);
   });
 
   it('serializes concurrent stores: the budget check cannot be passed twice', async () => {
@@ -159,14 +160,13 @@ describe('SourceStoreService.storeSource', () => {
     await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'aaa' });
     await svc.storeSource(E, { sourceRef: 'b.md', sourceHash: H2, text: 'bbb' });
     await svc.storeSource('other', { sourceRef: 'a.md', sourceHash: H1, text: 'aaa' });
-    await db.runAsync(
-      `INSERT INTO ${PASSAGES} (id, entity_id, document_id, seq, start_offset, end_offset)
-       SELECT 'p1', entity_id, id, 0, 0, 3 FROM ${DOCS} WHERE entity_id = ? AND source_ref = 'a.md'`, [E]);
+    expect((await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PASSAGES}`))?.n).toBe(3);
     await wiki.forget(E, { sourceRef: 'a.md' });
     expect(await docCount(db, `entity_id = '${E}' AND source_ref = 'a.md'`)).toBe(0);
     expect(await docCount(db, `entity_id = '${E}' AND source_ref = 'b.md'`)).toBe(1);
     expect(await docCount(db, `entity_id = 'other'`)).toBe(1);
-    expect((await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PASSAGES}`))?.n).toBe(0);
+    // a.md's passage is gone; b.md's and the other entity's remain.
+    expect((await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PASSAGES}`))?.n).toBe(2);
 
     await wiki.forget(E, { sourceHash: H2 });
     expect(await docCount(db, `entity_id = '${E}'`)).toBe(0);

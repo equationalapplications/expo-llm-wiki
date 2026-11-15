@@ -6,7 +6,16 @@ import {
   FTS5_DRAIN_CHUNK, FTS5_RECLAIM_MERGE_PAGES, FTS5_RETIRED_COUNTER_KEY, FTS5_RETIRED_TABLES_KEY, isRetiredTableName, retiredTableName, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
   sweepChunkSql, sweepHiSql, windowChunkSql, windowHiSql, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
   fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql, idReindexChunkSql,
+  passageFtsTablesDdl, passageFtsTriggersDdl,
 } from './fts5Sql';
+
+/** One passage hit: `id` is the `source_passages.id`. */
+export interface PassageSearchResult {
+  id: string;
+  entity_id: string;
+  document_id: string;
+  score: number;
+}
 import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
 import { parseJsonArray } from '../../repositories/rowMappers';
 import { monotonicNow } from '../../utils/monotonicNow';
@@ -34,6 +43,105 @@ export class Fts5IndexStrategy implements IndexStrategy {
    * failure leaves zero mutation (Change 4 ordering).
    */
   async init(opts: { entriesExisted?: boolean } = {}): Promise<void> {
+    await this.initEntries(opts);
+    await this.ensurePassageObjects();
+  }
+
+  /**
+   * Source-store passage index objects (spec source-store §6): created here,
+   * the way the entries_fts objects are, never by setupDatabase. Skipped when
+   * the store tables are absent (a pre-v17 database).
+   */
+  private async ensurePassageObjects(): Promise<void> {
+    const p = this.prefix;
+    if (!(await this.metadataRepo.tableExists(`${p}source_passages`))) return;
+    await this.db.withTransactionAsync(async (tx) => {
+      await tx.execAsync(passageFtsTablesDdl(p) + passageFtsTriggersDdl(p));
+    });
+    // Passages stored before the index existed have no ledger row: enqueue them once.
+    const mapped = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_map LIMIT 1`);
+    const queued = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_pending LIMIT 1`);
+    if (mapped === null && queued === null) {
+      await this.db.runAsync(
+        `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
+         SELECT entity_id, id FROM ${p}source_documents`);
+    }
+  }
+
+  /**
+   * Drain the passage ledger one document at a time (spec §6, the stated
+   * departure from all-SQL): the document's text is read into JS and sliced at
+   * the offsets the cutter stored, so transient memory is bounded by
+   * `maxCharsPerSource` for the ONE document, never the store. Each document
+   * is one transaction. `entityId` limits the drain to that entity's ledger rows.
+   */
+  async drainPassages(opts: { entityId?: string; deadline?: number } = {}): Promise<void> {
+    const p = this.prefix;
+    if (!(await this.metadataRepo.tableExists(`${p}source_passages_fts_pending`))) return;
+    for (;;) {
+      if (opts.deadline !== undefined && monotonicNow() >= opts.deadline) return;
+      let ran = false;
+      await this.db.withTransactionAsync(async (tx) => {
+        const first = opts.entityId === undefined
+          ? await tx.getFirstAsync<{ doc_id: string }>(
+            `SELECT doc_id FROM ${p}source_passages_fts_pending ORDER BY seq LIMIT 1`)
+          : await tx.getFirstAsync<{ doc_id: string }>(
+            `SELECT doc_id FROM ${p}source_passages_fts_pending WHERE entity_id = ? ORDER BY seq LIMIT 1`,
+            [opts.entityId]);
+        if (!first) return;
+        const docId = first.doc_id;
+        const hi = await tx.getFirstAsync<{ hi: number }>(
+          `SELECT max(seq) AS hi FROM ${p}source_passages_fts_pending WHERE doc_id = ?`, [docId]);
+        await tx.runAsync(
+          `DELETE FROM ${p}source_passages_fts WHERE rowid IN (SELECT fts_rowid FROM ${p}source_passages_fts_map WHERE doc_id = ?)`,
+          [docId]);
+        await tx.runAsync(`DELETE FROM ${p}source_passages_fts_map WHERE doc_id = ?`, [docId]);
+        const doc = await tx.getFirstAsync<{ text: string }>(`SELECT text FROM ${p}source_documents WHERE id = ?`, [docId]);
+        if (doc) {
+          const rows = await tx.getAllAsync<{ id: string; entity_id: string; start_offset: number; end_offset: number }>(
+            `SELECT id, entity_id, start_offset, end_offset FROM ${p}source_passages WHERE document_id = ? ORDER BY seq`, [docId]);
+          for (const r of rows) {
+            const { lastInsertRowId } = await tx.runAsync(
+              `INSERT INTO ${p}source_passages_fts_map (passage_id, doc_id) VALUES (?, ?)`, [r.id, docId]);
+            await tx.runAsync(
+              `INSERT INTO ${p}source_passages_fts (rowid, passage_id, entity_id, doc_id, text) VALUES (?, ?, ?, ?, ?)`,
+              [lastInsertRowId, r.id, r.entity_id, docId, doc.text.slice(Number(r.start_offset), Number(r.end_offset))]);
+          }
+        }
+        await tx.runAsync(
+          `DELETE FROM ${p}source_passages_fts_pending WHERE doc_id = ? AND seq <= ?`, [docId, hi?.hi ?? 0]);
+        ran = true;
+      });
+      if (!ran) return;
+    }
+  }
+
+  /**
+   * Best-match-first passage search. A hit counts only while its
+   * `source_passages` row exists, so a stalled drain never surfaces a deleted
+   * passage (spec §5).
+   */
+  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageSearchResult[]> {
+    if (options.entityIds.length === 0) return [];
+    const match = buildFtsMatchQuery(query);
+    if (match === null) return [];
+    const p = this.prefix;
+    const t = `${p}source_passages_fts`;
+    const limit = options.limit >= Number.MAX_SAFE_INTEGER ? -1 : options.limit;
+    return this.db.getAllAsync<PassageSearchResult>(
+      `SELECT passage_id AS id, entity_id, doc_id AS document_id, max(0.0, -raw) AS score FROM (
+         SELECT passage_id, entity_id, doc_id, bm25(${t}, 0.0, 0.0, 0.0, 1.0) AS raw
+           FROM ${t}
+          WHERE ${t} MATCH ? AND entity_id IN (SELECT value FROM json_each(?))
+            AND passage_id IN (SELECT id FROM ${p}source_passages)
+          ORDER BY raw, passage_id
+          LIMIT ?)
+        ORDER BY raw, id`,
+      [match, JSON.stringify(options.entityIds), limit],
+    );
+  }
+
+  private async initEntries(opts: { entriesExisted?: boolean }): Promise<void> {
     try {
       await this.initOnce(opts);
     } catch (err) {

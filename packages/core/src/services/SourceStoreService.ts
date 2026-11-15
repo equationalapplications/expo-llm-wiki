@@ -2,6 +2,7 @@ import type { SQLiteAdapter, WikiDiagnostic, WikiOptions } from '../types';
 import type { JobManager } from './JobManager';
 import { emitDiagnostic, type WikiDiagnosticInput } from '../utils/diagnostics';
 import { generateId } from '../utils/ids';
+import { cutPassages } from '../utils/passageCutter';
 import { normalizeSourceHash, normalizeSourceRef } from '../utils/pure';
 import { sha256Hex } from '../utils/sha256';
 
@@ -146,8 +147,15 @@ export class SourceStoreService {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [id, entityId, sourceRef, sourceHash, text, textHash, charCount, storedAt],
         );
-        // TODO(task-6): passage slicing — insert source_passages rows here, inside this transaction.
-        return { charCount, passageCount: 0, storedAt };
+        // Offsets only (spec §3): passage text is sliced from source_documents.text in JS, never stored.
+        const spans = cutPassages(text);
+        for (let seq = 0; seq < spans.length; seq++) {
+          await db.runAsync(
+            `INSERT INTO ${passages} (id, entity_id, document_id, seq, start_offset, end_offset) VALUES (?, ?, ?, ?, ?, ?)`,
+            [generateId('spas_'), entityId, id, seq, spans[seq]!.start, spans[seq]!.end],
+          );
+        }
+        return { charCount, passageCount: spans.length, storedAt };
       });
 
       if ('refused' in outcome && outcome.refused) return this.refuse(entityId, outcome.refused, sourceRef);
