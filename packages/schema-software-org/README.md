@@ -163,7 +163,7 @@ The organization's own backend illustrates the split: it is a `software_applicat
 
 ## Requirements
 
-Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the release that shipped `OntologyNodeType.parent_type`, which the five `creativework` subtypes rely on. This manifest will validate against 6.0.1, but will silently fail at ingest edge matching because 6.0.1 ignores the `parent_type` field.
+Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the release that shipped `OntologyNodeType.parent_type`, which the three `creativework` subtypes (`design_spec`, `procedure`, `reference_doc`) rely on. This manifest will validate against 6.0.1, but will silently fail at ingest edge matching because 6.0.1 ignores the `parent_type` field.
 
 `@equationalapplications/schema-org-llm-wiki` is **not** a runtime dependency. This package is a verbatim superset of the warm-agent manifest except for one intentional override of `product` (which delegates to `software_application` / `service`), and stands alone — there is no need to install `schema-org-llm-wiki` to use `schema-software-org`.
 
