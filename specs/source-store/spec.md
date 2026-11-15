@@ -1,6 +1,6 @@
 # The source store
 
-**Status:** Draft.
+**Status:** Implemented (2026-11-15, PR #396).
 **Date:** 2026-11-14 (Step-0 code reads done 2026-11-14 at `main` `92878cc3`, `packages/core` 9.1.0, schema v16).
 **Issue:** [#390](https://github.com/equationalapplications/expo-llm-wiki/issues/390). Roadmap step 4 (`docs/ROADMAP.md`).
 **Owner rulings this spec answers:** 2026-11-14 — scope is the store only; `ingestDocument()` does not change; a host that does not use the store sees no change on upgrade. Working memory, extraction that reads from the store, and librarian-replaceable document facts are named exploratory and stay out.

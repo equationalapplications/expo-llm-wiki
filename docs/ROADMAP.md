@@ -128,6 +128,8 @@ owner-approved 2026-11-14; schema additive only, rule 2).
 
 ### Step 4 — A source store in the engine — PLANNED
 
+Done — merged 2026-11-15, PR #396, spec [source-store](../specs/source-store/spec.md)
+
 The engine stores a document's text as it is, indexes it, and searches it
 with no model call. A read can then return two labelled groups:
 statements the librarian wrote, and passages from sources. A host that
