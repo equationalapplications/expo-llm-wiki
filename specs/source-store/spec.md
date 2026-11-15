@@ -115,8 +115,15 @@ same pull request that ships the store. Proposed wording:
 > source, when you store a changed copy under the same `sourceRef`, or when
 > you wipe the entity. The engine may not edit a document; deleting one at
 > your request is not editing.
+>
+> Source pointers on librarian facts shipped 2026-11-14
+> (`specs/source-pointers/`); ops facts carry a `source_pointer`, and
+> legacy and heal facts carry none — the accepted gap.
 
-The Planned paragraph is deleted. The Status line stays Built. This wording
+The reword removes only the Planned paragraph's store commitments. It keeps
+the shipped-status line for the source pointers (#377, 2026-11-14,
+`specs/source-pointers/`) and the roadmap cross-reference, because the repo
+keeps that record on purpose. The Status line stays Built. This wording
 must ride the implementation PR; nobody edits `INTENT.md` in a status-only
 pull request.
 
@@ -141,8 +148,9 @@ no source text exists on any database today.
 
 - `source_documents` — one row per stored source:
   `id`, `entity_id`, `source_ref`, `source_hash`, `text`, `text_hash`,
-  `char_count`, `created_at`, `deleted_at`. Two partial UNIQUE indexes, both
-  `WHERE deleted_at IS NULL`: `(entity_id, source_ref)` gives the same
+  `char_count`, `created_at`. Removal is a hard delete (§5), so the table
+  has no `deleted_at` and both its UNIQUE indexes are plain:
+  `(entity_id, source_ref)` gives the same
   TOCTOU guard the facts table uses, and `(entity_id, source_hash)` mirrors
   `source_ref_index`, so two refs cannot hold one hash — the same rule
   `ingestDocument()` enforces. `text` holds the document exactly as the
@@ -191,8 +199,11 @@ carries `source_ref` and `source_hash` columns, and the store
 keys its rows on the same values, so a read can join the two labelled groups on
 `(entityId, sourceRef, sourceHash)` with no new pointer, column or table on
 the fact side. `listSourceRefs` reads from `entries`, so its one new
-optional result field, `stored: { charCount: number } | null`, decorates
-only sources that have facts; the full store listing, including a source
+optional result field, `stored: { charCount: number } | null`, is keyed on
+the `(sourceRef, sourceHash)` pair, not the ref alone: after a changed
+copy replaces the text, the old facts' hash no longer matches, and the
+decoration reports `stored: null` for them — the mismatch is visible, not
+silent. The full store listing, including a source
 stored with no ingest, is `listStoredSources`. An additive optional field
 on a result type is a rule-2 change; the Curated Thoughts guard does not
 read result types.
@@ -223,16 +234,21 @@ Storing the same `sourceRef` and same `sourceHash` again is a no-op that
 returns the existing state, only when the engine's `text_hash` matches what
 is stored; if the text differs under the same declared pair, `storeSource`
 refuses with `SOURCE_STORE_HASH_MISMATCH` and changes nothing. A second
-`sourceRef` carrying a `source_hash` another live row already holds refuses
-with `SOURCE_STORE_DUPLICATE_HASH`, mirroring `ingestDocument()`'s
-duplicate-hash rule.
+`sourceRef` carrying a `source_hash` an existing row of either kind already
+refuses with `SOURCE_STORE_DUPLICATE_HASH`, and changes nothing. The check
+runs against both tables that carry a hash: the store's own UNIQUE index
+(`source_documents`) and the facts registry (`source_ref_index`), so a hash
+cannot name one ref in facts and another in the store — the cross-table
+case `ingestDocument()`'s duplicate-hash rule also forbids.
+`created_at` is the basis a later per-source ageing rule can key on; such a
+rule arrives, if ever, as an additive change and stays out of this cycle.
 
 Hard delete extends to the indexes. The passage index is asynchronous: FTS5
 keeps its own text copy and the drain lags the transaction. After a
 `forget()` or `clearAll()` commit, the store runs the same targeted
 post-commit sync `forget` already runs for entries, so `source_passages_fts`
 rows and the MiniSearch heap drop the deleted passages. A read returns only
-passages whose `source_passages` row is live, so text can never surface from
+passages whose `source_passages` row exists, so text can never surface from
 a stale index even if a drain fails.
 
 ### 6. The index
@@ -258,8 +274,11 @@ strategies, reusing the machinery that exists:
 
 The spec does not assume expo-sqlite ships FTS5 on any device, because no
 device measurement exists (issue #390, "Not checked"). The store works under
-both strategies by construction, and the MiniSearch memory bound is the
-limits table below, not a measurement claim.
+both strategies by construction. The fallback heap is unbounded across
+entities: nothing caps the sum, and this spec publishes no heap number
+(rule 11). What bounds the risk is the store-time per-entity cap plus the
+owner-gated defaults; if a database-wide cap is ever needed, it arrives as
+an additive limit with its own ruling.
 
 ### 7. The read shape
 
@@ -271,8 +290,10 @@ Three new calls on `WikiMemory`, all opt-in:
   `normalizeSourceHash`, computes `text_hash` itself, and enforces the
   no-op and refusal rules of §5. Text that cannot round-trip — a lone
   surrogate or an embedded NUL — refuses with
-  `SOURCE_STORE_TEXT_NOT_STORABLE`. Returns the stored state or a refusal
-  diagnostic.
+  `SOURCE_STORE_TEXT_NOT_STORABLE`. Refusals follow the engine's rule-6
+  convention: a policy refusal returns a result carrying the diagnostic
+  (`{ stored: false, diagnostics }`) and does not throw; only an invalid
+  argument throws.
 - `listStoredSources(entityId)` — list what is stored:
   `sourceRef`, `sourceHash`, `charCount`, `passageCount`, `storedAt`.
 - `getStoredSource(entityId, sourceRef)` — return one source's text as
@@ -283,7 +304,10 @@ Three new calls on `WikiMemory`, all opt-in:
   optional `sources` field: a labelled array of
   `{ entityId, sourceRef, sourceHash, seq, startOffset, endOffset, text }`,
   ranked, capped by `maxPassages` (default 8) and `charBudget` (default
-  4,000 characters) per entity. Ranking and caps are per entity: a
+  4,000 characters) per entity. When a matching passage exceeds the budget,
+  the read returns the narrowest whitespace-bounded window around the match
+  that fits, with the true offsets of that window and the cut marked; the
+  window never splits a surrogate pair. Ranking and caps are per entity: a
   multi-entity read gets one group per entity, each capped separately, and
   the engine never ranks passages across entities. Every item carries
   `entityId`, so two entities storing the same `sourceRef` stay
@@ -309,6 +333,9 @@ diagnostics when a dump would exceed them. A `sourceRef` already stored
 under the entity is replaced by the dump's copy — the dump is the source of
 truth for that ref; other stored sources survive under merge semantics, and
 a `merge: false` import replaces the entity's whole store with the dump's.
+Import processes sources one by one: a source that breaks a limit or hits a
+duplicate hash refuses with its typed diagnostic, is skipped, and is listed
+in the import result; the other sources import.
 
 Older engines: a dump with `storedSources` imported into a 8.x/9.x engine loses
 the sources silently, because those importers strip fields outside their
@@ -349,7 +376,7 @@ stores cannot both pass the check and exceed the budget. A read that hits
 ### 10. Entity isolation
 
 Rule 3. Both new tables carry `entity_id`, every query on them filters by it
-in the `WHERE` clause, and both partial UNIQUE indexes include it — the same
+in the `WHERE` clause, and both UNIQUE indexes include it — the same
 pattern the nine existing tables follow (`EntryRepository.ts` scopes all 104
 of its `entity_id` references this way). Per-entity locking follows
 `JobManager`'s `${prefix}:${entityId}:<op>` key convention for store writes.
@@ -404,11 +431,16 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    an emoji fixture pins UTF-16 offsets across the FTS and MiniSearch paths.
    A wrong-shaped `sourceHash`, a lone surrogate, and an embedded NUL each
    refuse with their typed diagnostics and store nothing. A second ref with
-   a duplicate hash refuses. A same-pair re-store with different text
-   refuses with `SOURCE_STORE_HASH_MISMATCH`.
+   a duplicate hash refuses — including the cross-table case, where
+   `source_ref_index` already holds the hash under another ref. A same-pair
+   re-store with different text refuses with `SOURCE_STORE_HASH_MISMATCH`.
+   After a changed copy, `listSourceRefs` reports `stored: null` for the
+   old facts.
 5. **Search on both strategies.** The `sources` group returns the right
    passages under FTS5 and under the MiniSearch fallback; budget and
-   `maxPassages` caps hold; the cut is marked; a two-entity read returns
+   `maxPassages` caps hold; the cut is marked; a match inside a full-size
+   12,000-unit passage returns a whitespace-bounded window with true
+   offsets; a two-entity read returns
    per-entity groups, each capped separately.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after
