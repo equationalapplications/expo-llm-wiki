@@ -38,7 +38,13 @@ brief `briefs/t2.md`, cap $0.90).
       tests: both-direction WikiBusyError, serialize, different-entity
       non-conflict, entity-wide ingest). Controller re-verified: TC=0,
       215 files / 2477 tests EXIT=0 (/tmp/t2-{tc,test}.log). Spend $0.3802.
-- [ ] T3 sha256 hasher + diagnostic codes (§3, §9)
+- [x] T3 sha256 hasher + diagnostic codes (§3, §9) — **DONE 2026-11-15**.
+      Commit `77328e32`: new pure `utils/sha256.ts` (`sha256Hex`, no deps,
+      vectors match node crypto — controller verified 'abc' against
+      crypto ground truth); five `source_store_*` codes in
+      WikiDiagnosticCode; WikiDiagnosticOperation gains `'sourceStore'`
+      (camelCase per `externalDeletion` neighbor). 216 files / 2482 tests
+      EXIT=0 controller-verified (/tmp/t3-{tc,test}.log). Spend $0.3046.
 - [ ] T4 store write path — SourceStoreService + Maintenance deletes (§5, §7, §9; items 4, 7)
 - [ ] T5 store read paths + listSourceRefs three-state (§4; items 4, 6)
 - [ ] T6 passage index, both strategies (§6; item 5)
