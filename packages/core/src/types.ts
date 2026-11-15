@@ -883,11 +883,16 @@ export type WikiDiagnosticCode =
   | 'guidance_too_long'
   | 'guidance_resolver_failed'
   | 'source_pointer_unresolved'
-  | 'source_pointer_invalid';
+  | 'source_pointer_invalid'
+  | 'source_store_source_too_large'
+  | 'source_store_budget_exceeded'
+  | 'source_store_hash_mismatch'
+  | 'source_store_duplicate_hash'
+  | 'source_store_text_not_storable';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';

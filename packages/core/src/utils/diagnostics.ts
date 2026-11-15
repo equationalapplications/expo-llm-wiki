@@ -43,6 +43,11 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   guidance_resolver_failed: 'warn',
   source_pointer_unresolved: 'warn',
   source_pointer_invalid: 'warn',
+  source_store_source_too_large: 'warn',
+  source_store_budget_exceeded: 'warn',
+  source_store_hash_mismatch: 'warn',
+  source_store_duplicate_hash: 'warn',
+  source_store_text_not_storable: 'warn',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -75,6 +80,11 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   guidance_resolver_failed: 'The per-entity guidance resolver failed; its value was not used for this pass.',
   source_pointer_unresolved: 'A stored librarian fact carries no source pointer because the model answer could not yield one.',
   source_pointer_invalid: 'Import met a malformed source pointer value and stored a null pointer.',
+  source_store_source_too_large: 'A source document exceeded the per-document size cap and was not stored.',
+  source_store_budget_exceeded: 'Storing a source document would exceed the store byte budget and it was not stored.',
+  source_store_hash_mismatch: 'A source document text did not match its recorded hash and was not stored.',
+  source_store_duplicate_hash: 'A source document duplicated the hash of one already stored and was not stored.',
+  source_store_text_not_storable: 'A source document text could not be stored as given.',
 };
 
 const warnedNonFunction = new WeakSet<object>();
