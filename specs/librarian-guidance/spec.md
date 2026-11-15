@@ -5,7 +5,9 @@ tests c01c7809 + 9035ae14, docs ad70e8e6; full core suite 211 files /
 2426 tests green, golden fixture byte-parity, docs site builds. Spec
 gate closed by the owner 2026-11-13 — Fable gate + full written-work
 ladder converged, all findings addressed; merge ask and design points
-ratified in-session)
+ratified in-session). Revision 2026-11-14: first published in 9.0.0.
+The 8.5.0 release was tagged and never published (issue #391); see
+Release.
 **Date:** 2026-11-13
 **Intent check:** Rule 3 — the per-entity value keeps one database's many
 memories separate, and neither value is stored, so nothing mixes. Rule 5 —
@@ -27,8 +29,9 @@ step 1 (`docs/ROADMAP.md`, landed by PR #378 on 2026-11-13, merge
 commit `ff13e74a`). Owner rulings
 2026-11-12 and 2026-11-13 (recorded in the issue #375 body and the
 2026-11-13 handoff; INTENT.md carries no amendment for them — the
-handoff states the design is settled without one). Minor release
-(8.5.0): see Release.
+handoff states the design is settled without one). Planned as a minor
+release (8.5.0); the work first reached npm inside the 9.0.0 major:
+see Release.
 
 ## Problem
 
@@ -260,19 +263,23 @@ before `appendGrounding` runs (`PromptService.ts:37`).
 
 ### Deprecation
 
-`prompts.librarianSystemPrompt` is marked `@deprecated` in
-`WikiConfig` docs in this release, with "removed in 9.0.0". The
-`changedDefaultWarnings` message for an override under ops
-(`engineDefaults.ts:36-42`) now points at `prompts.guidance` instead of
-only telling the host to pin `legacy`. A **second message** covers a
-host that set `librarian.strategy: 'ops'` explicitly — today that host
-gets no warning and a silently ignored override, and the existing
-message's "now defaults to 'ops'" text is false for it. The existing
-message and its test assertions (including the `strategy: 'legacy'`
-substring at `engineDefaults.test.ts:83`) stay; the new case adds a
-message, it does not replace one. Removal itself is #376's release
-(owner ruling 2026-11-13; the 9.0.0 break covers exactly the listed
-removals and nothing else).
+`prompts.librarianSystemPrompt` was marked `@deprecated` in the
+`WikiConfig` docs at the `v8.5.0` tag, with "removed in 9.0.0" — a
+notice no npm version carries, since 8.5.0 never published (see
+Release below). At that tag, the `changedDefaultWarnings` message for
+an override under ops (`engineDefaults.ts:36-42`) pointed at
+`prompts.guidance` instead of only telling the host to pin `legacy`,
+and a **second message** covered a host that set
+`librarian.strategy: 'ops'` explicitly — until then that host got no
+warning and a silently ignored override, and the existing message's
+"now defaults to 'ops'" text was false for it. The existing message
+and its test assertions (including the `strategy: 'legacy'` substring
+at `engineDefaults.test.ts:83` at the `v8.5.0` tag) stayed; the new
+case added a message,
+it did not replace one. None of that reached npm: 9.0.0 removed the
+key (owner ruling 2026-11-13; the 9.0.0 break covers exactly the
+listed removals and nothing else), and the only warning today is the
+removal message at `engineDefaults.ts:38-41`.
 
 ### Length cap and diagnostic
 
@@ -464,15 +471,38 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 
 ## Release
 
-Minor (the number is release tooling's; expected 8.5.0). The setting
+Minor (the number is release tooling's; planned as 8.5.0, first
+published in 9.0.0 — see below). The setting
 and the marked section are additive. The
 built-in prompts change model output **only for hosts that set
 guidance** — new opt-in behavior, not changed behavior for an existing
 host — because the rule sentence rides the guidance section and nothing
 is added when guidance is absent. The `changedDefaultWarnings` text
-change is a message improvement, not a behavior change. Deprecation
-notice on `librarianSystemPrompt` is the ruling's placement (deprecate
-now, remove in 9.0.0 with the #376 breaks).
+change is a message improvement, not a behavior change. A deprecation
+notice on `librarianSystemPrompt` was the ruling's planned placement
+(deprecate in the 8.5.0 release, remove in 9.0.0 with the #376
+breaks) — see the Release paragraph below for what actually
+published.
+
+**What was published (added 2026-11-14, issue #391).** Release 8.5.0
+was tagged but never published: the release run on `3438c41f` failed
+in Phase 1 with `HTTP 401: Bad credentials` ([run
+43488167548](https://github.com/equationalapplications/expo-llm-wiki/actions/runs/43488167548));
+how the tag reached origin is undetermined (issue #391, "Not
+determined"). No 8.5.0 reached npm, and there is no 8.5.0 GitHub
+Release. This spec's work first reached npm in **9.0.0**, together
+with the removal of `librarianSystemPrompt`. The key is read only
+under `strategy: 'legacy'`; 8.4.0 warns a host that relies on the
+`ops` default to pin `legacy` — but no published version carries a
+notice that the key is deprecated or removed, and 9.0.0 removes it.
+`CHANGELOG.md` has no entry for this work, because the 9.0.0 section
+starts at the `v8.5.0` tag and this spec's commits predate it (the
+`librarianSystemPrompt` removal and prompt-appendix entries in that
+section are the statement-kinds release's work, PR #380 — not this
+spec's). The 9.0.0 GitHub Release carries a note instead. The tag
+`v8.5.0` is a lightweight tag on `3438c41f`; it stays for now —
+deleting a pushed tag is the owner's call (issue #391) — and the
+9.0.0 compare link depends on it.
 
 ## Non-goals
 
