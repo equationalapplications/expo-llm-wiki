@@ -86,7 +86,7 @@ The engine has no place that keeps source text. Two reads of the live tree at
    a listed table fails it until that repo mirrors the column
    (curated-thoughts#353).
 
-## The decisions (the ten questions the issue poses)
+## The decisions (ten decision sections)
 
 The issue names fourteen points to settle. This spec settles them in ten
 decision sections; points 13 and 14 are answered inside §Entity isolation
@@ -143,8 +143,11 @@ added to any existing table, so the Curated Thoughts guard passes without a
 mirror. The store adds two tables, following the v9 `add_source_ref_index`
 pattern (`db/migrations.ts:153-240`): `CREATE TABLE IF NOT EXISTS`, a
 partial UNIQUE index, a pre-check that aborts with an actionable error
-before any write, and an idempotent backfill — here a no-op backfill, since
-no source text exists on any database today.
+before any write — the precondition is that neither
+`${prefix}source_documents` nor `${prefix}source_passages` already exists,
+which catches a corrupt or half-applied prior attempt — and an idempotent
+backfill, here a no-op backfill, since no source text exists on any
+database today.
 
 - `source_documents` — one row per stored source:
   `id`, `entity_id`, `source_ref`, `source_hash`, `text`, `text_hash`,
@@ -205,7 +208,9 @@ states: `{ charCount }` when the store holds that exact pair;
 `{ charCount, staleHash: true }` when the store holds the ref under a
 different hash, so facts from the old copy are visibly unlinked after a
 changed copy replaces the text; and `null` when the store holds nothing
-for that ref. The full store listing, including a source
+for that ref. That includes a ref whose store rows were forgotten:
+`forget` removes the store rows, not the ref's facts, so the ref stays
+listed and reports `stored: null`. The full store listing, including a source
 stored with no ingest, is `listStoredSources`. An additive optional field
 on a result type is a rule-2 change; the Curated Thoughts guard does not
 read result types.
@@ -277,7 +282,10 @@ strategies, reusing the machinery that exists:
   slices. `maxTotalChars` bounds one entity's contribution. The instance
   holds every stored entity of the database, so the fallback heap grows with
   the number of stored entities; the MiniSearch overhead multiplier over raw
-  text is unmeasured. This spec publishes no heap number (rule 11).
+  text is unmeasured. This spec publishes no heap number (rule 11). Opening
+  cost: the fallback re-indexes every stored entity's text when the database
+  opens — up to `maxTotalChars` per entity before the first query; no
+  timing number is published either (rule 11).
 - Strategy selection follows the existing `'auto'` probe unchanged
   (`createIndexStrategy.ts:35-47`); the store adds no probe and no new
   strategy. The probe already tests FTS5 and json1 together, which the drain
@@ -305,7 +313,10 @@ Three new calls on `WikiMemory`, all opt-in:
   `SOURCE_STORE_TEXT_NOT_STORABLE`. Refusals follow the engine's rule-6
   convention: a policy refusal returns a result carrying the diagnostic
   (`{ stored: false, diagnostics }`) and does not throw; only an invalid
-  argument throws.
+  argument throws. The one engine-wide exception is the busy lock: when the
+  per-entity write lock is busy, the call throws `WikiBusyError` like every
+  engine operation — a busy lock is neither a policy refusal nor an
+  invalid argument (§10).
 - `listStoredSources(entityId)` — list what is stored:
   `sourceRef`, `sourceHash`, `charCount`, `passageCount`, `storedAt`.
 - `getStoredSource(entityId, sourceRef)` — return one source's text as
@@ -324,7 +335,15 @@ Three new calls on `WikiMemory`, all opt-in:
   token — or the match itself is wider than the budget, the read hard-cuts
   a surrogate-safe window of `charBudget` UTF-16 code units starting at the
   match start, again with true offsets and the cut marked (`truncated:
-  true`); a match is never dropped for size. Ranking and caps are per entity: a
+  true`); a match is never dropped for size. Match position: after a
+  strategy returns a passage, the engine anchors the window at the earliest
+  literal occurrence in the passage text of any term the strategy matched
+  for that query, compared ASCII-case-insensitively on the text as handed;
+  if no matched term appears literally — stemming or tokenization can break
+  the surface form — the window anchors at the passage start and reports
+  `truncated: true` when it cuts. The spec promises true offsets for
+  whatever window each strategy returns; it does not promise identical
+  windows across the two strategies. Ranking and caps are per entity: a
   multi-entity read gets one group per entity, each capped separately, and
   the engine never ranks passages across entities. Every item carries
   `entityId`, so two entities storing the same `sourceRef` stay
@@ -361,20 +380,25 @@ treatment of unknown fields; it adds no version handshake. Rule 6 prefers a
 diagnostic over a silent drop, and no diagnostic is possible in an engine
 that predates the field, so this loss needs the owner's explicit
 acceptance; the controller asks for it at the spec stop. A new
-engine importing an old dump sees no `sources` field and stores nothing —
+engine importing an old dump sees no `storedSources` field and stores
+nothing —
 correct, because the old engine stored nothing.
 
 OKF: the store does not touch OKF. `packages/okf/src/path-allowlist.ts` is
 not widened; no OKF record kind is added; rule 8's dependency surface and
 the OKF round-trip stay as they are. Sources ride the JSON `MemoryDump`
 only. If a host later wants sources in OKF markdown, that is a new ruling.
+Naming: `types.ts`'s `librarian_watermark` doc comment already uses "the
+source store" for the exporting database (`types.ts:1064`); the
+implementation PR rewords that comment so the two names do not clash.
 
 ### 9. Limits and diagnostics
 
 Two limits, both configurable, both enforced at `storeSource()`:
 
 - `sourceStore.maxCharsPerSource` — proposed default 200,000 characters
-  (about 16 chunks at current defaults).
+  (about 17 passages: 200,000 UTF-16 units ÷ the 12,000-unit passage cap,
+  no overlap).
 - `sourceStore.maxTotalChars` — proposed default 5,000,000 characters per
   entity across all stored sources. This bounds one entity's contribution
   to the MiniSearch heap; the fallback's total heap is the sum over stored
@@ -386,8 +410,8 @@ proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE`,
 `SOURCE_STORE_BUDGET_EXCEEDED`, `SOURCE_STORE_HASH_MISMATCH`,
 `SOURCE_STORE_DUPLICATE_HASH`, and `SOURCE_STORE_TEXT_NOT_STORABLE` — and
 stores nothing. The budget check runs inside the write transaction, under
-the same per-entity lock `forget()` and `clearAll()` use, so two concurrent
-stores cannot both pass the check and exceed the budget. A read that hits
+the call's per-entity `store` lock (§10), so two concurrent stores cannot
+both pass the check and exceed the budget. A read that hits
 `charBudget` marks the cut on the result (`truncated: true`). No text is
 ever dropped silently.
 
@@ -395,11 +419,18 @@ ever dropped silently.
 
 Rule 3. Both new tables carry `entity_id`, every query on them filters by it
 in the `WHERE` clause, and both UNIQUE indexes include it — the same
-pattern the nine existing tables follow (`repositories/EntryRepository.ts`
+pattern the ten existing tables follow (`repositories/EntryRepository.ts`
 scopes all 104
-of its `entity_id` references this way). Per-entity locking follows
-`JobManager`'s `${prefix}:${entityId}:<op>` key convention for store writes.
-A read for one entity can never return another entity's passage.
+of its `entity_id` references this way). Store writes take a new
+`OperationType` `store` in `JobManager`'s conflict matrix, on the
+`${prefix}:${entityId}:store` key: a store conflicts with ingest, import,
+prune, librarian, heal, ontologyBackfill, reembed, forget, and any other
+store of the same entity, so two stores serialize and a store never runs
+under a maintenance operation's lock. `acquireLock` throws `WikiBusyError`
+when a lock is busy and does not wait (`services/JobManager.ts`); a store
+that loses the busy race throws `WikiBusyError` — the engine-wide exception
+noted in §7, not a policy refusal. A read for one entity can never return
+another entity's passage.
 
 ## Files touched
 
@@ -418,8 +449,10 @@ A read for one entity can never return another entity's passage.
 - `packages/core/src/services/ImportExportService.ts` — the additive
   `storedSources` dump field.
 - `packages/core/src/types.ts` — `MemoryBundle.sources?` (read result),
-  `MemoryBundle.storedSources?` (dump), option and result types,
-  `listSourceRefs` result field.
+  `MemoryDump.entities[id].storedSources?` (dump; the read-result bundle
+  does not carry the field — a separate `DumpBundle` subtype was considered
+  and declined: an additive optional field keeps the rule-2 surface
+  minimal), option and result types, `listSourceRefs` result field.
 - `packages/core/src/WikiMemory.ts` — public methods and wiring.
 - `packages/core/src/utils/sha256.ts` — new pure hasher, no dependency
   (mirrors `packages/okf/src/sha256.ts`).
@@ -470,13 +503,15 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
 6. **Link.** After `ingestDocument()` on a stored `sourceRef`, the read
    joins facts and passages under the same pair; after
    `forget({ sourceRef })`, both groups are gone and
-   `listSourceRefs` reports the source as not stored.
+   `listSourceRefs` still lists the ref, reporting `stored: null`.
 7. **Removal.** `forget` hard-deletes store rows under
    `retainSoftDeletedFor: null`; the passage index drops the deleted text
    after the post-commit sync, and a read never surfaces a deleted passage
    even with a stalled drain; a changed copy replaces text; a same-pair
    same-text re-store is a no-op; `clearAll` hard-deletes. A concurrent
-   store test pins the budget check inside the transaction.
+   store test pins the budget check inside the transaction, and a busy-lock
+   test pins the `WikiBusyError` throw when a store races a maintenance
+   operation on the same entity.
 8. **Export/import.** Round-trip with `storedSources`; an old dump imports
    with no `storedSources` field; refusal diagnostics fire at the limits;
    merge semantics and the `merge: false` full replace hold.
