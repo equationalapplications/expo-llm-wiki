@@ -28,7 +28,16 @@ brief `briefs/t2.md`, cap $0.90).
       Controller re-verified: typecheck EXIT=0, core suite 214 files /
       2457 tests EXIT=0 (/tmp/t1-verify-{tc,test}.log). Implementer spend
       $0.3053 (t1) + $0.2569 (t1b).
-- [ ] T2 `store` OperationType + conflict matrix (§10, §7; item 7)
+- [x] T2 `store` OperationType + conflict matrix (§10, §7; item 7) — **DONE
+      2026-11-15**. Commit `f72d0b54`: `'store'` in OperationType +
+      WikiBusyOperation; `_storeKey`/`_isStoreActiveFor`/lockKeyFns entry;
+      store case in acquireLock + isBlocked; BOTH directions wired (14
+      `_isStoreActiveFor` refs: prune, librarian/heal/ontologyBackfill,
+      reembed key-suffix section, global_import, store itself);
+      `releaseLock('store')` clears. New jobManagerStoreLock.test.ts (20
+      tests: both-direction WikiBusyError, serialize, different-entity
+      non-conflict, entity-wide ingest). Controller re-verified: TC=0,
+      215 files / 2477 tests EXIT=0 (/tmp/t2-{tc,test}.log). Spend $0.3802.
 - [ ] T3 sha256 hasher + diagnostic codes (§3, §9)
 - [ ] T4 store write path — SourceStoreService + Maintenance deletes (§5, §7, §9; items 4, 7)
 - [ ] T5 store read paths + listSourceRefs three-state (§4; items 4, 6)
