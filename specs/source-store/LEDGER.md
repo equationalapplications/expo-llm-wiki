@@ -125,7 +125,26 @@ brief `briefs/t2.md`, cap $0.90).
       (implementer confirmed they left the read path non-draining per
       brief). Controller re-verified: TC=0, 220 files / 2526 tests
       EXIT=0 (runs/t7-controller-gates.log). Spend $0.8796.
-- [ ] T8 dump import/export + skippedSources (§8; item 8)
+- [x] T8 dump import/export + skippedSources (§8; item 8) — **DONE
+      2026-11-15**. Commit `ad269686` (t8 follow-up commit after a
+      correct guardrail stop): types.ts `StoredSourceDump` /
+      `ImportDumpResult` / `MemoryDumpEntity` (storedSources is
+      dump-only; MemoryBundle unchanged); export writes per-scope,
+      absent when nothing stored; import one-source-at-a-time inside
+      the import transaction — re-computes text_hash, re-cuts passages
+      (dump's passages array ignored), all four typed refusals with
+      skip-and-list, same-ref replace (budget excludes the replaced
+      ref's old count), merge:false wipe-then-write in-tx (wipes even
+      with no storedSources in dump); malformed entry throws+rolls
+      back; WikiMemory delta = the one-line importDump return widening
+      only. 5 existing importDump assertions widened to
+      `{ skippedSources: [] }` (diagnosticsEmbedding x3, importDump,
+      vectorRemovalRev5). Choices disclosed, controller-verified vs §8.
+      **⚠️ Naming delta for review ladder / T11 sweep: spec §9 proposed
+      `source_store_too_large`, T4 landed `source_store_source_too_large`
+      — reconcile (amend spec text or rename code) before merge.**
+      Controller re-verified: TC=0, 221 files / 2537 tests EXIT=0
+      (runs/t8-controller-gates.log). Spend $0.8035 + $0.1747 (t8b).
 - [ ] T9 WikiMemory wiring + formatContext (§7; items 1, 5–6)
 - [ ] T10 INTENT rule 5 reword (§1) — controller-applied (protection hook)
 - [ ] T11 full-suite sweep + cleanup commit (Status → Implemented, delete plan/LEDGER, roadmap mark)
