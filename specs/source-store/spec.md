@@ -42,9 +42,7 @@ The engine has no place that keeps source text. Two reads of the live tree at
    12,000 and 400 (`utils/chunkingDefaults.ts:6,16`). It returns
    `{ chunks: string[]; truncated: boolean }` — strings only, no offsets, and
    it throws unless `overlap` is an integer in `[0, maxChunkLength)`
-   (`utils/pure.ts:731-733`). The store's own boundary pass never calls it
-   with an out-of-range overlap, and `storeSource` treats the throw as a
-   typed refusal, not an uncaught error.
+   (`utils/pure.ts:729-733`).
 4. **The keyword index is tied to `entries`.** FTS5 lives in `entries_fts`
    (`services/search/fts5Sql.ts:49-66`). Its triggers enqueue into a
    `fts_pending` ledger; a budgeted background drain does the indexing — the
@@ -142,22 +140,35 @@ before any write, and an idempotent backfill — here a no-op backfill, since
 no source text exists on any database today.
 
 - `source_documents` — one row per stored source:
-  `id`, `entity_id`, `source_ref`, `source_hash`, `text`, `char_count`,
-  `created_at`, `deleted_at`. Partial UNIQUE `(entity_id, source_ref)`
-  `WHERE deleted_at IS NULL` gives the same TOCTOU guard the facts table
-  uses. `text` holds the document exactly as the host handed it.
+  `id`, `entity_id`, `source_ref`, `source_hash`, `text`, `text_hash`,
+  `char_count`, `created_at`, `deleted_at`. Two partial UNIQUE indexes, both
+  `WHERE deleted_at IS NULL`: `(entity_id, source_ref)` gives the same
+  TOCTOU guard the facts table uses, and `(entity_id, source_hash)` mirrors
+  `source_ref_index`, so two refs cannot hold one hash — the same rule
+  `ingestDocument()` enforces. `text` holds the document exactly as the
+  host handed it. `text_hash` is the engine's own SHA-256 over the UTF-8
+  encoding of that exact string; core has no hasher today (a grep finds
+  none), so the cycle adds `packages/core/src/utils/sha256.ts`, a pure
+  implementation with no dependency — the pattern `packages/okf/src/sha256.ts`
+  already uses. The host-supplied `source_hash` stays an opaque, host-owned
+  join key: a host may hash file bytes or another text form, and the join to
+  facts still works, because both sides carry the host's value.
 - `source_passages` — one row per indexable passage:
   `id`, `entity_id`, `document_id`, `seq`, `start_offset`, `end_offset`.
   Passage text is not stored: the engine slices it from `source_documents.text`
   at index and read time, so the text exists once and stays as handed.
-  Every offset indexes the text as handed. The store computes passage
-  boundaries with its own offset-tracking pass: it walks the handed text and
-  cuts contiguous passages at the same size rule `chunkText` uses, without
+  Every offset is a UTF-16 code-unit offset into the text as handed — JS
+  `slice` semantics — and the engine never converts one through SQL
+  `substr()`, which counts code points and would drift on astral
+  characters. The store computes passage boundaries with its own
+  offset-tracking pass: it walks the handed text and cuts contiguous
+  passages of at most 12,000 UTF-16 units, preferring whitespace boundaries
+  the way `safeSlice` does, never splitting a surrogate pair, without
   trimming and without overlap. `chunkText` itself trims its input
-  (`utils/pure.ts:725`) and produces overlapping chunks, so it cannot supply
-  offsets, and the store does not use it for this pass. A future extraction
-  lane can cite `(ref, position)` against `getStoredSource().text` with no
-  new cutter.
+  (`utils/pure.ts:727`) and produces overlapping chunks, so it cannot
+  supply offsets, and the store does not use it for this pass. A future
+  extraction lane can cite `(ref, position)` against `getStoredSource().text`
+  with no new cutter.
 
 The migration appends to `MIGRATIONS[]` as v17. `CURRENT_SCHEMA_VERSION` is
 derived from the array's last entry (`db/migrations.ts:401-414`), so no
@@ -176,13 +187,15 @@ without new code.
 
 The link to the facts `ingestDocument()` writes is that same pair. The store
 changes no fact and no fact row: an `immutable_document` fact already
-carries `source_ref` and `source_hash` columns, and the store keys its rows
-on the same values, so a read can join the two labelled groups on
+carries `source_ref` and `source_hash` columns, and the store
+keys its rows on the same values, so a read can join the two labelled groups on
 `(entityId, sourceRef, sourceHash)` with no new pointer, column or table on
-the fact side. `listSourceRefs` gains one optional result field,
-`stored: { charCount: number } | null`, present only on engines with the
-store. An additive optional field on a result type is a rule-2 change; the
-Curated Thoughts guard does not read result types.
+the fact side. `listSourceRefs` reads from `entries`, so its one new
+optional result field, `stored: { charCount: number } | null`, decorates
+only sources that have facts; the full store listing, including a source
+stored with no ingest, is `listStoredSources`. An additive optional field
+on a result type is a rule-2 change; the Curated Thoughts guard does not
+read result types.
 
 ### 5. Removal
 
@@ -207,7 +220,20 @@ Storing a changed copy — same `sourceRef`, new `sourceHash` — hard-deletes
 the old text row and its passages, then writes the new text. This mirrors
 re-ingest: the engine never keeps two versions of one `sourceRef`'s text.
 Storing the same `sourceRef` and same `sourceHash` again is a no-op that
-returns the existing state; it does not rewrite the row.
+returns the existing state, only when the engine's `text_hash` matches what
+is stored; if the text differs under the same declared pair, `storeSource`
+refuses with `SOURCE_STORE_HASH_MISMATCH` and changes nothing. A second
+`sourceRef` carrying a `source_hash` another live row already holds refuses
+with `SOURCE_STORE_DUPLICATE_HASH`, mirroring `ingestDocument()`'s
+duplicate-hash rule.
+
+Hard delete extends to the indexes. The passage index is asynchronous: FTS5
+keeps its own text copy and the drain lags the transaction. After a
+`forget()` or `clearAll()` commit, the store runs the same targeted
+post-commit sync `forget` already runs for entries, so `source_passages_fts`
+rows and the MiniSearch heap drop the deleted passages. A read returns only
+passages whose `source_passages` row is live, so text can never surface from
+a stale index even if a drain fails.
 
 ### 6. The index
 
@@ -216,7 +242,10 @@ strategies, reusing the machinery that exists:
 
 - FTS5: a `source_passages_fts` virtual table fed through the same
   enqueue-and-drain ledger pattern as `entries_fts`, so writes stay budgeted
-  and crash-safe.
+  and crash-safe. The passage FTS objects — the virtual table, its map and
+  ledger, and the triggers — are created by the strategy's init, the way the
+  `entries_fts` objects are today, not by `setupDatabase`; they appear in
+  Files touched for that reason.
 - MiniSearch fallback: a second in-heap instance over the same passage
   slices. `maxTotalChars` bounds one entity's contribution. The instance
   holds every stored entity of the database, so the fallback heap grows with
@@ -237,10 +266,13 @@ limits table below, not a measurement claim.
 Three new calls on `WikiMemory`, all opt-in:
 
 - `storeSource(entityId, { sourceRef, sourceHash, text })` — store or
-  replace a source. The engine computes SHA-256 over `text` itself and
-  refuses a mismatch with the supplied `sourceHash`, with typed diagnostic
-  `SOURCE_STORE_HASH_MISMATCH`, so the join key always names the stored
-  text. Returns the stored state or a refusal diagnostic.
+  replace a source. `sourceHash` is the host's join key, exactly the value
+  it hands `ingestDocument()`; the engine shape-checks it with
+  `normalizeSourceHash`, computes `text_hash` itself, and enforces the
+  no-op and refusal rules of §5. Text that cannot round-trip — a lone
+  surrogate or an embedded NUL — refuses with
+  `SOURCE_STORE_TEXT_NOT_STORABLE`. Returns the stored state or a refusal
+  diagnostic.
 - `listStoredSources(entityId)` — list what is stored:
   `sourceRef`, `sourceHash`, `charCount`, `passageCount`, `storedAt`.
 - `getStoredSource(entityId, sourceRef)` — return one source's text as
@@ -249,11 +281,13 @@ Three new calls on `WikiMemory`, all opt-in:
   `sources: { query: string; maxPassages?: number; charBudget?: number }`.
   When the option is present, the returned `MemoryBundle` gains an additive,
   optional `sources` field: a labelled array of
-  `{ sourceRef, sourceHash, seq, startOffset, endOffset, text }`, ranked,
-  capped by `maxPassages` (default 8) and `charBudget` (default 4,000
-  characters). Ranking and caps are per entity: a multi-entity read gets one
-  group per entity, each capped separately, and the engine never ranks
-  passages across entities. When the option is absent, the bundle is byte-identical in
+  `{ entityId, sourceRef, sourceHash, seq, startOffset, endOffset, text }`,
+  ranked, capped by `maxPassages` (default 8) and `charBudget` (default
+  4,000 characters) per entity. Ranking and caps are per entity: a
+  multi-entity read gets one group per entity, each capped separately, and
+  the engine never ranks passages across entities. Every item carries
+  `entityId`, so two entities storing the same `sourceRef` stay
+  distinguishable in one bundle. When the option is absent, the bundle is byte-identical in
   shape to today: the second labelled group exists only for a host that asks
   for it. `formatContext` prints the group under a `Sources` heading after
   the facts, and only when the group is present.
@@ -263,12 +297,20 @@ methods is additive. A host on today's API sees no change on upgrade.
 
 ### 8. Export, import, OKF
 
-`MemoryDump` gains one optional field, `sources?: StoredSourceDump[]`, each
-entry carrying `sourceRef`, `sourceHash`, `text`, `charCount`, `storedAt`,
-and its passages. Export writes it when any source is stored; import reads
-it when present and restores the rows, re-deriving passages from the text.
+`MemoryDump` carries stored sources per entity, under a field distinct from
+the read-result `sources`, because `MemoryBundle` serves both shapes:
+`entities[id].storedSources?: StoredSourceDump[]`, each entry carrying
+`sourceRef`, `sourceHash`, `text`, `text_hash`, `charCount`, `storedAt`,
+and its passages. Export writes the field only for entities in the export's
+scope; an entity with nothing stored carries none. Import restores the rows
+under that entity, re-derives passages from the text, and re-computes
+`text_hash`; the import honors the §9 limits and refuses with the same
+diagnostics when a dump would exceed them. A `sourceRef` already stored
+under the entity is replaced by the dump's copy — the dump is the source of
+truth for that ref; other stored sources survive under merge semantics, and
+a `merge: false` import replaces the entity's whole store with the dump's.
 
-Older engines: a dump with `sources` imported into a 8.x/9.x engine loses
+Older engines: a dump with `storedSources` imported into a 8.x/9.x engine loses
 the sources silently, because those importers strip fields outside their
 typed bundle. This spec proposes that answer, consistent with the existing
 treatment of unknown fields; it adds no version handshake. Rule 6 prefers a
@@ -297,8 +339,11 @@ Two limits, both configurable, both enforced at `storeSource()`:
 The defaults are owner-gated; they are refusal guards, not targets. A
 refusal produces a typed, content-free diagnostic in the existing registry —
 proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE`,
-`SOURCE_STORE_BUDGET_EXCEEDED`, and `SOURCE_STORE_HASH_MISMATCH` — and
-stores nothing. A read that hits
+`SOURCE_STORE_BUDGET_EXCEEDED`, `SOURCE_STORE_HASH_MISMATCH`,
+`SOURCE_STORE_DUPLICATE_HASH`, and `SOURCE_STORE_TEXT_NOT_STORABLE` — and
+stores nothing. The budget check runs inside the write transaction, under
+the same per-entity lock `forget()` and `clearAll()` use, so two concurrent
+stores cannot both pass the check and exceed the budget. A read that hits
 `charBudget` marks the cut on the result. No text is ever dropped silently.
 
 ### 10. Entity isolation
@@ -325,12 +370,15 @@ A read for one entity can never return another entity's passage.
   `MiniSearchIndexStrategy.ts` / `createIndexStrategy.ts` — the second
   index on both strategies.
 - `packages/core/src/services/ImportExportService.ts` — the additive
-  `sources` dump field.
-- `packages/core/src/types.ts` — `MemoryBundle.sources?`,
-  `MemoryDump.sources?`, option and result types,
+  `storedSources` dump field.
+- `packages/core/src/types.ts` — `MemoryBundle.sources?` (read result),
+  `MemoryBundle.storedSources?` (dump), option and result types,
   `listSourceRefs` result field.
 - `packages/core/src/WikiMemory.ts` — public methods and wiring.
-- `packages/core/src/diagnostics` (registry) — two refusal codes.
+- `packages/core/src/utils/sha256.ts` — new pure hasher, no dependency
+  (mirrors `packages/okf/src/sha256.ts`).
+- `packages/core/src/diagnostics` (registry) — the refusal codes named in
+  §Limits and diagnostics.
 - `INTENT.md` — rule 5 reworded, in the same pull request.
 - Tests under `packages/core/src/__tests__/`.
 
@@ -350,10 +398,14 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    curated-thoughts' nine-table guard list, so the CT guard passes
    unchanged.
 4. **Round-trip.** Store, list, get — text is byte-identical to what was
-   handed, including non-ASCII text and the 255-character ref boundary.
-   A leading-whitespace fixture and a repeated-substring fixture pin the
-   offsets against the handed text. A wrong `sourceHash` refuses with
-   `SOURCE_STORE_HASH_MISMATCH` and stores nothing.
+   handed, including non-ASCII text, an astral-character (non-BMP) fixture,
+   and the 255-character ref boundary. Leading-whitespace and
+   repeated-substring fixtures pin the offsets against the handed text, and
+   an emoji fixture pins UTF-16 offsets across the FTS and MiniSearch paths.
+   A wrong-shaped `sourceHash`, a lone surrogate, and an embedded NUL each
+   refuse with their typed diagnostics and store nothing. A second ref with
+   a duplicate hash refuses. A same-pair re-store with different text
+   refuses with `SOURCE_STORE_HASH_MISMATCH`.
 5. **Search on both strategies.** The `sources` group returns the right
    passages under FTS5 and under the MiniSearch fallback; budget and
    `maxPassages` caps hold; the cut is marked; a two-entity read returns
@@ -363,10 +415,14 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    `forget({ sourceRef })`, both groups are gone and
    `listSourceRefs` reports the source as not stored.
 7. **Removal.** `forget` hard-deletes store rows under
-   `retainSoftDeletedFor: null`; a changed copy replaces text; a same-hash
-   re-store is a no-op; `clearAll` hard-deletes.
-8. **Export/import.** Round-trip with `sources`; an old dump imports with no
-   `sources` field; refusal diagnostics fire at both limits.
+   `retainSoftDeletedFor: null`; the passage index drops the deleted text
+   after the post-commit sync, and a read never surfaces a deleted passage
+   even with a stalled drain; a changed copy replaces text; a same-pair
+   same-text re-store is a no-op; `clearAll` hard-deletes. A concurrent
+   store test pins the budget check inside the transaction.
+8. **Export/import.** Round-trip with `storedSources`; an old dump imports
+   with no `storedSources` field; refusal diagnostics fire at the limits;
+   merge semantics and the `merge: false` full replace hold.
 9. **Isolation.** Two entities store the same `sourceRef`; neither read sees
    the other's text.
 
