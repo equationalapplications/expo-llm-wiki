@@ -344,8 +344,13 @@ runs and who schedules it.
    Implemented); investigation notes go in the spec's evidence section.
    Open a draft PR carrying the folder; add `plan.md` and
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
-   same branch; the final cleanup commit flips the Status to Implemented
-   and deletes the plan and ledger. One PR per cycle, no spec-only merges.
+   same branch. The final cleanup commit flips the Status to Implemented
+   and deletes the plan and ledger. It is the PR's last lifecycle commit,
+   pushed after the review loops converge and before the `gh pr ready`
+   flip; valid bot-review fix commits may follow it before merge, and a
+   fix that changes specified behavior also amends `spec.md` in the same
+   commit. One PR per cycle, no spec-only merges. There is no post-merge
+   cleanup commit and no docs-only cleanup PR.
    `specs/README.md` has the mechanics. The Status line changes in the
    same PR as the behavior.
 2. **Review, then merge.** CI green (build, typecheck, tests, both audit
@@ -373,6 +378,15 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-14 — "How changes are made" step 1 and `specs/README.md` pin
+  the cleanup-commit timing: the cleanup commit is the PR's last
+  lifecycle commit, pushed after the review loops converge and before
+  the `gh pr ready` flip (valid bot-review fix commits may follow it
+  before merge); there is no post-merge cleanup commit and no
+  docs-only cleanup PR. Why: the wording previously said only "the
+  final cleanup commit", which read both as in-PR and as post-merge;
+  owner ruling during the PR #385 ladder (fewest PRs, no busy-work
+  housekeeping). No other INTENT rule text changed.
 - 2026-11-14 — Rule 5's Planned note gains its status line: librarian
   facts now carry a source pointer (ops strategy) — the event they came
   from plus the grounding-verified quote. Verified quotes survive

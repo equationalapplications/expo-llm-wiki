@@ -13,8 +13,8 @@ Each spec cycle gets one folder, `specs/<name>/`, holding three files:
 | File | What it is | Lifetime |
 |---|---|---|
 | `spec.md` | Problem, root cause with evidence from real runs or logs, proposed change, files touched, test plan. Carries a Status line: **Draft → Reviewed → Implemented**. | Durable: stays after merge. |
-| `plan.md` | The ordered implementation plan. | Transient: deleted by the final cleanup commit. |
-| `LEDGER.md` | One checkbox per plan task, an evidence link per tick, and a "what's in flight" line. | Transient: deleted by the final cleanup commit. |
+| `plan.md` | The ordered implementation plan. | Transient: deleted by the final cleanup commit (step 4) — before the `gh pr ready` flip. |
+| `LEDGER.md` | One checkbox per plan task, an evidence link per tick, and a "what's in flight" line. | Transient: deleted by the final cleanup commit (step 4) — before the `gh pr ready` flip. |
 
 Everything in the folder is tracked in git. Nothing under `specs/` is
 gitignored. `.superpowers/` (runtime working state, never source) stays
@@ -43,11 +43,15 @@ history carries the dates.
    closes. There are no spec-only merges.
 3. Implement on the same branch. Conventional commits name the spec
    section they fulfill. Tick ledger boxes after verification.
-4. When review loops converge: one final cleanup commit on the same PR
-   flips the spec to **Implemented** and deletes `plan.md` and
-   `LEDGER.md` (never a separate cleanup PR). Then `gh pr ready`; bot
-   reviews that skip drafts fire on the ready flip. CI runs on every
-   push to the PR, draft included.
+4. When review loops converge: one final cleanup commit on the same PR —
+   the PR's last lifecycle commit — flips the spec to **Implemented**
+   and deletes `plan.md` and `LEDGER.md` (never a separate cleanup PR,
+   and no post-merge cleanup commit). It is pushed before the `gh pr
+   ready` flip; valid bot-review fix commits may follow it before
+   merge, and a fix that changes specified behavior also amends
+   `spec.md` in the same commit. Then
+   `gh pr ready`; bot reviews that skip drafts fire on the ready flip.
+   CI runs on every push to the PR, draft included.
 5. After merge, the status-carrying `spec.md` and the code are the record.
    Nothing is left to clean up.
 
