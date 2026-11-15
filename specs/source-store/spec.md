@@ -437,7 +437,7 @@ Two limits, both configurable, both enforced at `storeSource()`:
 
 The defaults are owner-gated; they are refusal guards, not targets. A
 refusal produces a typed, content-free diagnostic in the existing registry —
-proposed codes `source_store_too_large`, `source_store_budget_exceeded`,
+proposed codes `source_store_source_too_large`, `source_store_budget_exceeded`,
 `source_store_hash_mismatch`, `source_store_duplicate_hash`, and
 `source_store_text_not_storable` — lowercase snake_case, matching the
 existing `WikiDiagnosticCode` union (`types.ts:858`), with a new
