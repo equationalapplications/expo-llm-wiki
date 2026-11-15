@@ -12,13 +12,22 @@ passed / 3253**, zero failures. Log:
 `.superpowers/sdd/source-store/baseline-test-run2.log`. Install:
 `pnpm install --frozen-lockfile` clean.
 
-**In flight:** T1 dispatched (Claude Code sonnet/low, brief
-`.superpowers/sdd/source-store/briefs/t1.md`, runner `run-task.sh 1`,
-announce ≈$0.60 hard cap $0.90).
+**In flight:** T2 dispatched (JobManager `store` op; Claude Code sonnet/low,
+brief `briefs/t2.md`, cap $0.90).
 
 ## Tasks
 
-- [ ] T1 schema + migration v17 (§3; test items 2–3)
+- [x] T1 schema + migration v17 (§3; test items 2–3) — **DONE 2026-11-15**.
+      Two runs (t1 stopped on ledger-dirty guard — correct; t1b completed).
+      Commit `ddd092d7` (6 files; DDL matches §3 exactly: two plain UNIQUE
+      indexes incl. entity_id, no deleted_at, no passage text column;
+      v17 pre-check aborts on rows/column-mismatch, empty expected-state
+      passes; no-op backfill; CURRENT_SCHEMA_VERSION derives). Version-pin
+      cascade folded: sourceRefNormalize/fts5RenameRetire/setupBudget
+      16→17 post-migration pins (pre-migration fixtures untouched).
+      Controller re-verified: typecheck EXIT=0, core suite 214 files /
+      2457 tests EXIT=0 (/tmp/t1-verify-{tc,test}.log). Implementer spend
+      $0.3053 (t1) + $0.2569 (t1b).
 - [ ] T2 `store` OperationType + conflict matrix (§10, §7; item 7)
 - [ ] T3 sha256 hasher + diagnostic codes (§3, §9)
 - [ ] T4 store write path — SourceStoreService + Maintenance deletes (§5, §7, §9; items 4, 7)
