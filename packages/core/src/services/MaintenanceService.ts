@@ -642,6 +642,11 @@ export class MaintenanceService {
           if (await this.sourceRefIndexPresent(tx)) {
             await this.sourceRefIndexRepo.deleteByEntityId(entityId, tx);
           }
+          // Stored source text is hard-deleted with the rest (spec source-store §5).
+          if (await this.sourceStorePresent(tx)) {
+            await tx.runAsync(`DELETE FROM ${this.prefix}source_passages WHERE entity_id = ?`, [entityId]);
+            await tx.runAsync(`DELETE FROM ${this.prefix}source_documents WHERE entity_id = ?`, [entityId]);
+          }
           // Edges have no soft delete, and a soft-deleted fact is never
           // restored, so the entity's edges can never be used again (spec
           // import-followups §6).
@@ -677,6 +682,19 @@ export class MaintenanceService {
           if (params.entryId) {
             const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
             if (entryId) deletedEntryIds.push(entryId);
+          }
+
+          if ((sourceRef || sourceHash) && await this.sourceStorePresent(tx)) {
+            // Hard-delete the source's stored text and passages in this same
+            // transaction (spec source-store §5). Fact semantics are unchanged.
+            const docs = `${this.prefix}source_documents`;
+            const sel = 'entity_id = ? AND ((? IS NOT NULL AND source_ref = ?) OR (? IS NOT NULL AND source_hash = ?))';
+            const selArgs = [entityId, sourceRef, sourceRef, sourceHash, sourceHash];
+            await tx.runAsync(
+              `DELETE FROM ${this.prefix}source_passages WHERE entity_id = ? AND document_id IN (SELECT id FROM ${docs} WHERE ${sel})`,
+              [entityId, ...selArgs],
+            );
+            await tx.runAsync(`DELETE FROM ${docs} WHERE ${sel}`, selArgs);
           }
 
           if (sourceRef || sourceHash) {
@@ -816,6 +834,12 @@ export class MaintenanceService {
    * pre-existing limit out of scope here. Await setup() before other calls,
    * as WikiMemory.setup() documents.
    */
+  /** A never-set-up store has no source-store tables (#316 recovery); nothing to delete there. */
+  private async sourceStorePresent(tx: SQLiteAdapter): Promise<boolean> {
+    return (await this.metadataRepo.tableExists(`${this.prefix}source_documents`, tx))
+      && (await this.metadataRepo.tableExists(`${this.prefix}source_passages`, tx));
+  }
+
   private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
     if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;
     const raw = await this.metadataRepo.getMeta('schema_version', tx);
