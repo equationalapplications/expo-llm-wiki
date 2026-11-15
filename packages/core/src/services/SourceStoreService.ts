@@ -156,4 +156,52 @@ export class SourceStoreService {
       this.jobManager.releaseLock('store', entityId);
     }
   }
+
+  /** Spec §7: the text exactly as handed, or null. Plain read, no write lock. */
+  async getStoredSource(
+    entityId: string,
+    sourceRef: string,
+  ): Promise<{ sourceRef: string; sourceHash: string; text: string; charCount: number; storedAt: number } | null> {
+    const ref = normalizeSourceRef(sourceRef);
+    if (!ref) return null;
+    const row = await this.db.getFirstAsync<{
+      source_ref: string; source_hash: string; text: string; char_count: number; created_at: number;
+    }>(
+      `SELECT source_ref, source_hash, text, char_count, created_at FROM ${this.prefix}source_documents
+       WHERE entity_id = ? AND source_ref = ?`,
+      [entityId, ref],
+    );
+    if (!row) return null;
+    return {
+      sourceRef: row.source_ref,
+      sourceHash: row.source_hash,
+      text: row.text,
+      charCount: Number(row.char_count),
+      storedAt: Number(row.created_at),
+    };
+  }
+
+  /** Spec §4/§7: full store listing, including sources stored with no ingest. */
+  async listStoredSources(entityId: string): Promise<Array<{
+    sourceRef: string; sourceHash: string; charCount: number; passageCount: number; storedAt: number;
+  }>> {
+    const rows = await this.db.getAllAsync<{
+      source_ref: string; source_hash: string; char_count: number; created_at: number; passage_count: number;
+    }>(
+      `SELECT d.source_ref, d.source_hash, d.char_count, d.created_at,
+              (SELECT COUNT(*) FROM ${this.prefix}source_passages p
+                WHERE p.entity_id = d.entity_id AND p.document_id = d.id) AS passage_count
+       FROM ${this.prefix}source_documents d
+       WHERE d.entity_id = ?
+       ORDER BY d.source_ref COLLATE BINARY`,
+      [entityId],
+    );
+    return rows.map((r) => ({
+      sourceRef: r.source_ref,
+      sourceHash: r.source_hash,
+      charCount: Number(r.char_count),
+      passageCount: Number(r.passage_count),
+      storedAt: Number(r.created_at),
+    }));
+  }
 }

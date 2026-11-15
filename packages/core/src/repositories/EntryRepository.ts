@@ -1441,6 +1441,8 @@ export class EntryRepository extends BaseRepository {
     sourceHash: string | null;
     factCount: number;
     lastIngestedAt: number;
+    /** Spec source-store §4 three-state: exact pair / stale hash / nothing stored. */
+    stored?: { charCount: number; staleHash?: true } | null;
   }>> {
     const executor = this.getExecutor(tx);
     const rows = await executor.getAllAsync<{
@@ -1448,6 +1450,8 @@ export class EntryRepository extends BaseRepository {
       source_hash: string | null;
       fact_count: number;
       last_ingested_at: number;
+      stored_hash: string | null;
+      stored_chars: number | null;
     }>(
       `WITH ranked AS (
          SELECT source_ref, source_hash, updated_at,
@@ -1459,20 +1463,31 @@ export class EntryRepository extends BaseRepository {
          FROM ${this.prefix}entries
          WHERE entity_id = ? AND deleted_at IS NULL AND source_ref IS NOT NULL
        )
-       SELECT source_ref,
-              source_hash       AS source_hash,
-              fact_count        AS fact_count,
-              updated_at        AS last_ingested_at
+       SELECT ranked.source_ref,
+              ranked.source_hash       AS source_hash,
+              ranked.fact_count        AS fact_count,
+              ranked.updated_at        AS last_ingested_at,
+              d.source_hash            AS stored_hash,
+              d.char_count             AS stored_chars
        FROM ranked
-       WHERE rn = 1
-       ORDER BY source_ref COLLATE BINARY`,
-      [entityId],
+       LEFT JOIN ${this.prefix}source_documents d
+         ON d.entity_id = ? AND d.source_ref = ranked.source_ref
+       WHERE ranked.rn = 1
+       ORDER BY ranked.source_ref COLLATE BINARY`,
+      [entityId, entityId],
     );
     return rows.map(r => ({
       sourceRef: r.source_ref,
       sourceHash: r.source_hash,
       factCount: Number(r.fact_count),
       lastIngestedAt: Number(r.last_ingested_at),
+      // Spec source-store §4: keyed on the ref's own (sourceRef, sourceHash) pair.
+      stored:
+        r.stored_hash === null || r.stored_hash === undefined
+          ? null
+          : r.stored_hash === r.source_hash
+            ? { charCount: Number(r.stored_chars) }
+            : { charCount: Number(r.stored_chars), staleHash: true as const },
     }));
   }
 

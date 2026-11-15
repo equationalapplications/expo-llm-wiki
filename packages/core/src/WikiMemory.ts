@@ -725,6 +725,7 @@ export class WikiMemory {
     sourceHash: string | null;
     factCount: number;
     lastIngestedAt: number;
+    stored?: { charCount: number; staleHash?: true } | null;
   }>> {
     return this.entryRepo.listSourceRefs(entityId);
   }

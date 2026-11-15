@@ -1,0 +1,124 @@
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { SourceStoreService } from '../src/services/SourceStoreService';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+import type { SQLiteAdapter, WikiOptions } from '../src/types';
+
+const PREFIX = 'llm_wiki_';
+const E = 'ent1';
+const H1 = 'a'.repeat(64);
+const H2 = 'b'.repeat(64);
+const H3 = 'c'.repeat(64);
+
+async function setup(): Promise<{ db: SQLiteAdapter; wiki: WikiMemory; svc: SourceStoreService }> {
+  const db = openTestDatabase();
+  const options = { llmProvider: { generateText: async () => '{}' } } as unknown as WikiOptions;
+  const wiki = new WikiMemory(db, options);
+  await wiki.setup();
+  const svc = new SourceStoreService(db, PREFIX, options, (wiki as unknown as { jobManager: never }).jobManager);
+  return { db, wiki, svc };
+}
+
+async function insertFact(db: SQLiteAdapter, id: string, entityId: string, sourceRef: string, sourceHash: string): Promise<void> {
+  const now = 1000;
+  await db.runAsync(
+    `INSERT INTO ${PREFIX}entries (id, entity_id, title, body, tags, confidence, source_type,
+      source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, entityId, 'T', 'B', '[]', 'certain', 'immutable_document', sourceHash, sourceRef, now, now, null, 0, null],
+  );
+}
+
+describe('SourceStoreService reads', () => {
+  it('getStoredSource returns the text as handed, or null', async () => {
+    const { svc } = await setup();
+    const text = '  leading space\r\n😀 and trailing  ';
+    const stored = await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text });
+    expect(stored.stored).toBe(true);
+    const got = await svc.getStoredSource(E, 'a.md');
+    expect(got).toEqual({
+      sourceRef: 'a.md',
+      sourceHash: H1,
+      text,
+      charCount: text.length,
+      storedAt: (stored as { storedAt: number }).storedAt,
+    });
+    expect(await svc.getStoredSource(E, 'missing.md')).toBeNull();
+  });
+
+  it('isolates entities', async () => {
+    const { svc } = await setup();
+    await svc.storeSource('A', { sourceRef: 'a.md', sourceHash: H1, text: 'secret' });
+    expect(await svc.getStoredSource('B', 'a.md')).toBeNull();
+    expect(await svc.listStoredSources('B')).toEqual([]);
+    expect(await svc.listStoredSources('A')).toHaveLength(1);
+  });
+
+  it('listStoredSources lists a source stored with no ingest, passageCount 0', async () => {
+    const { svc } = await setup();
+    const r = await svc.storeSource(E, { sourceRef: 'b.md', sourceHash: H2, text: 'hello' });
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hi' });
+    const list = await svc.listStoredSources(E);
+    expect(list.map((s) => s.sourceRef)).toEqual(['a.md', 'b.md']);
+    expect(list[1]).toEqual({
+      sourceRef: 'b.md',
+      sourceHash: H2,
+      charCount: 5,
+      passageCount: 0,
+      storedAt: (r as { storedAt: number }).storedAt,
+    });
+  });
+});
+
+describe('listSourceRefs stored three-state (spec §4)', () => {
+  it('exact pair → { charCount }', async () => {
+    const { db, wiki, svc } = await setup();
+    await insertFact(db, 'f1', E, 'a.md', H1);
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hello' });
+    const refs = await wiki.listSourceRefs(E);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].stored).toEqual({ charCount: 5 });
+  });
+
+  it('changed copy under a new hash → staleHash for the old facts', async () => {
+    const { db, wiki, svc } = await setup();
+    await insertFact(db, 'f1', E, 'a.md', H1);
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H2, text: 'changed copy' });
+    const refs = await wiki.listSourceRefs(E);
+    expect(refs[0].sourceHash).toBe(H1);
+    expect(refs[0].stored).toEqual({ charCount: 'changed copy'.length, staleHash: true });
+  });
+
+  it('never-stored ref → stored: null', async () => {
+    const { db, wiki, svc } = await setup();
+    await insertFact(db, 'f1', E, 'a.md', H1);
+    await insertFact(db, 'f2', E, 'b.md', H3);
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'x' });
+    const refs = await wiki.listSourceRefs(E);
+    expect(refs.find((r) => r.sourceRef === 'a.md')?.stored).toEqual({ charCount: 1 });
+    expect(refs.find((r) => r.sourceRef === 'b.md')?.stored).toBeNull();
+  });
+
+  it("another entity's store row never links", async () => {
+    const { db, wiki, svc } = await setup();
+    await insertFact(db, 'f1', E, 'a.md', H1);
+    await svc.storeSource('other', { sourceRef: 'a.md', sourceHash: H1, text: 'x' });
+    expect((await wiki.listSourceRefs(E))[0].stored).toBeNull();
+  });
+
+  it('a ref whose store rows were removed stays listed with stored: null', async () => {
+    const { db, wiki, svc } = await setup();
+    await insertFact(db, 'f1', E, 'a.md', H1);
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hello' });
+    expect((await wiki.listSourceRefs(E))[0].stored).toEqual({ charCount: 5 });
+    // Remove the store rows only, as the spec §4 forget semantics describe
+    // (facts stay). Done in SQL because forget({sourceRef}) in the current
+    // engine also soft-deletes the facts; that wiring is outside Task 5.
+    await db.runAsync(`DELETE FROM ${PREFIX}source_passages WHERE entity_id = ?`, [E]);
+    await db.runAsync(`DELETE FROM ${PREFIX}source_documents WHERE entity_id = ?`, [E]);
+    const refs = await wiki.listSourceRefs(E);
+    expect(refs).toHaveLength(1);
+    expect(refs[0]).toMatchObject({ sourceRef: 'a.md', factCount: 1, stored: null });
+    expect(await svc.getStoredSource(E, 'a.md')).toBeNull();
+  });
+});
