@@ -102,7 +102,29 @@ brief `briefs/t2.md`, cap $0.90).
       trigger counts scoped to entries_fts) — no test-only logic changes.
       Controller re-verified: TC=0, 219 files / 2513 tests EXIT=0
       (runs/t6-controller-gates.log). Spend $0.9836.
-- [ ] T7 `sources` read option + offsets/hard-cut (§7; items 4–5)
+- [x] T7 `sources` read option + offsets/hard-cut (§7; items 4–5) —
+      **DONE 2026-11-15**. Commit `da65d81a`: types.ts opened
+      (`WikiConfig.sourceStore` typing — T4's deferred item, cast in
+      limits() left as T11 cleanup candidate; `ReadOptions.sources`;
+      `MemoryBundle.sources?`; `SourcePassage`); `searchPassages?` on the
+      strategy contract (Unavailable → empty, no throw); FTS5 +
+      MiniSearch hits hydrated in JS (slice at offsets, no SQL substr);
+      SearchService.searchPassages route (one call per entity);
+      RetrievalService._readSources with the §7 window semantics
+      (earliest-literal ASCII-ci anchor, whitespace-run window,
+      surrogate-safe hard-cut from match start, match never dropped for
+      size, truncated flags per §7, true document offsets,
+      option-absent = zero passage work). Choices beyond brief (all
+      disclosed): matched terms = the query's tokens (strategies return
+      no matched-term list); "narrowest whitespace-bounded window" =
+      the whitespace-delimited run holding the match; **charBudget read
+      as PER-ITEM (never-drop-for-size), not a per-entity shared total —
+      §7/§9 ambiguity, flagged for the review ladder**; empty query →
+      `sources: []`. T9 carrier stands: production read returns no
+      passages until drainPassages/reindexSourcePassages are wired
+      (implementer confirmed they left the read path non-draining per
+      brief). Controller re-verified: TC=0, 220 files / 2526 tests
+      EXIT=0 (runs/t7-controller-gates.log). Spend $0.8796.
 - [ ] T8 dump import/export + skippedSources (§8; item 8)
 - [ ] T9 WikiMemory wiring + formatContext (§7; items 1, 5–6)
 - [ ] T10 INTENT rule 5 reword (§1) — controller-applied (protection hook)
