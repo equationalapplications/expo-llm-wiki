@@ -240,10 +240,16 @@ refuses with `SOURCE_STORE_HASH_MISMATCH` and changes nothing. A second
 already holds refuses with `SOURCE_STORE_DUPLICATE_HASH`, and changes nothing. The check
 runs against both tables that carry a hash: the store's own UNIQUE index
 (`source_documents`) and the live rows of the facts registry
-(`source_ref_index`, which is partial on `deleted_at IS NULL`), so a hash
-cannot name one ref in facts and another in the store, while a forgotten
-source's tombstoned registry row blocks nothing — the cross-table
-case `ingestDocument()`'s duplicate-hash rule also forbids.
+(`source_ref_index`, which is partial on `deleted_at IS NULL`), so a forgotten
+source's tombstoned registry row blocks nothing. The check guards the store
+write path only: a store write can neither take a hash facts already hold
+under another ref nor create a state where the store and facts name one hash
+under different refs. `ingestDocument()` and its duplicate-hash rule are
+unchanged in this cycle, so a later ingest can still take a hash the store
+already holds under another ref; the consequence is bounded: the read joins
+facts and passages on the exact `(entityId, sourceRef, sourceHash)` pair, so
+the re-taken ref's facts read with no `sources` group, and `listSourceRefs`
+is ref-keyed — neither result silently mixes the two.
 `created_at` is the basis a later per-source ageing rule can key on; such a
 rule arrives, if ever, as an additive change and stays out of this cycle.
 
@@ -307,16 +313,17 @@ Three new calls on `WikiMemory`, all opt-in:
   `sources: { query: string; maxPassages?: number; charBudget?: number }`.
   When the option is present, the returned `MemoryBundle` gains an additive,
   optional `sources` field: a labelled array of
-  `{ entityId, sourceRef, sourceHash, seq, startOffset, endOffset, text }`,
-  ranked, capped by `maxPassages` (default 8) and `charBudget` (default
-  4,000 characters) per entity. When a matching passage exceeds the budget,
-  the read returns the narrowest whitespace-bounded window around the match
-  that fits, with the true offsets of that window and the cut marked; the
-  window never splits a surrogate pair. When no whitespace bounds a window
-  that fits — one long token — or the match itself is wider than the
-  budget, the read hard-cuts a surrogate-safe window of `charBudget` units
-  starting at the match start, again with true offsets and the cut marked;
-  a match is never dropped for size. Ranking and caps are per entity: a
+  `{ entityId, sourceRef, sourceHash, seq, startOffset, endOffset, truncated,
+  text }`, ranked, capped by `maxPassages` (default 8) and `charBudget`
+  (default 4,000 UTF-16 code units) per entity. When a matching passage
+  exceeds the budget, the read returns the narrowest whitespace-bounded
+  window around the match that fits, with the true offsets of that window
+  and the cut marked (`truncated: true`); the window never splits a
+  surrogate pair. When no whitespace bounds a window that fits — one long
+  token — or the match itself is wider than the budget, the read hard-cuts
+  a surrogate-safe window of `charBudget` UTF-16 code units starting at the
+  match start, again with true offsets and the cut marked (`truncated:
+  true`); a match is never dropped for size. Ranking and caps are per entity: a
   multi-entity read gets one group per entity, each capped separately, and
   the engine never ranks passages across entities. Every item carries
   `entityId`, so two entities storing the same `sourceRef` stay
@@ -380,7 +387,8 @@ proposed codes `SOURCE_STORE_SOURCE_TOO_LARGE`,
 stores nothing. The budget check runs inside the write transaction, under
 the same per-entity lock `forget()` and `clearAll()` use, so two concurrent
 stores cannot both pass the check and exceed the budget. A read that hits
-`charBudget` marks the cut on the result. No text is ever dropped silently.
+`charBudget` marks the cut on the result (`truncated: true`). No text is
+ever dropped silently.
 
 ### 10. Entity isolation
 
@@ -450,7 +458,8 @@ Rule 11: cheap targeted tests; no accuracy or cost claim is published.
    old facts.
 5. **Search on both strategies.** The `sources` group returns the right
    passages under FTS5 and under the MiniSearch fallback; budget and
-   `maxPassages` caps hold; the cut is marked; a match inside a full-size
+   `maxPassages` caps hold; a cut window reports `truncated: true`; a match
+   inside a full-size
    12,000-unit passage returns a whitespace-bounded window with true
    offsets, and a long-token match hard-cuts; a two-entity read returns
    per-entity groups, each capped separately.
