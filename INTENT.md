@@ -195,9 +195,10 @@ keeps the text as the host handed it. The engine never rewrites, summarizes
 or re-chunks stored text into a different shape. Stored text is not
 evidence on its own: evidence quotes live inside the fact records that
 point at the source. Stored text leaves when you call `forget()` on the
-source, when you store a changed copy under the same `sourceRef`, or when
-you wipe the entity. The engine may not edit a document; deleting one at
-your request is not editing.
+source, when you store a changed copy under the same `sourceRef`, when
+you wipe the entity, or when you import a dump with `merge: false`
+(which replaces the entity's stored sources with the dump's). The engine
+may not edit a document; deleting one at your request is not editing.
 
 Source pointers on librarian facts shipped 2026-11-14
 (`specs/source-pointers/`); ops facts carry a `source_pointer`, and
@@ -388,11 +389,13 @@ runs and who schedules it.
   document's text in the source store — kept as the host handed it,
   never rewritten, summarized or re-chunked; not evidence on its own;
   it leaves on `forget()` of the source, a changed copy under the same
-  `sourceRef`, or an entity wipe, and deleting at your request is not
-  editing. The Planned paragraph's store commitments are removed; the
-  source-pointer shipped-status line and the roadmap cross-reference
-  stay. Why: the rule promised this reword would ride the PR that
-  ships the store, and the store now exists.
+  `sourceRef`, an entity wipe, or an import of a dump with
+  `merge: false` (Opus impl review, 2026-11-15: the import path
+  hard-deletes the entity's stored sources, so the rule names it), and
+  deleting at your request is not editing. The Planned paragraph's store
+  commitments are removed; the source-pointer shipped-status line and
+  the roadmap cross-reference stay. Why: the rule promised this reword
+  would ride the PR that ships the store, and the store now exists.
 - 2026-11-14 — "How changes are made" step 1 and `specs/README.md` pin
   the cleanup-commit timing: the cleanup commit is the PR's last
   lifecycle commit, pushed after the review loops converge and before
