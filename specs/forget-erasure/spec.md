@@ -1,7 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 1 — under review (T1.5 ladder pending; T4 gate pending)**
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 4)
+**Status: Draft rev 2 — under review (T3/T4 ladder pending; owner tier selection)**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 6, converged)
 
 ## Problem
 
@@ -20,8 +20,9 @@ the database file even on a multi-segment index (scenario B).
 
 Four primary retention surfaces in the store file (investigation §3, all [V]):
 
-1. FTS5 postings survive deletes until merges (B: postings gone, bytes remain in freed
-   content pages; H: `'rebuild'` alone purges postings but leaves bytes).
+1. FTS5 postings survive deletes — measured directly: the deleted row's term bytes remain in
+   `%_data` segment pages even after VACUUM (B, B′); `'rebuild'` alone clears the postings
+   surface but leaves bytes in freed pages (H).
 2. Deleted row content is not zeroed — the engine never sets `PRAGMA secure_delete`
    (scenario H proves the pragma is load-bearing).
 3. Soft-delete retention window (`retainSoftDeletedFor`, engine default 7 days,
@@ -39,9 +40,11 @@ required mechanism**: the upstream merge bug (investigation §5) is unfixed in e
 SQLite (wrong in 3.46.0→3.53.2, fix on trunk only), so the version gate over supported
 runtimes passes nothing. It also opens a one-way file-format door (format 5).
 
-The measured alternative (F/G, option asserted off via `ft_config`, multi-segment 300-row
-index, integrity + MATCH green): core pragma + plain delete + FTS `'optimize'` **or**
-`'rebuild'` + `wal_checkpoint(TRUNCATE)` erases the canary completely.
+The measured alternative (F/G/F2/G2, option asserted off via `ft_config`, multi-segment
+300-row index, integrity + MATCH green, erasure proven on **both** surfaces — row content AND
+`%_data` term bytes — on unicode61 **and** the engine's `porter unicode61`; a second
+independent run is recorded in the LEDGER): core pragma + plain delete + FTS `'optimize'`
+**or** `'rebuild'` + `wal_checkpoint(TRUNCATE)` erases the canary completely.
 
 ## The decisions
 
@@ -49,9 +52,13 @@ index, integrity + MATCH green): core pragma + plain delete + FTS `'optimize'` *
 
 `PRAGMA secure_delete=ON` is set in `setup()` on the **host-provided handle** (the engine never
 opens connections; guide line 61). The pragma is read back after setting and surfaced: if the
-runtime refuses it, `setup()` warns. **No opt-out in v1** — without it, even `'rebuild'` leaves
-text in freed pages (scenario H). Host connections that write wiki tables themselves must set
-the pragma too (documented; guide §"If your app writes to the wiki tables itself").
+runtime refuses it, `setup()` warns. **No opt-out in v1 is the recommendation** — without the
+pragma, even `'rebuild'` leaves text in freed pages (scenario H) — but it is **an owner
+decision (question B)**, because the pragma is connection-wide and ATTACH-wide: it changes
+delete behavior and write cost for the host's own tables (INTENT.md:137-138 tension), and
+`secure_delete=FAST` is a cheaper middle option. Host connections that write wiki tables
+themselves must set the pragma too (documented; guide §"If your app writes to the wiki tables
+itself").
 
 The erasure promise is scoped: **erasure of the store file is guaranteed at `compact()` time,
 not at `forget()` time.** Between them the soft-delete window and journal residue remain
@@ -108,9 +115,11 @@ door.
 `schema.ts:74`) on disk when the selector is entry-based. Decision: `compact()` gains a
 source-store GC pass — a `source_documents` row (and its `source_passages`, and their FTS
 rows via the index strategy) is hard-deleted when **no live entry references it** anymore
-(all referencing entries soft-deleted/pruned in the same compact run). Documents backing any
-live fact are untouched. Hosts that need certainty erase via `sourceRef` selectors today
-(already hard-deleting); the GC pass closes the entryId path.
+(all referencing entries soft-deleted/pruned in the same compact run). A single-fact
+`forget({ entryId })` must NOT erase the document outright — one document backs N facts, and
+erasing it would destroy the passages and `source_pointer` targets of the document's other
+live facts. Documents backing any live fact are untouched. Hosts that need certainty erase via
+`sourceRef` selectors today (already hard-deleting); the GC pass closes the entryId path.
 
 ### 6. Docs: the deleting-data guide gets the erasure section
 
@@ -138,11 +147,15 @@ back), and the no-opt-out pragma statement.
 
 ## Test plan
 
-1. **Canary forensic test (the acceptance criterion):** ingest through the public write path
-   (`remember`/`ingestDocument`) into a tempdir store with 300+ filler facts (multi-segment
-   index), `forget({ entryId })`, `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert
-   the canary is absent from the db file, `-wal`, `-journal`, `-shm`. Mirror scenario F and G
-   (optimize and rebuild variants).
+1. **Canary forensic test (the acceptance criterion):** the canary is a **single lowercase
+   alphanumeric token** (byte-identical under the engine's `porter unicode61` tokenizer,
+   verified via fts5vocab + pre-delete MATCH) — a mixed-case/hyphenated canary can only ever be
+   found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
+   surface. Ingest through the public write path (`remember`/`ingestDocument`) into a tempdir
+   store with 300+ filler facts (multi-segment index), `forget({ entryId })`,
+   `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert the canary is absent from the
+   db file, `-wal`, `-journal`, `-shm`, **and from every `%_data` block** (the postings
+   surface). Mirror scenario F and G (optimize and rebuild variants).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
    canary — pins why the pragma is unconditional.
 3. **compact() holds:** with an unconfirmed external removal and an unread event, `compact()`
@@ -161,9 +174,9 @@ back), and the no-opt-out pragma statement.
 - **FTS5 `'secure-delete'` option as the required mechanism** (the issue's proposal): version
   gate passes zero supported runtimes (upstream merge bug unfixed in every release) + one-way
   format-5 door. Kept as the gated optional enhancement (§4).
-- **VACUUM alone as the mechanism:** drops freed pages but cannot scrub term bytes under
-  delete markers in live `%_data` pages; measured clean only in the same-segment layout
-  (investigation §1, B′ caveat). Part of the recipe, not the guarantee.
+- **VACUUM alone as the mechanism:** drops freed content pages but copies live `%_data` pages
+  as-is, so term bytes under delete markers survive it — **measured NOT clean (B′, postings
+  present)**. Part of the recipe, not the guarantee.
 - **Erasing events/outbox unconditionally on `forget({entryId})`:** breaks the librarian's
   rebuild-from-events contract and the outbox delivery guarantee; documented as host steps
   instead (guide already covers both).
@@ -190,6 +203,10 @@ migration is safe on every current runtime. No format change occurs unless the g
 
 - **A.** `compact()` store-wide (recommended) vs entity-scoped; and whether the store-wide
   0-day undo-window wipe needs its own confirmation knob.
-- **B.** Confirm no host opt-out for `PRAGMA secure_delete` in v1.
+- **B.** The `PRAGMA secure_delete` no-opt-out call — now with its scope dimension: the pragma
+  is connection-wide and ATTACH-wide, so "always on, no opt-out" changes delete behavior/write
+  cost on the host's own tables (INTENT.md:137-138 tension). Options: (a) always on, no
+  opt-out, read-back surfaced (recommended); (b) always on + opt-out for hosts accepting
+  residue; (c) `secure_delete=FAST` default with `FULL` available.
 - **C.** Ship the gated immediate-erasure enhancement in v1 (recommended) or defer v18 entirely
   and keep compact-time only.
