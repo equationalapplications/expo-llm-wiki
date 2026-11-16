@@ -7,8 +7,9 @@ WITH NITS, all nits folded below.)
 adoption APPROVED (supersedes the 2026-11-09 park), sequencing = fold into
 cooldown pass 2 (cron `7e3f2bdc1576`, 2026-11-20), residual @expo/\*
 exposure accepted, scopelab `includeAssets` remedy deferred. Spec, plan and
-ledger now exist in this folder; the PR must not merge ahead of the pass-2
-wave without owner word.
+ledger now exist in this folder. Ruling executed: PR #402 opened
+(2026-11-16); pass-2 cron brief retargeted to fold node-forge 1.4.3 +
+astro into the same merge wave.
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278
