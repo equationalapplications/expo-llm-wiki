@@ -129,6 +129,16 @@ describe.each<Kind>(['fts5', 'mini'])('read() sources option (%s)', (kind) => {
     await expect(read(wiki, E, { query: '   ' })).rejects.toThrow(/sources\.query/);
   });
 
+  it('an underscore-only query throws: engines tokenize _ as punctuation', async () => {
+    const { wiki } = await setup(kind);
+    await expect(read(wiki, E, { query: '_' })).rejects.toThrow(/sources\.query/);
+    await expect(read(wiki, [], { query: '_' })).rejects.toThrow(/sources\.query/);
+    // Underscores between letters are separators, not term characters: the
+    // query is valid and searches for its split terms.
+    const b = await read(wiki, E, { query: 'a_b_c' });
+    expect(b.sources).toEqual([]);
+  });
+
   it('hard-cuts a long-token match from the match start and never drops it', async () => {
     const { db, wiki, svc, sync } = await setup(kind);
     const token = `pangolin${'q'.repeat(200)}`;

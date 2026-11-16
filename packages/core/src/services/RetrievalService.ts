@@ -29,7 +29,12 @@ const isLow = (c: number): boolean => c >= 0xDC00 && c <= 0xDFFF;
  * query's own tokens stand in for "terms the strategy matched" (spec section 7).
  */
 function queryTerms(query: string): string[] {
-  return [...new Set(asciiLower(query).split(/[^\p{L}\p{N}_]+/u).filter((t) => t.length > 0))];
+  // No `_`: MiniSearch 7.2.0's default tokenizer splits on
+  // /[\n\r\p{Z}\p{P}]+/u, and `_` is Unicode Pc (inside \p{P}) — FTS5's
+  // unicode61 treats it as a separator too. A term of underscores alone has
+  // no searchable form in either engine, so it must not satisfy §7's
+  // at-least-one-searchable-term rule.
+  return [...new Set(asciiLower(query).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 0))];
 }
 
 /**
