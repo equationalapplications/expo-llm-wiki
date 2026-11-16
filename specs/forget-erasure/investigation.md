@@ -1,6 +1,6 @@
 # Investigation — #401: forget must erase (FTS5 secure-delete, chain forget, compact())
 
-**Date:** 2026-11-16 · **Status:** Rev 9 (Opus r1 + Fable r1-r4 + haiku verify/verify2/verify3 folded — §7 fixture pinned non-vacuous + two-fact GC survival case + hookless full-wipe precondition; §6 dead clause removed)
+**Date:** 2026-11-16 · **Status:** Rev 10 — CONVERGED (Opus r1 + Fable r1-r4 + haiku verify×4; verify4 APPROVE WITH NITS — citation nits folded: compact() marked new-API, lock/anchor ranges tightened)
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Repo baseline:** `27f8e5e9` (main after #400, v9.2.0)
 **Evidence tags:** [V] = controller-verified against this tree / live driver; [C] = child- or web-reported, not independently reproduced.
 **Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2 + Fable r3 BLOCKER rework): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the canary is a **single lowercase alphanumeric token** (`zxq7f3a9k`) — byte-identical under the unicode61 **and** porter unicode61 tokenizers — with two per-scenario harness assertions that it is a real, stable term (fts5vocab holds the exact token; pre-delete MATCH returns exactly the TARGET row); every scenario **byte-scans the db file, the `-wal` sidecar, and every `%_data` block separately**, so row-content erasure (`db`) and term-bytes erasure (`postings`) are distinct columns; the `deleted-term` MATCH probe is reported but is **not** byte evidence (FTS5 hides deleted rowids by design); `segpages` counts non-structure `%_data` rows (structure record = id 1, config = id 10; >1 = a non-trivial multi-page index); porter scenarios F2/G2/H2 reproduce F/G/H on the **engine's own tokenizer** (`porter unicode61`); the SQLite version line is `SELECT sqlite_version()` output, not a hard-coded string.
@@ -228,12 +228,15 @@ above, explicitly.
     and never touches other tables"), so the no-opt-out recommendation (§8 Q2) is an owner
     decision, not a settled call; `secure_delete=FAST` is the cheaper middle option (zeroes
     deleted content with a smaller write pattern) and belongs in the same decision.
-  - `compact()` composition, in order (Fable r2 m1): **per-entity prune** with
+  - `compact()` composition, in order (Fable r2 m1; **`compact()` is a new public API — no
+    method of that name exists in this tree**): **per-entity prune** with
     `retainSoftDeletedFor: 0` **inheriting runPrune's safety holds** → FTS `'optimize'` or
     `'rebuild'` → `VACUUM` → `wal_checkpoint(TRUNCATE)` **after** the VACUUM (Fable r1 m2:
-    `MetadataRepository.vacuum()` checkpoints before, never after). Per-entity prune vs
+    `MetadataRepository.vacuum()` — checkpoint `:173`, `VACUUM` `:174` — checkpoints before,
+    never after). Per-entity prune vs
     store-wide file ops (Fable r1 m3): `runPrune` is per-entity and per-entity-locked
-    (`MaintenanceService.ts:249-250`); checkpoint and VACUUM are store-wide.
+    (`MaintenanceService.ts:249-250`: signature at `:249`, the per-entity lock acquisition
+    `acquireLock('prune', entityId)` at `:250`); checkpoint and VACUUM are store-wide.
   - **Source-store GC:** `compact()` also hard-deletes `source_documents` — and their
     `source_passages`, and their FTS rows via the index strategy — when **no live entry
     references them** anymore (every entry carrying that `source_ref`/`source_hash` was
@@ -307,7 +310,8 @@ owners (haiku verify2 MAJOR 2; §8 Q5). Pinned shape:
 1. **Chain semantics (resolved shape, Fable r1 M2):** reuse `findSupersessionChainIds` (both
    directions, depth cap 100) as the option's walk; `dryRun` preview lists every id the walk
    touches and surfaces the depth cap (a truncated walk must say so). **Fable r2 m3:** the walk
-   has **no `deleted_at` filter** (`EntryRepository.ts:1093-1113` walks regardless of
+   has **no `deleted_at` filter** (walk body `EntryRepository.ts:1093-1113` inside the method
+   `:1085-1116`, walks regardless of
    soft-delete state), while `TemporalService.history()` (`:109`) returns empty for a deleted
    start fact — for chain forget, sweeping soft-deleted ancestors is arguably the desired
    erasure semantics, but the `dryRun` preview must show the walk's actual membership so the
