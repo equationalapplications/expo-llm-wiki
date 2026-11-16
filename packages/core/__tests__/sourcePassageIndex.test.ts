@@ -249,4 +249,24 @@ describe('source passage index', () => {
     expect(mammoth.length).toBeGreaterThan(0);
     expect(await count(db, 'source_passages_fts_pending')).toBe(0);
   });
+
+  it('forget({ clearAll }) syncs only the forgotten entity, not the whole store', async () => {
+    const { db, wiki, svc } = await setup();
+    await fts(db);
+    const E2 = 'ent2';
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: LONG });
+    await svc.storeSource(E2, { sourceRef: 'b.md', sourceHash: H2, text: 'zebrafish habitat '.repeat(6000) });
+    // Neither drained: both entities hold pending rows.
+    expect(await count(db, 'source_passages_fts_pending')).toBeGreaterThan(0);
+
+    await wiki.forget(E, { clearAll: true });
+
+    // clearAll wipes ent1 and syncs ent1's ledger; ent2's rows stay pending —
+    // the forget call must not drain the whole store on an ordinary call.
+    const ent2Pending = (await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${P}source_passages_fts_pending WHERE entity_id = ?`, [E2]))!.n;
+    expect(ent2Pending).toBeGreaterThan(0);
+    await fts(db).then((s) => s.drainPassages());
+    expect(await (await fts(db)).searchPassages('zebrafish', { entityIds: [E2], limit: 10 })).not.toHaveLength(0);
+  });
 });

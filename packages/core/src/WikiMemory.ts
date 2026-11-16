@@ -1096,10 +1096,12 @@ export class WikiMemory {
     } finally {
       // Spec §5/§6: removal sync for stored passages, after the delete committed (also when the
       // external-deletion hook threw, since the local delete stays committed; a sync after any other
-      // failure is intentional and harmless — it reads committed state and never rejects). A clearAll
-      // touches every entity, so it syncs all.
+      // failure is intentional and harmless — it reads committed state and never rejects). clearAll
+      // wipes only THIS entity (MaintenanceService deletes WHERE entity_id = ?), so the sync is
+      // entity-scoped like every other forget shape; a store-wide sync would drain other entities'
+      // ledgers (FTS5) or re-read every stored entity's text (MiniSearch) on an ordinary call.
       if (!opts?.dryRun) {
-        await this.searchService.syncPassages(this.db, this.prefix, params.clearAll ? undefined : entityId);
+        await this.searchService.syncPassages(this.db, this.prefix, entityId);
       }
     }
   }

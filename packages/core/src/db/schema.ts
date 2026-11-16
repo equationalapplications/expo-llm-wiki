@@ -76,10 +76,6 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       char_count INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_ref
-      ON ${prefix}source_documents (entity_id, source_ref);
-    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_hash
-      ON ${prefix}source_documents (entity_id, source_hash);
 
     CREATE TABLE IF NOT EXISTS ${prefix}source_passages (
       id TEXT PRIMARY KEY,
@@ -228,6 +224,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
   await createOkfV02IndexesIfColumnsExist(db, prefix);
   await createTemporalIndexesIfColumnsExist(db, prefix);
   await createSourcePassageIndexesIfColumnsExist(db, prefix);
+  await createSourceDocumentIndexesIfColumnsExist(db, prefix);
   await createResurrectTrigger(db, prefix);
 }
 
@@ -337,4 +334,24 @@ export async function createSourcePassageIndexesIfColumnsExist(db: SQLiteAdapter
   await db.execAsync(`
     CREATE INDEX IF NOT EXISTS ${prefix}idx_source_passages_doc ON ${prefix}source_passages (document_id, seq);
     CREATE INDEX IF NOT EXISTS ${prefix}idx_source_passages_entity ON ${prefix}source_passages (entity_id);`);
+}
+
+/**
+ * The source_documents UNIQUE (entity_id, source_ref) and (entity_id,
+ * source_hash) indexes. Gated on column existence for the same reason as the
+ * passage indexes above: on an upgrade this every-open DDL runs before
+ * migration 17, whose precondition check aborts cleanly on a stray
+ * wrong-shaped table — unconditional index DDL here would fail first with a
+ * raw `no such column`. Migration 17 creates the same indexes, so the
+ * IF NOT EXISTS guard makes either path safe. Runs on every open, so fresh
+ * stores (which stamp CURRENT without running migrations) and migrated stores
+ * both get the indexes.
+ */
+export async function createSourceDocumentIndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}source_documents)`);
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('source_ref') || !names.has('source_hash')) return;
+  await db.execAsync(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_ref ON ${prefix}source_documents (entity_id, source_ref);
+    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_hash ON ${prefix}source_documents (entity_id, source_hash);`);
 }

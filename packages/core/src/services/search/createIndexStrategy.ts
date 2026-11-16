@@ -5,7 +5,7 @@ import type { IndexStrategy } from './IndexStrategy';
 import { Fts5IndexStrategy } from './Fts5IndexStrategy';
 import { MiniSearchIndexStrategy } from './MiniSearchIndexStrategy';
 import { UnavailableIndexStrategy } from './UnavailableIndexStrategy';
-import { FTS5_STATE_KEY, fts5LedgerDropSql } from './fts5Sql';
+import { FTS5_STATE_KEY, fts5LedgerDropSql, passageFtsTriggerNames } from './fts5Sql';
 
 export type IndexStrategyPreference = 'fts5' | 'minisearch' | 'auto';
 
@@ -53,6 +53,22 @@ export async function probeFts5(db: SQLiteAdapter, prefix: string): Promise<bool
  * cannot be, and the next FTS5 init recreates it anyway.
  */
 export async function detachFts5(db: SQLiteAdapter, prefix: string, metadataRepo: MetadataRepository): Promise<void> {
+  // Passage-side objects go first, and independently of the entries-side gate
+  // (CodeRabbit/T3 follow-up): a store that ran FTS5 keeps the passage triggers
+  // live after detach, so every store write enqueues a ledger row nothing ever
+  // drains — unbounded growth. The bootstrap re-seeds cleanly on re-attach: its
+  // probes + insert run inside the DDL transaction on empty tables.
+  const passageLedger = await metadataRepo.tableExists(`${prefix}source_passages_fts_pending`);
+  if (passageLedger) {
+    const [ai, ad] = passageFtsTriggerNames(prefix);
+    await db.withTransactionAsync(async (tx) => {
+      await tx.execAsync(
+        `DROP TRIGGER IF EXISTS ${ai};\nDROP TRIGGER IF EXISTS ${ad};\n` +
+        `DROP TABLE IF EXISTS ${prefix}source_passages_fts_map;\nDROP TABLE IF EXISTS ${prefix}source_passages_fts_pending;`);
+    });
+    // The virtual table needs the fts5 module, like entries_fts below.
+    try { await db.execAsync(`DROP TABLE IF EXISTS ${prefix}source_passages_fts`); } catch { /* no fts5 module */ }
+  }
   const hasLedger = await metadataRepo.tableExists(`${prefix}fts_pending`);
   const state = await metadataRepo.getMeta(FTS5_STATE_KEY);
   if (!hasLedger && state !== 'live') return;

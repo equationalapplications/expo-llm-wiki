@@ -109,6 +109,16 @@ describe('migration v17: add_source_store', () => {
     expect(await columns(db, PASSAGES)).toEqual(['id', 'entity_id', 'text']);
   });
 
+  it('abort path: a stray wrong-shaped source_documents aborts, not a raw index error', async () => {
+    const { db, wiki } = await setupThenRollBack('16');
+    // Missing source_ref/source_hash: the every-open DDL's UNIQUE indexes on
+    // those columns must not run before migration 17's precondition check.
+    await db.runAsync(`DROP TABLE ${DOCS}`);
+    await db.runAsync(`CREATE TABLE ${DOCS} (id TEXT PRIMARY KEY, entity_id TEXT, text TEXT)`);
+    await expect(wiki.setup()).rejects.toThrow(/^Migration v17 \(add_source_store\) failed: .*expected \[/);
+    expect(await version(db)).toBe('16');
+  });
+
   it('additivity: no pre-existing table gained a source-store column', async () => {
     const db = openTestDatabase();
     await new WikiMemory(db, stubOptions).setup();

@@ -101,6 +101,19 @@ describe('createIndexStrategy', () => {
     expect(await objects(db)).toEqual([]); // triggers, ledger, map and entries_fts all gone on better-sqlite3
   });
 
+  it("pinned 'minisearch' detach drops the passage FTS objects too (no orphaned live ledger)", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    await createIndexStrategy(db, P, meta, 'fts5', FRESH); // init creates the passage objects on a fresh store
+    const passageObjects = () => db.getAllAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE name LIKE '${P}source_passages_fts%' ORDER BY name`);
+    expect((await passageObjects()).length).toBeGreaterThan(0);
+    await createIndexStrategy(db, P, meta, 'minisearch');
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
+    // Triggers, map, ledger and the virtual table all gone: with the ledger live
+    // but undrained, store writes would enqueue rows nothing ever drains.
+    expect(await passageObjects()).toEqual([]);
+  });
+
   it('a live database opened on sql.js detaches; triggers and ledger are gone, writes still work', async () => {
     const Database = (await import('better-sqlite3')).default;
     const raw = new Database(':memory:');

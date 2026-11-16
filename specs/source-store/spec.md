@@ -232,7 +232,9 @@ records and survive as today — so text needs no tombstone, no prune pass and
 no vector-removal gate. A hard delete at `forget()` time is a real delete on
 every host, including a host that runs prune with `retainSoftDeletedFor:
 null` (`MaintenanceService.ts:299`). `clearAll` hard-deletes the store rows
-too, like it already hard-deletes `source_ref_index`.
+too, like it already hard-deletes `source_ref_index`. The `forget` result
+counts entries and tasks only: the deleted store rows are not counted, and
+the `dryRun` preview does not surface that stored text will go.
 
 Boundary with issue #386, whose acceptance point 4 freezes
 `forget({ sourceRef })` fact semantics: the freeze holds. The store adds a
@@ -301,7 +303,10 @@ strategies, reusing the machinery that exists:
   text is unmeasured. This spec publishes no heap number (rule 11). Opening
   cost: the fallback re-indexes every stored entity's text when the database
   opens — up to `maxTotalChars` per entity before the first query; no
-  timing number is published either (rule 11).
+  timing number is published either (rule 11). The re-read is not open-only:
+  each `storeSource` on the fallback re-slices and re-indexes the written
+  entity's stored documents, so cumulative indexing cost grows with stores,
+  not just at open.
 - Strategy selection follows the existing `'auto'` probe unchanged
   (`createIndexStrategy.ts:35-47`); the store adds no probe and no new
   strategy. The probe already tests FTS5 and json1 together, which the drain
