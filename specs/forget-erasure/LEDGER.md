@@ -13,7 +13,7 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 | 2026-11-16 | Fable r3 delta | BLOCKED: Claude API 5-h limit, resets 15:30 ET; retry scheduled | $0.0000 |
 | 2026-11-16 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 
-Lane spend so far: **$15.8228** (all step-0; implementation not started).
+Lane spend so far: **$16.2529** (all step-0; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
 | 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
 | 2026-11-16 | Fable r3 delta (resumed after rail reset) | REQUEST CHANGES — BLOCKER (harness canary not tokenizer-stable; postings surface unmeasured) + 3 MAJOR + 3 MINOR, all REAL; folded rev 5 + harness rework; re-measured: F/G/F2/G2 clean both surfaces, B′ NOT clean, pragma load-bearing | $2.5158 |
@@ -73,3 +73,4 @@ sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), no
 | 2026-11-16 | T3 Opus delta r8 | REQUEST CHANGES — 2 MAJOR (event-hold reporting impossible under null pin, verified :406/:435-439; source_ref nullability) + 3 minors; folded spec rev 13 | $0.4607 |
 | 2026-11-16 | T3 Opus delta r9 | REQUEST CHANGES — 1 MAJOR (stale event-hold paragraph) + 2 minors; folded spec rev 14 | $0.3119 |
 | 2026-11-16 | T3 Opus delta r10 | REQUEST CHANGES — 1 MAJOR (re-stored document destruction via ref-OR-hash match → hash-agreement predicate + new test) + 4 minors (recipe de-pruned, pruneSupersededAfter caveat, entity enumeration/busy-skip, status); folded spec rev 15 | $0.4513 |
+| 2026-11-16 | T3 Opus delta r11 | REQUEST CHANGES — 1 MAJOR (GC rule vs NULL-hash test case → exact two-clause rule) + 5 mechanical minors; folded spec rev 16 | $0.4301 |

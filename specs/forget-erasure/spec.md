@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 15 — under review (T3 delta-11 pending; delta-10's findings folded)**  
+**Status: Draft rev 16 — under review (T3 delta-12 pending; delta-11's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -96,7 +96,8 @@ failed step fails the compact and reports where it stopped):
    than throwing (T3 m2). **Entity enumeration (T3 delta-10 m3):** step 1 prunes every
    distinct `entity_id` that has soft-deleted rows past the hard-delete cutoff (one
    `SELECT DISTINCT entity_id` over eligible rows), not every entity in the store. A
-   `WikiBusyError` on a per-entity `'prune'` lock (`MaintenanceService.ts:459`) — a concurrent
+   `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
+   `MaintenanceService.ts:250` — T3 delta-11 m1; `:459` is the release call) — a concurrent
    operation on that entity — **skips that entity** with a surfaced diagnostic and does not
    fail the compact; the report lists skipped entities. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** that error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
@@ -136,8 +137,10 @@ failed step fails the compact and reports where it stopped):
    the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
    Note: step 1's `runPrune` already ran `syncEntries` (pre-VACUUM) — that pass is
    **redundant but harmless**; do not "deduplicate" by removing this post-VACUUM one (T3
-   delta-6 m2).   **Id source (T3 delta-7 m1):** `runPrune` returns counts only (`:457`), so it
-   gains an output channel (the same output-array pattern as `deletedKeys`) returning the ids
+   delta-6 m2). **Id source (T3 delta-7 m1, named T3 delta-11 m5):** `runPrune` returns counts
+   only (`:457`), so it
+   gains an output option **`opts.syncedIds?: string[]`** (the output-array pattern shared with
+   `deletedKeys`) that receives the ids
    it synced; compact passes those to step 6. **The output array is filled before
    `PrunePartialFailureError` throws** (at the `syncedIds` assembly, `:393`/`:451-455`), so a
    held-back entity still contributes its deleted ids to step 6 — test: a hold and a
@@ -235,12 +238,14 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   hard-deletes** (T3 delta-2 M3: a crash between delete and insert would lose the key forever
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
   required — failure injected **after `bulkDeletePruned` returns, before the ledger insert**,
-  asserting the staged outbox rows (`EntryRepository.ts:868-874`) roll back too; T3 delta-4
+  asserting the staged outbox rows (`EntryRepository.ts:868-878`) **and the rebuild-fingerprint
+  re-anchor** (`reanchorRebuildFingerprint`, `:882`) roll back too; T3 delta-4
   m4). **Key source inside the transaction (T3 delta-3 M2, corrected T3 delta-7 MAJOR-2,
   nullability T3 delta-8 MAJOR-2):**
   `bulkDeletePruned` already runs
   `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) and already collects deleted ids
-  through its `{ deletedIds: string[] }` output option (`:365`). **`deletedIds` stays
+  through its `{ deletedIds: string[] }` output option (declared `EntryRepository.ts:847`,
+  filled `:867`; the option object originates at `MaintenanceService.ts:365` — T3 delta-11 m2). **`deletedIds` stays
   `string[]`** — it feeds `new Set(deletedIds)` (`:371`), `deletable` (`:377`),
   `deleteForFacts` (`:383-384`) and `syncedIds` (`:393`), all id-shaped; overloading it with
   key objects would break set membership and the vector-ledger cleanup. Instead: widen the
@@ -278,16 +283,19 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   is forbidden (T3 delta-10 M1):** `storeSource` upserts by ref (`SourceStoreService.ts:61-63`),
   so a host can replace the text under a ref — an old ledger key `(R, H1)` must NOT delete a
   document now stored at `(R, H2)` (the ref matches, the text is new). Therefore a document is
-  a GC **candidate** only when its **current `(source_ref, source_hash)` pair agrees with the
-  ledger key on the hash** — `(R_doc == R_key AND H_doc == H_key)` **or** `H_doc == H_key`
-  (hash matching alone covers the `R_old→R_new` re-key case) — with NULLs never matching
-  (T3 delta-8 MAJOR-2 NULL-symmetry rule: a NULL column never matches on either side —
-  `source_ref = ?` bound to NULL matches nothing, that is the rule; an `IS`-based match that
-  treats every NULL-ref fact as live would permanently block GC — and a key with **both**
-  columns NULL is not written to the ledger). It is **live** if any live entry matches it on
+  a GC **candidate** only when the ledger key matches the document's **current
+  `(source_ref, source_hash)` pair** exactly (T3 delta-11 M1, correcting T3 delta-10 M1):
+  **`H_key IS NOT NULL AND H_doc = H_key`**, **or** **`H_key IS NULL AND H_doc IS NULL AND
+  R_doc = R_key`** (a ref match on a NULL hash is allowed only when **both** hashes are NULL —
+  this keeps the `(R, H1)`→`(R, H2)` re-store case safe while letting a NULL-hash fact's
+  document go). Plain ref-OR-hash matching is forbidden (T3 delta-10 M1: `storeSource` upserts
+  by ref, so an old `(R, H1)` key must not delete new `(R, H2)` text; and a bare `H_doc ==
+  H_key` rule would strand NULL-hash documents). It is **live** if any live entry matches it on
   **either** column (the
-  conservative direction: liveness errs toward keeping). Required test cases: a NULL-hash
-  fact key still GC-matches a NULL-hash document on ref; a NULL-ref fact key with a hash
+  conservative direction: liveness errs toward keeping). NULL symmetry still applies (T3
+  delta-8 MAJOR-2): a NULL column never matches a non-NULL one on either side, and a key with
+  **both** columns NULL is not written to the ledger. Required test cases: a NULL-hash
+  fact key still GC-matches a NULL-hash document on ref (delta-11 M1); a NULL-ref fact key with a hash
   GC-matches on hash alone; a re-keyed document (`R_old`→`R_new`, same hash) is matched by
   the old fact's hash; a live fact sharing the ref but carrying a **different** hash keeps the
   document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts yet survives
