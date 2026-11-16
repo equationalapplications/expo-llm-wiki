@@ -114,11 +114,58 @@ describe('createIndexStrategy', () => {
     expect(await passageObjects()).toEqual([]);
   });
 
+  it('re-attach after a detach whose virtual-table drop failed clears stale fts content (no rowid collisions)', async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    const s = await createIndexStrategy(db, P, meta, 'fts5', FRESH);
+    // A document with passages, fully drained: map rowids 1..N and matching fts rows.
+    const text = 'zebrafish habitat notes '.repeat(500);
+    const { cutPassages } = await import('../src/utils/passageCutter');
+    await db.runAsync(
+      `INSERT INTO ${P}source_documents (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+       VALUES ('d1', 'e', 'a.md', ?, ?, 'th', ?, 1)`, ['a'.repeat(64), text, text.length]);
+    let seq = 0;
+    for (const span of cutPassages(text)) {
+      await db.runAsync(
+        `INSERT INTO ${P}source_passages (id, entity_id, document_id, seq, start_offset, end_offset)
+         VALUES (?, 'e', 'd1', ?, ?, ?)`, [`p${seq}`, seq, span.start, span.end]);
+      seq += 1;
+    }
+    await s.drainPassages();
+    const stored = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`)!.then((r) => r!.n);
+    const hits0 = await s.searchPassages('zebrafish', { entityIds: ['e'], limit: 1000 });
+    expect(hits0.length).toBe(stored);
+
+    // Detach on a module-less host: the virtual-table DROP fails and detachFts5
+    // swallows it, while the triggers, map and ledger drop fine — the fts table
+    // survives WITH its indexed rows and no map to ever clean them.
+    const origExec = db.execAsync.bind(db);
+    const patched = Object.assign(Object.create(db), {
+      execAsync: async (sql: string) => {
+        if (sql.includes('DROP TABLE') && sql.includes('source_passages_fts')) {
+          throw new Error('no such module: fts5');
+        }
+        return origExec(sql);
+      },
+    }) as SQLiteAdapter;
+    const { detachFts5 } = await import('../src/services/search/createIndexStrategy');
+    await detachFts5(patched, P, meta);
+    expect(await meta.tableExists(`${P}source_passages_fts_pending`)).toBe(false);
+    const ftsRows = (await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${P}source_passages_fts`))!.n;
+    expect(ftsRows).toBeGreaterThan(0); // the stale content survived the failed drop
+
+    // Re-attach on a host WITH fts5: bootstrap re-seeds the emptied map/ledger.
+    const s2 = await createIndexStrategy(db, P, meta, 'fts5');
+    await s2.drainPassages();
+    const ids = (await s2.searchPassages('zebrafish', { entityIds: ['e'], limit: 1000 })).map((h) => h.id).sort();
+    expect(ids.length).toBe(stored); // each passage exactly once — no duplicates, no failed drains
+  });
+
   it('a live database opened on sql.js detaches; triggers and ledger are gone, writes still work', async () => {
     const Database = (await import('better-sqlite3')).default;
     const raw = new Database(':memory:');
     const b: SQLiteAdapter = {
-      async execAsync(s) { raw.exec(s); },
+       async execAsync(s) { raw.exec(s); },
       async runAsync(s, a = []) { const i = raw.prepare(s).run(...(a as any[])); return { changes: i.changes, lastInsertRowId: Number(i.lastInsertRowid) }; },
       async getAllAsync(s, a = []) { return raw.prepare(s).all(...(a as any[])) as any; },
       async getFirstAsync(s, a = []) { return (raw.prepare(s).get(...(a as any[])) ?? null) as any; },

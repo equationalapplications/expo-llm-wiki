@@ -106,6 +106,14 @@ export class Fts5IndexStrategy implements IndexStrategy {
       const mapped = await tx.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_map LIMIT 1`);
       const queued = await tx.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_pending LIMIT 1`);
       if (mapped === null && queued === null) {
+        // The virtual table can hold stale content even with an empty map: a
+        // detach on a module-less host drops the map/ledger but cannot drop
+        // this table (detachFts5 swallows the failure). The re-seeded map's
+        // rowids then collide with the surviving rows — every drain fails, or
+        // duplicated hits surface. The entries side resets the same way in
+        // resetAndRearm. The bootstrap is the only writer that runs on an
+        // empty map, so clearing here covers every survival path.
+        await tx.runAsync(`DELETE FROM ${p}source_passages_fts`);
         await tx.runAsync(
           `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
            SELECT entity_id, id FROM ${p}source_documents`);

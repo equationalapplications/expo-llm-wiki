@@ -47,17 +47,22 @@ export async function probeFts5(db: SQLiteAdapter, prefix: string): Promise<bool
 }
 
 /**
- * Stop maintaining the FTS5 ledger: drop the triggers and ordinary ledger
- * tables and mark the database detached, so a later FTS5 open rebuilds.
- * The virtual table is dropped best-effort; without the fts5 module it
- * cannot be, and the next FTS5 init recreates it anyway.
+ * Stop maintaining the FTS5 ledger: drop the passage-side objects first
+ * (triggers, map and ledger in one transaction; the virtual-table drop is
+ * module-gated and its failure swallowed — the bootstrap in
+ * ensurePassageObjects clears any stale virtual-table content when it
+ * re-seeds on re-attach), then the entries-side triggers and ledger, and
+ * entries_fts itself. Mark the database detached, so a later FTS5 open
+ * rebuilds: the virtual tables are dropped best-effort; without the fts5
+ * module they cannot be, and the next FTS5 init recreates them anyway.
  */
 export async function detachFts5(db: SQLiteAdapter, prefix: string, metadataRepo: MetadataRepository): Promise<void> {
   // Passage-side objects go first, and independently of the entries-side gate
   // (CodeRabbit/T3 follow-up): a store that ran FTS5 keeps the passage triggers
   // live after detach, so every store write enqueues a ledger row nothing ever
-  // drains — unbounded growth. The bootstrap re-seeds cleanly on re-attach: its
-  // probes + insert run inside the DDL transaction on empty tables.
+  // drains — unbounded growth. On re-attach the bootstrap re-seeds the emptied
+  // map/ledger and clears any stale virtual-table content its failed drop left
+  // behind (its probes + insert + clear run inside the DDL transaction).
   const passageLedger = await metadataRepo.tableExists(`${prefix}source_passages_fts_pending`);
   if (passageLedger) {
     const [ai, ad] = passageFtsTriggerNames(prefix);
