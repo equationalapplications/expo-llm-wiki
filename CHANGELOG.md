@@ -1,3 +1,25 @@
+## [9.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.1.0...v9.2.0) (2026-11-16)
+
+### Features
+
+* **source-store:** add pure sha256 hasher and source_store diagnostic codes (spec §3, §9) ([77328e3](https://github.com/equationalapplications/expo-llm-wiki/commit/77328e3203df81c524c327d97c70017309044e53))
+* **source-store:** add source_documents/source_passages schema and v17 migration (spec §3) ([ddd092d](https://github.com/equationalapplications/expo-llm-wiki/commit/ddd092d78fec1655d53b382c0a039edcdec7e9f7))
+* **source-store:** add the store operation type and conflict wiring (spec §10) ([f72d0b5](https://github.com/equationalapplications/expo-llm-wiki/commit/f72d0b5423d3fc959d19e88d0271134f86f9467c))
+* **source-store:** dump export/import of stored sources with skippedSources (spec §8, §9) ([ad26968](https://github.com/equationalapplications/expo-llm-wiki/commit/ad269686df2c95cc1aa0046bcb9a09325bae4cdc))
+* **source-store:** getStoredSource/listStoredSources and the three-state listSourceRefs.stored (spec §4, §7) ([433ab9b](https://github.com/equationalapplications/expo-llm-wiki/commit/433ab9bc8af431ed80141251ae6af6c18392bb3d))
+* **source-store:** passage index on both strategies + offset-tracking cutter (spec §3, §6) ([e4e8cbd](https://github.com/equationalapplications/expo-llm-wiki/commit/e4e8cbd10caff0a11fa60d9d0f8dcefbf17b6d52))
+* **source-store:** resolve §4 forgotten-ref gap — real forget drops the ref from listSourceRefs (spec §4 + item 6 amended; t9b assertion) ([0b87c62](https://github.com/equationalapplications/expo-llm-wiki/commit/0b87c62180b72d150027daea8ea6c7ce74fa91e4))
+* **source-store:** storeSource write path with refusals, budget and maintenance deletes (spec §5, §7, §9) ([ba86744](https://github.com/equationalapplications/expo-llm-wiki/commit/ba86744c6aad6b84d57375eced848d4816d0666d))
+* **source-store:** the sources read option with windows, caps and per-entity groups (spec §7, §9) ([da65d81](https://github.com/equationalapplications/expo-llm-wiki/commit/da65d81ae193de7fae040f8b8f1bd6597dccfe50))
+* **source-store:** WikiMemory public wiring, passage index sync and the Sources format group (spec §6, §7, §10) ([2bea042](https://github.com/equationalapplications/expo-llm-wiki/commit/2bea04250165a073b8bd9f81ed1dfc62f55b3b90))
+
+### Bug Fixes
+
+* **source-store:** ladder r1 fold — passage-init guard, shared store upsert helper, JSDoc/layout cleanups ([c9208d9](https://github.com/equationalapplications/expo-llm-wiki/commit/c9208d9a3dacc18011e8ec04f8fdcb09b251d4b1))
+* **source-store:** ladder T3 fold — entity-scoped store queries, per-entity charBudget with widest-fit windows, buffered import diagnostics ([b22dadb](https://github.com/equationalapplications/expo-llm-wiki/commit/b22dadbc1212c3d46a94f08169dc7e8fdf649100))
+* **source-store:** T3 delta fold — sources.query validated on every read path; budget-1 hard-cut never splits a surrogate pair ([4f67aca](https://github.com/equationalapplications/expo-llm-wiki/commit/4f67aca9e7a1a4241d8a5166c444d124b3e45645))
+* **source-store:** T4 fold — trim spec claims to the delivered truth; typed sources-query terms rule; entity-scoped post-import sync; public result types exported ([bc29bf9](https://github.com/equationalapplications/expo-llm-wiki/commit/bc29bf91c0c4e13b30a43840db7681e8498550bf))
+
 ## [9.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.0.0...v9.1.0) (2026-11-14)
 
 ### Features
