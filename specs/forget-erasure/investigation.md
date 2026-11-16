@@ -132,7 +132,7 @@ what `forget()` does today and what the spec must decide:
 | embedding-failure markers | `db/schema.ts:33-35` | ids + error state, no text | with the row | no text to erase |
 | `events` | `db/schema.ts:124-128` (`summary TEXT NOT NULL`) | **fact text** — the librarian rebuilds facts from them | `forget({entryId})` keeps events; only `clearAll + includeEvents` hard-deletes (guide lines 207-216) | must-erase path or scoped promise (below) |
 | `outbox` | `db/schema.ts:156-162` (`payload TEXT` at `:162`) | **fact text** — unacked rows hold it (guide 218-220) | left in place | guide already instructs hosts to drain (`markOutboxEventsProcessed()`); documented as a host step |
-| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | rows written **only** by `storeSource` (`SourceStoreService.ts:43-73`, `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) — never by `remember`/`ingestDocument` (T3 B1/M1); hard-deleted under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`) **and by `clearAll` for the entity** (`:646-649`, `DELETE FROM source_documents` at `:648`); **`forget({entryId})` leaves it on disk** | spec decides (Fable r3 + T3 B1): one document backs N facts and fact-less stored documents are a supported host state — GC candidates are collected **positively** from the keys of facts hard-deleted this run (§6), never by absence; per-document erasure via `sourceRef`/`sourceHash`; **owner question E** on whether last-fact GC should touch host-stored text at all |
+| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | rows written **only** by `storeSource` (`SourceStoreService.ts:43-73`, `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) — never by `remember`/`ingestDocument` (T3 B1/M1); hard-deleted under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`) **and by `clearAll` for the entity** (`:646-649`, `DELETE FROM source_documents` at `:648`); **`forget({entryId})` leaves it on disk** | spec decides (Fable r3 + T3 B1 + T3 delta B1): GC candidates come from a **durable `source_gc_pending` ledger** fed by every hard-deleting prune, drained by compact with a same-transaction liveness re-check — never by absence; per-document erasure via `sourceRef`/`sourceHash`; **owner question E** on whether last-fact GC should touch host-stored text at all |
 | `source_passages` | `db/schema.ts:80-87` — **offsets only, no text stored** ("Passage text is not stored: offsets … slice source_documents.text", comment at `:68`) | no text; identifies source spans | hard-deleted with the source-store block (`:647`) | covered by the source_documents decision |
 | `source_passages_fts` | virtual table | **indexed source text** | rebuilt from the store | covered by the same decision + §3.1 |
 | entity summary | `meta.value` under `entitySummaryMetaKey` (`MaintenanceService.ts:664`) | summarized fact content | deleted only on `clearAll` | same decision shape as events |
@@ -238,17 +238,18 @@ above, explicitly.
     store-wide file ops (Fable r1 m3): `runPrune` is per-entity and per-entity-locked
     (`MaintenanceService.ts:249-250`: signature at `:249`, the per-entity lock acquisition
     `acquireLock('prune', entityId)` at `:250`); checkpoint and VACUUM are store-wide.
-  - **Source-store GC:** `compact()` also hard-deletes `source_documents` — and their
-    `source_passages`, and their FTS rows via the index strategy — for the **positive
-    candidate set**: the `(entity_id, source_ref, source_hash)` keys of the facts this run's
-    prune hard-deleted, **minus** any key still carried by a live entry (T3 B1: never collect
-    by absence — `source_documents` is written only by `storeSource` and import, so a
-    fact-less stored document is a supported host state and must survive compact). Documents
-    forgotten via `sourceRef`/`sourceHash` selectors are already hard-deleted at forget time,
-    `MaintenanceService.ts:696-701`, so the GC never sees them. Documents backing any live
-    fact are untouched: one
-    document backs N facts, and erasing it on a single-fact forget would destroy the other
-    facts' passages and `source_pointer` targets (§3.5). **Owner question E** (spec) on
+  - **Source-store GC:** every prune that hard-deletes facts (standalone `runPrune`, the
+    automatic 7-day sweep, and compact's step 1) records the deleted rows'
+    `(entity_id, source_ref, source_hash)` keys in a **durable `source_gc_pending` ledger**
+    (T3 delta B1: a per-run list is empty when the deletes happened in an earlier prune —
+    which is the documented recipe). `compact()` drains the ledger: for each pending key, in
+    the same transaction as the deletes, re-check no live entry carries the key (concurrent
+    `remember` can revive a key — T3 delta m2) and hard-delete that key's `source_documents`
+    row, its `source_passages`, and their FTS rows; keys still live are dropped un-deleted.
+    Never collect by absence — `source_documents` is written only by `storeSource` and import,
+    so a fact-less stored document is a supported host state and must survive compact (T3
+    B1). Documents forgotten via `sourceRef`/`sourceHash` selectors are already hard-deleted
+    at forget time, `MaintenanceService.ts:696-701`. **Owner question E** (spec) on
     whether last-fact GC should touch host-stored text at all.
 - **Optional immediate-erasure enhancement:** FTS5 `'secure-delete'` option behind the §5
   version gate — **no numbered migration** (T3 M5: `setup()` stamps `schema_version`

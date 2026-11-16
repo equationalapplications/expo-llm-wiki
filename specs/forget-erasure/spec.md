@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 6 — under review (T3 delta pending; owner tier selection)**  
+**Status: Draft rev 7 — under review (T3 delta-2 pending; owner tier selection)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -86,7 +86,8 @@ failed step fails the compact and reports where it stopped):
    **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
    than throwing (T3 m2).
-2. **Source-store GC** (§5) — positive candidate set only.
+2. **Source-store GC** (§5) — drains the durable `source_gc_pending` ledger (§5), never
+   collect-by-absence.
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
    surfaced** (today `syncPassages` swallows failures, `SearchService.ts:353-355`, and
    `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134` — if the
@@ -96,17 +97,27 @@ failed step fails the compact and reports where it stopped):
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired
    table's `%_content` holds verbatim fact text and VACUUM would copy it intact — T3 M4).
+   Required **whenever retired tables exist, even if `entries_fts` itself is missing** (a
+   forced reset on a runtime where FTS later became unavailable still leaves verbatim text in
+   the retired shadows — T3 delta m1).
 5. FTS `'optimize'` on both FTS tables when they exist (a `rebuild` escape hatch is exposed as
    `compact({ rebuild: true })` for stores recovering from corruption).
-6. **Wrapped VACUUM** — the existing `runPrune` sequence
-   (`resetNormalizeWatermarks` → `metadataRepo.vacuum()` → `restartRebuildAfterVacuum`,
-   `MaintenanceService.ts:443-449`: VACUUM may renumber rowids; a watermark must never survive
-   it; the restarted rebuild must snapshot the renumbered rowids) — compact must not call
-   `metadataRepo.vacuum()` bare (T3 M3). Preferably the wrapper lives in `vacuum()` itself so
-   `runPrune({ vacuum: true })` gains it too.
+6. **Wrapped VACUUM** — the watermark-safe sequence `resetNormalizeWatermarks` →
+   `metadataRepo.vacuum()` → `restartRebuildAfterVacuum` (`MaintenanceService.ts:443-449`:
+   VACUUM may renumber rowids; a watermark must never survive it; the restarted rebuild must
+   snapshot the renumbered rowids). **Layering (T3 delta M2):** the wrapper lives in a
+   `MaintenanceService` private method (`_wrappedVacuum()`) that both `runPrune` and `compact`
+   call — moving it into `MetadataRepository.vacuum()` would create a repository→service
+   dependency cycle (`restartRebuildAfterVacuum` comes from `services/search/fts5Progress`,
+   `resetNormalizeWatermarks` from `db/sourceRefNormalize`, and both take `metadataRepo` as an
+   argument). `vacuum()` itself gains **only** the post-VACUUM `wal_checkpoint(TRUNCATE)`.
+   Compact must not call `metadataRepo.vacuum()` bare.
 7. `wal_checkpoint(TRUNCATE)` — **after** the VACUUM (`MetadataRepository.vacuum()` today
    checkpoints only before; the post-VACUUM checkpoint is what clears the rebuilt file's
-   passage through the WAL).
+   passage through the WAL). **`syncEntries` placement:** compact calls `syncEntries` for the
+   entities it pruned **after** the VACUUM, mirroring `runPrune` (`MaintenanceService.ts:451`
+   calls it after the wrapper) so the FTS index is rebuilt against the renumbered rowids (T3
+   delta M2).
 
 A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips steps 3-5
 for FTS surfaces that don't exist and remains correct: there is nothing to drain or optimize,
@@ -179,15 +190,24 @@ exposed at `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) 
 `remember` or `ingestDocument` (T3 B1/M1) — so a fact-less stored document is a normal,
 supported state (`getStoredSource`, passage search).
 
-Decision: `compact()`'s GC pass collects candidates **positively, never by absence**: the
-`(entity_id, source_ref, source_hash)` keys of the facts **this compact run's prune
-hard-deleted**, **minus** any key still carried by a live entry. Only those keys'
-`source_documents` rows (and their `source_passages`, and their FTS rows) are hard-deleted. A
-`storeSource`-only document with zero facts therefore **always survives compact()**. One
-document backing N facts is untouched while any live fact references it; erasing it on a
-single-fact forget would destroy the other facts' passages and `source_pointer` targets.
-Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
-at forget time, `MaintenanceService.ts:696-701`).
+Decision: `compact()`'s GC pass drains a **durable pending-GC ledger** (T3 delta B1 — a
+per-run candidate list is empty whenever the hard-deletes happened in an earlier `runPrune`,
+which is exactly what the documented recipe and the 7-day automatic prune do):
+- **Every prune that hard-deletes facts** — standalone `runPrune` (including the automatic
+  7-day sweep) and compact's step 1 — records the
+  `(entity_id, source_ref, source_hash)` keys of the rows it hard-deleted into a new
+  **`source_gc_pending` ledger table** (new migration; unconditional schema, unlike the
+  dropped v18). `runPrune` returns counts today (`MaintenanceService.ts:249`, `:457`), so the
+  ledger is the only durable channel.
+- **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
+  the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
+  steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
+  `source_documents` row, its `source_passages`, and their FTS rows; keys still live are
+  dropped from the ledger un-deleted. A `storeSource`-only document with zero facts therefore
+  **always survives compact()** (its keys never enter the ledger). One document backing N
+  facts is untouched while any live fact references it.
+- Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
+  at forget time, `MaintenanceService.ts:696-701`).
 
 **Owner question E (T3 B1):** should forgetting the last fact referencing a stored document
 delete the host's stored text at all (the GC above), or is `forget({ sourceRef })` the
@@ -207,6 +227,8 @@ back), and the no-opt-out pragma statement.
 - `packages/core/src/services/search/Fts5IndexStrategy.ts` — per-open gated option set
   (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent `ft_config` write); compact-time
   retired-table reclaim-to-completion + full ledger drain with surfaced errors.
+- `packages/core/src/db/migrations.ts` — new migration: `source_gc_pending` ledger table
+  (unconditional schema). No option migration (per-open gate, §4).
 - `packages/core/src/db/schema.ts` / setup path — `PRAGMA secure_delete=ON` + read-back in
   `setup()`.
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
@@ -290,10 +312,12 @@ back), and the no-opt-out pragma statement.
 
 ## Release
 
-Semver: new public API (`compact()`, `forget` flag) → minor. New migration v18 — consumers run
-their migration sweep on upgrade. The gated option is a no-op outside the gate, so the
-migration is safe on every current runtime. No format change occurs unless the gate passes
-(and then the one-way door applies, documented).
+Semver: new public API (`compact()`, `forget` flag) → minor. New migration creates the
+`source_gc_pending` ledger table (unconditional schema — consumers run their migration sweep
+on upgrade). There is **no v18 option migration**: the FTS5 `'secure-delete'` option is
+decided by the per-open gate (§4) on every open — a no-op with a surfaced warning while the
+gate is closed, self-arming when a fixed SQLite ships. No format change occurs unless the
+gate passes (and then the one-way door applies, documented).
 
 ## Non-goals
 
@@ -313,8 +337,9 @@ migration is safe on every current runtime. No format change occurs unless the g
   cost on the host's own tables (INTENT.md:137-138 tension). Options: (a) always on, no
   opt-out, read-back surfaced (recommended); (b) always on + opt-out for hosts accepting
   residue; (c) `secure_delete=FAST` default with `FULL` available.
-- **C.** Ship the gated immediate-erasure enhancement in v1 (recommended) or defer v18 entirely
-  and keep compact-time only.
+- **C.** Ship the gated immediate-erasure enhancement in v1 (recommended) or **defer the
+  gated option entirely** (no per-open gate, compact-time only; the gate code ships when a
+  fixed SQLite release exists).
 - **D.** Events and entity-summary erasure scope (investigation §8 Q5): a single-fact
   `forget({ entryId })` cannot promise whole-file erasure while `events.summary` holds fact
   text and only `clearAll({ includeEvents: true })` deletes events. (a) documented host-step
