@@ -1,7 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 2 — under review (T3/T4 ladder pending; owner tier selection)**  
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 6, converged)
+**Status: Draft rev 3 — under review (T3/T4 ladder; owner tier selection)**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 7, converged)
 
 ## Problem
 
@@ -37,13 +37,17 @@ Plus the derived/upstream copies of fact text (investigation §3.5 census): even
 
 The issue's proposed mechanism — the FTS5 `'secure-delete'` option — is **unusable as the
 required mechanism**: the upstream merge bug (investigation §5) is unfixed in every released
-SQLite (wrong in 3.46.0→3.53.2, fix on trunk only), so the version gate over supported
-runtimes passes nothing. It also opens a one-way file-format door (format 5).
+SQLite the investigation could confirm (wrong in 3.46.0→3.53.2, fix on trunk only), so the
+version gate over supported
+runtimes passes nothing the investigation could verify. It also opens a one-way file-format
+door (format 5).
 
 The measured alternative (F/G/F2/G2, option asserted off via `ft_config`, multi-segment
 300-row index, integrity + MATCH green, erasure proven on **both** surfaces — row content AND
-`%_data` term bytes — on unicode61 **and** the engine's `porter unicode61`; a second
-independent run is recorded in the LEDGER): core pragma + plain delete + FTS `'optimize'`
+`%_data` term bytes — on unicode61 **and** the engine's `porter unicode61`; K/K2 measure the
+full compact() composition as one unit, also clean; a second independent run is recorded in
+the LEDGER; these are synthetic-schema proofs of the *mechanism* — the engine-schema proof is
+the acceptance test below): core pragma + plain delete + FTS `'optimize'`
 **or** `'rebuild'` + `wal_checkpoint(TRUNCATE)` erases the canary completely.
 
 ## The decisions
@@ -172,7 +176,8 @@ back), and the no-opt-out pragma statement.
 ## Rejected alternatives
 
 - **FTS5 `'secure-delete'` option as the required mechanism** (the issue's proposal): version
-  gate passes zero supported runtimes (upstream merge bug unfixed in every release) + one-way
+  gate passes zero verifiable runtimes (upstream merge bug unfixed in every release the
+  investigation could confirm) + one-way
   format-5 door. Kept as the gated optional enhancement (§4).
 - **VACUUM alone as the mechanism:** drops freed content pages but copies live `%_data` pages
   as-is, so term bytes under delete markers survive it — **measured NOT clean (B′, postings

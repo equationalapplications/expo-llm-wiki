@@ -39,6 +39,9 @@
  *   F2  pragma ON, option OFF: delete + 'optimize' + ckpt   (porter unicode61 — engine tokenizer)
  *   G2  pragma ON, option OFF: delete + 'rebuild' + ckpt    (porter unicode61)
  *   H2  pragma OFF, option OFF: delete + 'rebuild' + ckpt   (porter unicode61)
+ *   K   pragma ON, option OFF: delete + 'optimize' + VACUUM + ckpt — the spec's full
+ *       compact() composition measured as ONE unit (Fable-verify MAJOR 4: F/G skipped VACUUM)
+ *   K2  pragma ON, option OFF: delete + 'rebuild' + VACUUM + ckpt (rebuild variant of K)
  */
 const path = require('path');
 const fs = require('fs');
@@ -217,6 +220,29 @@ function verdict({ db, file }, label, probeTerm, { close = true } = {}) {
   s.db.exec("INSERT INTO ft(ft) VALUES('rebuild')");
   s.db.pragma('wal_checkpoint(TRUNCATE)');
   verdict(s, "H2 pragma OFF, option OFF: delete + 'rebuild' (porter)", 'prebnozero');
+}
+
+// K — the spec's full compact() composition as ONE unit: pragma ON, option OFF,
+// delete + 'optimize' + VACUUM + post-VACUUM checkpoint
+{
+  const s = freshDb({ pragmaSecureDelete: true });
+  bulkAndTarget(s.db, 'fullcomp');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec("INSERT INTO ft(ft) VALUES('optimize')");
+  s.db.exec('VACUUM');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "K  pragma ON, option OFF: delete +'optimize'+VACUUM+ckpt", 'fullcomp');
+}
+
+// K2 — K with 'rebuild' instead of 'optimize'
+{
+  const s = freshDb({ pragmaSecureDelete: true });
+  bulkAndTarget(s.db, 'fullcomp2');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec("INSERT INTO ft(ft) VALUES('rebuild')");
+  s.db.exec('VACUUM');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "K2 pragma ON, option OFF: delete +'rebuild'+VACUUM+ckpt", 'fullcomp2');
 }
 
 {
