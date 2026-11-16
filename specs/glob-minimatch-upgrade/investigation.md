@@ -1,82 +1,74 @@
 # Investigation: adopt glob 14.0.2 / minimatch 11.0.1 to clear GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249
 
-**Date:** 2026-11-16
-**Status:** Step 0 — investigation (pre-spec)
+**Date:** 2026-11-16 (rev 2 — Opus r1 findings folded, differential probes run)
+**Status:** Step 0 — investigation, converged pending owner ruling (see Precondition)
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278
 
 ## Problem
 
-`pnpm audit` on `main` (2026-11-16, post PR #400) emits two remaining
-moderate advisories with upstream patches available:
+`pnpm audit` on `main` (`27f8e5e9`, 2026-11-16, post PR #400) emits two
+remaining moderate advisories with upstream patches available:
 
-| Advisory | Package | Vulnerable range | Patched | Locked | Published (patch) |
+| Advisory | Package | Vulnerable range | Patched | Locked | Patch published |
 |---|---|---|---|---|---|
 | GHSA-3g3m-2fjr-6pw4 | glob | `>=9.0.0 <=14.0.1` | `>=14.0.2` | 11.1.0, 13.0.6 | 2026-10-27T22:07Z |
-| GHSA-g3hv-75wg-m249 | minimatch | `>=7.0.0 <11.0.1` | `>=11.0.1` | 10.2.6 (also 5.1.9, NOT vulnerable) | 2026-10-27T22:26Z |
+| GHSA-g3hv-75wg-m249 | minimatch | `>=7.0.0 <11.0.1` | `>=11.0.1` | 10.2.6 (5.1.9 also locked — NOT vulnerable) | 2026-10-27T22:26Z |
 
-The 2026-11-09 ruling on this issue parked these items because **the only
-patched versions are majors that sit outside every consumer's declared
-range** (glob `^13.0.0` / `^11.0.1`, minimatch `^10.2.x`). Both patch
-versions have now cleared the 14-day cooldown (cutoff
-2026-11-02T14:05Z), so the owner directed a step-0 investigation on
-adopting them.
-
-The advisories:
+Both patch versions have cleared the 14-day cooldown (cutoff
+2026-11-02T14:05Z). The owner directed this step-0 investigation on
+2026-11-16 ("do step 0 of delivery flow for the remaining open issues
+which are past the 14 day dependency age gate for upstream poison").
 
 - **glob GHSA-3g3m-2fjr-6pw4 (moderate):** AbortSignal cancellation bypass —
-  after a timeout fires, glob can still read files (post-timeout file
-  disclosure in tooling that globs untrusted trees).
+  after a timeout fires, glob can still read files.
 - **minimatch GHSA-g3hv-75wg-m249 (moderate):** DoS via globparts
-  amplification — certain patterns take exponential time to compile.
+  amplification (exponential pattern compile).
 
 ## Verified current state (repro)
 
-- `pnpm audit --json` on main (2026-11-16): 9 advisories; the glob advisory
-  reports two paths — `.>expo>@expo/cli>glob` (13.0.6) and
-  `apps__scopelab>vite-plugin-pwa>workbox-build>glob` (11.1.0); the
-  minimatch advisory reports `.>expo>@expo/cli>glob>minimatch` (10.2.6).
-- No workspace `package.json` declares glob or minimatch directly — they are
-  100% transitive.
+- `pnpm audit --json` on main: glob advisory with two paths
+  (`.>expo>@expo/cli>glob` → 13.0.6; `apps__scopelab>vite-plugin-pwa>workbox-build>glob`
+  → 11.1.0); minimatch advisory via `.>expo>@expo/cli>glob>minimatch` →
+  10.2.6 (shared by other consumers).
+- No workspace `package.json` declares glob or minimatch directly — 100%
+  transitive.
 
-## Consumer map (file:line = pnpm-lock.yaml @ main `27f8e5e9`)
+## Consumer map (line numbers = pnpm-lock.yaml @ main `27f8e5e9`)
 
 | Locked version | Declared by (range) | Reach |
 |---|---|---|
-| glob@13.0.6 | @expo/cli@58.1.18, @expo/config@58.0.10, @expo/config-plugins@58.0.11, @expo/metro-config@58.0.20, @expo/fingerprint@0.21.8 (`^13.0.0`) | expo dev/CLI tooling |
-| glob@11.1.0 | workbox-build@7.4.1 (`^11.0.1`) ← vite-plugin-pwa@2.0.0 ← apps/scopelab | scopelab PWA service-worker build |
-| minimatch@10.2.6 | eslint@10.13.0 (`^10.2.5`, apps/wiki-demo), @typescript-eslint/typescript-estree@8.72.0 (`^10.2.2`), @expo/fingerprint (`^10.2.2`), glob@11/13 (their own deps) | lint + expo tooling |
-| minimatch@5.1.9 | legacy consumer (L12775) — `>=7.0.0` range excludes it | not vulnerable, untouched |
+| glob@13.0.6 (L4959) | @expo/cli@58.1.18, @expo/config@58.0.10, @expo/config-plugins@58.0.11, @expo/metro-config@58.0.20, @expo/fingerprint@0.21.8 (`^13.0.0`) | expo dev/CLI tooling |
+| glob@11.1.0 (L4953) | workbox-build@7.4.1 (`^11.0.1`) ← vite-plugin-pwa@2.0.0 ← apps/scopelab | scopelab PWA service-worker build |
+| minimatch@10.2.6 (L5964) | eslint@10.13.0 (`^10.2.5`, apps/wiki-demo), @typescript-eslint/typescript-estree@8.72.0 (`^10.2.2`), @expo/fingerprint (`^10.2.2`), glob@11/13 own deps | lint + expo tooling |
+| minimatch@5.1.9 (L5968) | filelist@1.0.6 (L4755; consumer ref L12775) — outside the vulnerable range | not vulnerable, untouched |
 
-**Everything is dev/build-time tooling. Nothing ships to runtime.** The CI
-surfaces that exercise these packages: scopelab build (vite → vite-plugin-pwa
-→ workbox), wiki-demo eslint, packages/expo tests (expo config tooling),
-docs build, repo-wide typecheck.
+**Everything is dev/build-time tooling. Nothing ships to runtime.**
+
+Gate-coverage honesty (verified by grep, not assumed): the @expo/\* glob
+consumers are NOT exercised by any repo gate — there is no expo app in the
+repo (no `app.json` anywhere), and `packages/expo`'s only test
+(`adapter.test.ts`) imports neither `@expo/config` nor `@expo/fingerprint`.
+Those packages ride devDependencies for typegen. Their glob behavior runs
+in developer CLI workflows outside CI.
 
 ## What the majors change (verified from upstream changelogs @ v14.0.2 / v11.0.1 tags)
 
 - **glob 14:** matching switches from RegExp to `Matcher` objects
-  (patterns can no longer cause ReDoS — this is the paired minimatch fix);
-  `Pattern#pattern()` type changes; `isRegExp()→isMatcher()`;
-  `Processor#testRegExp()→testMatcher()`; `debug` option removed;
-  `GlobWalker#walk()/walkSync()` return arrays instead of sets;
-  `MatchRecord#entries()` removed; `ignore` patterns anchored at `/` now
-  resolve against `root`/cwd root (semantic change); on abort the walk
-  STOPS (the security fix).
+  (patterns can no longer cause ReDoS); `Pattern#pattern()` type changes;
+  `isRegExp()→isMatcher()`; `Processor#testRegExp()→testMatcher()`;
+  `debug` option removed; `GlobWalker#walk()/walkSync()` return arrays
+  instead of sets; `MatchRecord#entries()` removed; **`ignore` patterns
+  anchored at `/` now resolve against `root`/cwd root (semantic change)**;
+  on abort the walk STOPS (the security fix).
 - **minimatch 11:** `makeRe()`, `Minimatch#regexp`, `AST` class,
   `maxExtglobRecursion` option REMOVED; `matchOne()`, `slashSplit()`,
   `levelTwoFileOptimize()` made internal; `Minimatch.set` items are now
-  strings/`Matcher`/`GLOBSTAR`; edge-case matching is closer to Bash;
-  several 10.2.3+ matching bugs fixed; exponential `partial` compile fixed
-  (the DoS fix).
+  strings/`Matcher`/`GLOBSTAR`; edge-case matching closer to Bash;
+  exponential `partial` compile fixed (the DoS fix).
 
-API-risk reading: any consumer calling `minimatch.makeRe()` or glob's
-removed members would break. The consumers here use high-level glob/ignore
-APIs (config arrays, PWA globbing, expo config globs) — but this cannot be
-proven statically, which is why the empirical probe matrix below exists.
-
-## Isolation experiment (performed 2026-11-16, this branch)
+## Isolation experiment (this branch, commit `8355cb1f`)
 
 Overrides added to `pnpm-workspace.yaml`:
 
@@ -85,67 +77,138 @@ Overrides added to `pnpm-workspace.yaml`:
 'minimatch@>=7.0.0 <11.0.1': 11.0.1
 ```
 
-Results:
+Resolution: glob → 14.0.2 single copy (11.1.0 and 13.0.6 both gone),
+minimatch → 11.0.1 (+ untouched 5.1.9 via filelist). New transitives all
+gate-clean: path-scurry@3.0.0 (2026-10-27T21:14Z),
+@isaacs/nonrecursive-glob-match@1.0.3 (2026-10-28T19:50Z), minipass@7.1.3
+(2026-02-19). glob@14.0.2 requires minimatch `^11.0.0` — consistent with
+the global pin. `pnpm install` EXIT=0 under the active gate.
 
-- `pnpm install` EXIT=0 under the active `minimumReleaseAge: 20160` gate.
-  Resolution: glob → 14.0.2 (single copy; 11.1.0 and 13.0.6 both gone),
-  minimatch → 11.0.1 (+ untouched 5.1.9). New transitives all
-  gate-clean: path-scurry@3.0.0 (2026-10-27T21:14Z),
-  @isaacs/nonrecursive-glob-match@1.0.3 (2026-10-28T19:50Z),
-  minipass@7.1.3 (2026-02-19). glob@14.0.2 requires minimatch `^11.0.0` —
-  consistent with the global pin.
-- **pnpm audit: 9 → 7 advisories.** Both targeted GHSAs stop emitting.
-  Remaining: deepmerge (no fix exists upstream), node-forge ×4 (1.4.3 gate
-  clears 2026-11-18T01:06Z), astro ×2 (7.4.7 gate clears 2026-11-19T19:59Z)
-  — all tracked in #278.
-- Probe matrix (every consumer surface, all EXIT=0):
-  - `pnpm --filter scopelab test` (51 tests) — PASS
-  - `pnpm --filter scopelab build` — vite build → vite-plugin-pwa →
-    workbox-build generated `dist/sw.js` (8 precache entries): glob 11→14
-    through workbox works end-to-end
-  - `pnpm --filter @equationalapplications/expo-llm-wiki test` (12 tests,
-    exercises @expo/config tooling): PASS
-  - `pnpm exec eslint .` in apps/wiki-demo (eslint 10 + typescript-estree,
-    minimatch 10→11): clean, no config-resolution errors
-  - `pnpm --filter docs build` (53 pages): PASS
-  - `pnpm typecheck` repo-wide: PASS
+### Differential probes (main `27f8e5e9` vs branch, equalized fresh builds)
+
+Run BOTH sides in throwaway state — baseline worktree at `27f8e5e9` with
+fresh `pnpm install` + fresh `packages/*` builds, branch likewise — because
+stale dists masquerade as behavior differences (first attempt showed
+7-vs-8-entry noise that vanished once both sides were rebuilt fresh).
+
+1. **scopelab PWA build (workbox glob):** both sides succeed; **BUT the
+   generated `sw.js` manifests differ.** Main: 7 entries. Branch: 8 entries
+   — `sql-wasm.wasm` appears TWICE (same url, same revision
+   `a152cddb…`), and vite-plugin-pwa's log line correspondingly reports
+   "precache 8 entries (1270.92 KiB)" vs main's "7 entries
+   (1270.92 KiB)". The set of unique urls is IDENTICAL (7 urls both sides;
+   entry-by-entry JSON diff clean apart from the duplicate). Verified from
+   workbox-precaching's shipped source
+   (`node_modules/workbox-precaching/build/workbox-precaching.dev.js`,
+   `precache()`/"addToCacheList" docs, L492/L510): the runtime
+   "adds items to the precache list, **removing any duplicates**" — so the
+   runtime precache is functionally identical. The duplicate arises inside
+   workbox-build 7.4.1's manifest generation under glob 14's changed
+   pattern/ignore semantics (glob 11's behavior produced one match; glob 14
+   produces two for `sql-wasm.wasm`). workbox-build 7.4.1 is the LATEST
+   upstream release (published 2026-05-04, declares glob `^11.0.1`) — there
+   is no newer workbox that fixes or absorbs this. This drift is disclosed,
+   bounded (same url + same revision, runtime-deduped), and is the concrete
+   evidence that glob-14 semantics ARE observably different in this repo's
+   real build surfaces — exit codes alone would have hidden it.
+2. **eslint 10 + typescript-estree (minimatch 10→11):** `pnpm exec eslint .`
+   in apps/wiki-demo — clean on the branch (no config-resolution errors,
+   no lint failures). No differential output to compare (eslint is quiet
+   when clean on both sides).
+3. **expo package tests** (`pnpm --filter @equationalapplications/expo-llm-wiki test`,
+   12 tests): PASS on branch. **These do NOT exercise @expo/config or
+   fingerprint** (see gate-coverage honesty above) — they are recorded as
+   repo-gate evidence only, not as @expo/\* surface coverage.
+4. **`pnpm --filter docs build`** (53 pages): PASS on branch.
+5. **`pnpm typecheck`** repo-wide: PASS on branch.
+6. **Full root `pnpm test`** on the branch: EXIT=0 — core 2566/2566,
+   okf 194/194, mcp-server 135/135, scopelab 51/51, react 76/76,
+   benchmarks 154/154, schema-software-org 46/46, integration 47/47, all
+   other suites green (log `/tmp/globmin-branch-fulltest.log`,
+   2026-11-16).
 
 ## Proposed fix direction
 
-Keep the two override lines (with a corrected comment), let CI run the full
-suite, and remove the two GHSA ids from... nothing — they were never
-allowlisted (moderate, fix-available advisories are handled by the fix, not
-the allowlist). The override-forced major is outside the declared consumer
-ranges; this is the SAME pattern the repo already uses for
-`@ungap/structured-clone` and `brace-expansion`, and it stays until the
-consumers' own ranges mature past 14.0.x / 11.x (Dependabot cannot get
-there — it only bumps direct deps — so these overrides are the permanent
-mechanism unless the range-selector entries are revisited when @expo/*,
-workbox, or eslint publish new ranges).
+Keep the two override lines. The final override comment must state (per the
+file's convention): advisory ids; patched versions 14.0.2 / 11.0.1
+published 2026-10-27T22:07Z / 22:26Z; gate cleared 2026-11-10T22:07Z /
+22:26Z; reach
+(@expo/\* dev tooling, workbox-build via vite-plugin-pwa in apps/scopelab,
+eslint chain in apps/wiki-demo — all dev/build-time); that this override
+forces a MAJOR outside every consumer's declared range; the known-benign
+workbox duplicate-entry drift; and the drop condition:
 
-Rejected alternatives:
+> **Drop condition:** remove each line when no lockfile importer declares a
+> range that excludes 14.0.2 / 11.0.1 respectively; re-check in every
+> cooldown sweep (the standing cadence that already re-derives the audit
+> surface).
+
+No allowlist change: neither GHSA was allowlisted.
+
+Dependabot cannot get here: it can bump transitive lockfile entries only
+within the parents' declared ranges, and no parent declares an in-range
+fix — so overrides are the only adoption mechanism while the ranges stand.
+
+## Precondition (owner ruling required)
+
+**This change overturns the 2026-11-09 ruling on issue #278** ("glob /
+minimatch — leave open, fixes are majors crossing declared ranges"). It is
+also the FIRST override in this repo that forces a version outside the
+major its consumers declare (all existing overrides stay in-major:
+fast-uri floors, node-forge floors, undici in-range minors, hono exact
+in-range pins). It therefore needs an explicit owner yes/no before the PR
+opens — the step-0 product below is the decision material. The concrete
+#278 change if approved: the glob/minimatch item flips from "leave open"
+to "adopted via forced major (glob 14.0.2 / minimatch 11.0.1, overrides in
+pnpm-workspace.yaml with drop condition)"; the PR #400 status comment's
+"Still open" list loses the glob/minimatch line.
+
+## Rejected alternatives
 
 1. **Wait for upstream consumers to bump their ranges** (@expo → glob ^14,
-   workbox → glob ^14, eslint chain → minimatch ^11). No announced
-   timelines; the two moderates would sit for an unknown number of weeks.
-   The empirical probe matrix shows the majors work in this repo's actual
-   surfaces today, so waiting buys nothing but exposure time.
-2. **Pin only glob, leave minimatch** — glob 14 depends on minimatch
-   `^11.0.0`, so the minimatch override is required anyway for a single
-   consistent copy; and the minimatch advisory has its own independent
-   consumers (eslint, typescript-estree, fingerprint).
+   workbox → glob ^14, eslint chain → minimatch ^11). workbox-build 7.4.1
+   is the latest upstream release (2026-05-04); no announced timelines for
+   any of the three. The differential probes show the majors work in every
+   gate-covered surface today, with one bounded, runtime-deduped drift.
+2. **Pin glob only, skip minimatch** — glob 14 needs minimatch `^11.0.0`
+  internally, but eslint, typescript-estree and @expo/fingerprint declare
+  `^10.2.x` and would keep the vulnerable 10.2.6 resolved for their own
+  subtrees; the minimatch override exists for THEM.
+3. **Force minimatch@5.1.9 (filelist's copy) to 11 for single-copy
+   hygiene** — zero security gain (5.1.9 is outside the vulnerable range),
+   5→11 API jump for filelist's consumer. Leave untouched.
 
 ## Open questions
 
-1. Do we hold the PR until 2026-11-18/11-19 and land it together with the
-   node-forge 1.4.3 bump + astro merges (one bigger cooldown pass 2 PR), or
-   open it immediately (its versions are already gate-clear)? Both are
-   gate-legal; the cron job `7e3f2bdc1576` currently expects to handle the
-   other items — coordination needed so the two lanes don't collide.
-2. `minimatch@5.1.9` (legacy consumer, not in the vulnerable range): leave
-   untouched (recommended) or force to 11 for single-copy hygiene? Forcing
-   would jump it 5→11 (larger API risk for its consumer) for zero security
-   gain.
-3. Should the `cooldown-blocked`-adjacent reporting in #278 be updated to
-   note that glob/minimatch moved from "leave open" to "adopted via forced
-   major" (superseding the 2026-11-09 ruling)? Owner confirmation requested.
+1. Sequencing with the armed pass-2 cron (`7e3f2bdc1576`, 2026-11-20): land
+   this PR immediately (its versions are already gate-clear) or fold it
+   into the pass-2 PR on 2026-11-20? Default: fold into pass 2 — one
+   cooldown PR, no lane collision with the cron's brief (which would need
+   this branch's existence added to its context if landed separately).
+2. Accept the disclosed workbox duplicate-entry drift (runtime-deduped,
+   same revision) as the cost of adoption? Alternative is waiting for
+   upstream (indefinite). Recommended: accept, with the drift documented in
+   the override comment.
+
+## Revision history
+
+- **rev 1 (2026-11-16):** initial investigation + isolation experiment.
+  Opus r1 (effort medium, $0.27, 12 turns): REQUEST CHANGES — 3 MAJOR
+  (precedent claim false: every existing override stays in-major, so this
+  is a new override class requiring an owner ruling and superseding the
+  2026-11-09 park [M1]; exit-code-only probes cannot catch the doc's own
+  flagged semantic changes — differential main-vs-branch probes demanded
+  [M2]; no drop condition for the overrides [M3]) + 7 minor. All premises
+  verified TRUE by the controller (structured-clone/brace-expansion
+  overrides are in-major; no expo app exists; adapter.test.ts imports
+  neither @expo/config nor fingerprint; filelist@1.0.6 is the 5.1.9
+  consumer).
+- **rev 2 (2026-11-16):** all findings folded: precedent claim deleted,
+  owner-ruling precondition added; differential probes run with equalized
+  fresh builds — the workbox duplicate-entry drift found, characterized
+  (same url/revision, runtime-deduped per workbox-precaching source), and
+  disclosed; gate-coverage honesty added for the @expo/\* surfaces; drop
+  condition written; m1–m7 folded (line numbers corrected to main
+  `27f8e5e9`, consumer named as filelist@1.0.6, Dependabot statement made
+  precise, rejected-alternative 2 re-led, status-line merge caveat,
+  #278 checklist change made concrete).
