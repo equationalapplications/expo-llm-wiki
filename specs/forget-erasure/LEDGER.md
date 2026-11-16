@@ -15,3 +15,4 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 
 Lane spend so far: **$5.1933** (all step-0; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
+| 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
