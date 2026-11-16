@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 11 — under review (T3 delta-6 pending; delta-5's findings folded)**  
+**Status: Draft rev 12 — under review (T3 delta-7 pending; delta-6's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -96,7 +96,10 @@ failed step fails the compact and reports where it stopped):
    delta-3 m2), so compact reports them via its result
    (a held-event count per entity, from `countHeldBack`) and the diagnostic, not via the
    error channel. Step 1 runs prune with **`vacuum: false`** — the per-entity VACUUM must not
-   run N times; the wrapped store-wide VACUUM happens once at step 5 (T3 delta-2 m2).
+   run N times; the wrapped store-wide VACUUM happens once at step 5 (T3 delta-2 m2). Known
+   edge (T3 delta-7 m2, documented): with `pruneSupersededAfter` set, step 1 soft-deletes
+   expired history stamped at/after this run's cutoff, so those rows hard-delete at the
+   **next** compact — accepted.
 2. **Source-store GC** (§5) — drains the durable `source_gc_pending` ledger (§5), never
    collect-by-absence.
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
@@ -126,7 +129,9 @@ failed step fails the compact and reports where it stopped):
    the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
    Note: step 1's `runPrune` already ran `syncEntries` (pre-VACUUM) — that pass is
    **redundant but harmless**; do not "deduplicate" by removing this post-VACUUM one (T3
-   delta-6 m2).
+   delta-6 m2). **Id source (T3 delta-7 m1):** `runPrune` returns counts only (`:457`), so it
+   gains an output channel (the same output-array pattern as `deletedKeys`) returning the ids
+   it synced; compact passes those to step 6.
 7. FTS `'optimize'` on both FTS tables when they exist — **after** `syncEntries`, so the
    delete markers `syncEntries` introduces are merged away under the pragma (a `rebuild`
    escape hatch is exposed as `compact({ rebuild: true })` for stores recovering from
@@ -220,22 +225,33 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
   required — failure injected **after `bulkDeletePruned` returns, before the ledger insert**,
   asserting the staged outbox rows (`EntryRepository.ts:868-874`) roll back too; T3 delta-4
-  m4). **Key source inside the transaction (T3 delta-3 M2, refined T3 delta-6 m1):**
+  m4). **Key source inside the transaction (T3 delta-3 M2, corrected T3 delta-7 MAJOR-2):**
   `bulkDeletePruned` already runs
-  `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) **and already collects deleted ids
-  through its `{ deletedIds }` output-array option** (`:365`) — that option is extended to
-  collect `{id, source_ref, source_hash}`; **the return value stays a row count**
-  (`deletedEntries` depends on it). The in-transaction SELECT alternative is rejected:
-  the guard at `:852-853` can keep rows the SELECT already read, making it over-inclusive.
+  `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) and already collects deleted ids
+  through its `{ deletedIds: string[] }` output option (`:365`). **`deletedIds` stays
+  `string[]`** — it feeds `new Set(deletedIds)` (`:371`), `deletable` (`:377`),
+  `deleteForFacts` (`:383-384`) and `syncedIds` (`:393`), all id-shaped; overloading it with
+  key objects would break set membership and the vector-ledger cleanup. Instead: widen the
+  statement to **`RETURNING id, source_ref, source_hash`** and add a **separate output option
+  `deletedKeys?: { id: string; source_ref: string; source_hash: string }[]`** that receives the
+  key tuples; the return value stays a row count. The in-transaction SELECT alternative is
+  rejected: the guard at `:852-853` can keep rows the SELECT already read, making it
+  over-inclusive.
   **All prune paths write the ledger**, including the
   `'legacy'`/no-ledger-gate branches (`MaintenanceService.ts:338-348`).
-  **Gate on table existence (T3 delta-6 MAJOR-1):** that branch is the store whose
-  `setup()` never ran — no ledger table exists ("no ledger table", `:339`; it is a
-  removal-ledger gate, **not** the librarian's `'legacy'` retention mode). There, the ledger
-  write is **skipped** (an `INSERT` would throw "no such table" inside the transaction and
-  roll back `bulkDeletePruned`, turning every working prune into a failure) and a
-  **`source_gc_degraded` diagnostic** fires: prune proceeds, GC coverage is degraded and
-  surfaced. Test: prune with no `source_gc_pending` table still hard-deletes.
+  **Gate on the GC ledger's own existence — nothing else (T3 delta-7 MAJOR-1, correcting T3
+  delta-6 MAJOR-1):** the `gate === 'hook'` branch is **not** the only no-table path:
+  `ledgerOn = !!vr && !!vrRepo && await vr.ledgerPresent()` (`:306`) is the **vector-removal**
+  ledger flag, and `vectorRemoval` is an optional constructor argument (`:239`) — a fully
+  set-up store with **no vector-removal service** has `ledgerOn === false` but **does** have
+  the migrated `source_gc_pending` table. Gating the GC write on `ledgerOn` (or on the
+  `:338` branch) would leave such a store with an empty ledger and surviving
+  `source_documents.text` — the exact collect-by-absence gap this redesign closes. Therefore:
+  **probe `source_gc_pending`'s existence directly, once per prune, outside the transaction**,
+  independent of `ledgerOn`, the vector-removal gate, and the `:338` branch; if absent, skip
+  the write and emit **`source_gc_degraded`**. Tests: prune with no `source_gc_pending` table
+  still hard-deletes; **a store with no `vectorRemoval` service and a migrated schema still
+  records ledger keys**.
 - **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
   steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
@@ -289,9 +305,9 @@ back), and the no-opt-out pragma statement.
   holds via the error channel, event holds via result + diagnostic).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
 - `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
-  detection) + dry-run chain listing helper; `bulkDeletePruned` returns the
-  `(entity_id, source_ref, source_hash)` keys of the rows it deleted (for the GC ledger —
-  T3 delta-3 M2).
+  detection) + dry-run chain listing helper; `bulkDeletePruned` widens `RETURNING` to
+  `id, source_ref, source_hash` and gains a `deletedKeys` output option (for the GC ledger;
+  `deletedIds` stays `string[]` — T3 delta-7 MAJOR-2).
 - `packages/core/src/services/SearchService.ts` — passage drain surfaced (no swallow) in the
   compact path.
 - `apps/docs/src/content/docs/guides/deleting-data.md` — erasure section.
