@@ -78,26 +78,26 @@ jobs:
           # node-forge 2026-11-01 advisory burst (5x high on 1.4.0): entries
           # removed 2026-11-10 — cleared by the node-forge 1.4.1 override in
           # pnpm-workspace.yaml (age gate matured 2026-11-10 04:44Z).
-          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-mrhx-c7xc-m3w5" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0) = GHSA-86w9-cpqp-85rv; braces stack-exhaustion (<=3.0.3) = GHSA-vfj7-8cjw-p6xm — WITHDRAWN and no longer emitted by pnpm audit, so its entry was removed 2026-11-01 (inert; an expired inert entry would still redden this step) — all via expo-sqlite > expo > @expo/cli transitive; 86w9 has no upstream patch as of 2026-11-01. GHSA-mrhx-c7xc-m3w5: zod memory exhaustion on oversized constrained collections — the 4.x line is PATCHED (4.6.6, applied via the pnpm-workspace.yaml override); the @expo/cli-consumed 3.x line has no in-range patch, which is what this allowlist covers
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers — no upstream patch, tracked in issue #278. Removed 2026-11-16 (cooldown sweep): node-forge PKCS#1 v1.5 nested DigestAlgorithm = GHSA-86w9-cpqp-85rv (inert since the 1.4.1 override landed — vulnerable range is <=1.4.0, it never emitted at 1.4.1); zod 3.x memory exhaustion = GHSA-mrhx-c7xc-m3w5 (left the tree: expo 58.0.22 → @expo/cli 58.1.18 is the first @expo/cli line without a zod dependency)
           # Date-bounded allowlist expiry (JSON, GHSA -> YYYY-MM-DD UTC).
           # An entry that has reached its expiry date is treated as if
           # it were NOT in AUDIT_ALLOWLIST — this step fails until the
           # override is added to pnpm-workspace.yaml or the lockfile is
           # refreshed past the patched version. Add an entry here for
           # every date-bounded GHSA in AUDIT_ALLOWLIST above.
-          # Populated 2026-10-28 (PR #298): GHSA-mrhx-c7xc-m3w5 (zod 3.x via
-          # @expo/cli) is date-bounded below; entries whose advisories were
-          # cleared by overrides were removed on their expiries
-          # (2026-10-15 / 2026-10-20). 2026-11-01 (PR #307): five node-forge
-          # burst IDs added, expiry 2026-11-12; removed 2026-11-10 once the
-          # 1.4.1 override cleared them.
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
+          # Entries whose advisories were cleared by overrides were removed
+          # on their expiries (2026-10-15 / 2026-10-20 / 2026-11-10).
+          # 2026-11-16: GHSA-mrhx-c7xc-m3w5 (zod 3.x via @expo/cli) removed
+          # on resolution — its 2026-11-28 expiry never fired; and the map
+          # is empty for the first time since 2026-10-28.
+          AUDIT_ALLOWLIST_EXPIRY: '{}'
         run: |
           set -o pipefail
-          # NOTE: on expiry the step goes red EVEN IF zod 3.x still has no
-          # patch — that is the intended forcing function. Fallback at that
-          # date: extend the expiry date here (with a new rationale comment),
-          # or drop the entry if the advisory is resolved.
+          # NOTE: on expiry a date-bounded entry turns this step red EVEN IF
+          # its advisory still has no patch — that is the intended forcing
+          # function. Fallback at that date: extend the expiry date here
+          # (with a new rationale comment), or drop the entry if the
+          # advisory is resolved.
           pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
           node -e '
             const data = require("/tmp/audit.json");
@@ -182,20 +182,20 @@ jobs:
       - name: Audit (fail only on advisories with an upstream patch)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          # GHSA-mrhx-c7xc-m3w5 (zod): the 4.x line is cleared by the
-          # pnpm-workspace.yaml override (4.6.6); the @expo/cli 3.25.76
-          # instance has NO in-range patch (fix is a major jump to >=4.6.6),
-          # so it is unfixable-in-range — same class as the WARNING entries,
-          # tracked in issue #278. Expiry mirrors the earlier audit step.
-          # node-forge 1.4.0 burst (5 IDs): removed 2026-11-10, cleared by the
-          # 1.4.1 override (see the earlier audit step).
-          AUDIT_ALLOWLIST: "GHSA-mrhx-c7xc-m3w5"
+          # 2026-11-16 (cooldown sweep): GHSA-mrhx-c7xc-m3w5 (zod) removed —
+          # zod 3.25.76 left the tree (expo 58.0.22 → @expo/cli 58.1.18, the
+          # first @expo/cli line without a zod dependency), so nothing high+
+          # remains unfixable-in-range. The map sits empty for the first
+          # time since 2026-10-28; remaining emitted advisories (astro,
+          # node-forge 1.4.3-patched, glob/minimatch, deepmerge) are all
+          # moderate/low or gate-blocked — tracked in issue #278.
+          AUDIT_ALLOWLIST: ""
           # Mirrors the expiry map in the earlier audit step. An entry
           # past its expiry date is removed from the allowlist before
           # the fixable/unfixable split below; if any expired entry
           # remains, this step exits 1 to force the lockfile refresh or
           # override addition.
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
+          AUDIT_ALLOWLIST_EXPIRY: '{}'
         shell: bash
         run: |
           set -e
