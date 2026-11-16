@@ -3,11 +3,12 @@
 **Date:** 2026-11-16 (rev 6 — step 0 COMPLETE. Opus ladder: APPROVE WITH
 NITS. Tier-4 Fable: r1 REQUEST CHANGES → rev 5 fold → r2 delta APPROVE
 WITH NITS, all nits folded below.)
-**Status:** Step 0 — investigation, converged pending owner ruling (see
-Precondition). The branch must NOT merge as the fix until `spec.md`,
-`plan.md` and `LEDGER.md` exist in this folder (first post-ruling task) and
-the #278 ruling is recorded — the branch already carries live override +
-lockfile changes.
+**Status:** Step 0 COMPLETE — owner ruling 2026-11-16: forced-major
+adoption APPROVED (supersedes the 2026-11-09 park), sequencing = fold into
+cooldown pass 2 (cron `7e3f2bdc1576`, 2026-11-20), residual @expo/\*
+exposure accepted, scopelab `includeAssets` remedy deferred. Spec, plan and
+ledger now exist in this folder; the PR must not merge ahead of the pass-2
+wave without owner word.
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278

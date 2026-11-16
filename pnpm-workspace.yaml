@@ -74,9 +74,24 @@ overrides:
   # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
   # express dependency (new with packages/mcp-server). Same waiver rationale.
   'body-parser@>=2.0.0 <2.4.0': 2.4.0
-  # glob 14.0.2 / minimatch 11.0.1 forced majors (GHSA-3g3m-2fjr-6pw4 /
-  # GHSA-g3hv-75wg-m249) — step-0 isolation experiment,
-  # specs/glob-minimatch-upgrade (issue #278).
+  # glob 14.0.2 / minimatch 11.0.1 forced majors — GHSA-3g3m-2fjr-6pw4 /
+  # GHSA-g3hv-75wg-m249 (MODERATE). Patches published 2026-10-27 22:07Z /
+  # 22:26Z, cleared the 14-day age gate 2026-11-10. Reach (all dev/build
+  # time, never shipped): @expo/* CLI tooling (glob ^13.0.0), workbox-build
+  # via vite-plugin-pwa in apps/scopelab (glob ^11.0.1), eslint +
+  # @typescript-eslint/typescript-estree + @expo/fingerprint (minimatch
+  # ^10.2.x). This override forces a MAJOR outside every range declared in
+  # today's resolved graph — owner-approved 2026-11-16 (issue #278,
+  # superseding the 2026-11-09 leave-open park). No glob-14/minimatch-11
+  # behavior change is observable in any repo gate surface (verified:
+  # investigation.md). Residual accepted risk: @expo/fingerprint and
+  # @expo/config ignore semantics are unprobed (no expo app exists in-repo
+  # to test). Drop condition: remove each line when no package in the
+  # resolved graph (`pnpm why glob` / `pnpm why minimatch`) declares a
+  # range that excludes 14.0.2 / 11.0.1 — check each parent's DECLARED
+  # range with `pnpm view <parent>@<locked> dependencies.glob` (or
+  # `dependencies.minimatch`); the workspace importers themselves never
+  # declare glob or minimatch. Re-check in every cooldown sweep.
   'glob@>=9.0.0 <14.0.2': 14.0.2
   'minimatch@>=7.0.0 <11.0.1': 11.0.1
   # node-forge 2026-11-01 advisory burst (GHSA-7wch-p9px-956x,
