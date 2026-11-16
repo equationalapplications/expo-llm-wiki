@@ -1,9 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 9 — under review (T3 delta-4 pending). INTENT alignment: the storage-side
-extension of the INTENT.md:468 precedent is covered by charter rule 8's deletion promise;
-the INTENT.md status-line update happens in the implementation PR per house rule (already in
-Files touched).**  
+**Status: Draft rev 10 — under review (T3 delta-5 pending; delta-4's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -214,18 +211,30 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   dropped v18). **The ledger insert commits in the same transaction as the entry
   hard-deletes** (T3 delta-2 M3: a crash between delete and insert would lose the key forever
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
-  required). **Key source inside the transaction (T3 delta-3 M2):** `getPrunableMetadata`
-  returns only `{id, entity_id}` (`EntryRepository.ts:639-650`) and `bulkDeletePruned` only
-  `deletedIds` (`:842-848`), so `bulkDeletePruned` gains key return — a `RETURNING` clause or
-  an in-transaction SELECT per chunk **before** each chunk's delete (keys looked up after the
-  delete are gone; keys read before the transaction are over-inclusive but the live re-check
-  makes that harmless). **All prune paths write the ledger**, including the
+  required — failure injected **after `bulkDeletePruned` returns, before the ledger insert**,
+  asserting the staged outbox rows (`EntryRepository.ts:868-874`) roll back too; T3 delta-4
+  m4). **Key source inside the transaction (T3 delta-3 M2):** `bulkDeletePruned` already runs
+  `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) — it is pinned to return
+  `RETURNING id, source_ref, source_hash` (the in-transaction SELECT alternative is rejected:
+  the guard at `:852-853` can keep rows the SELECT already read, making it over-inclusive).
+  **All prune paths write the ledger**, including the
   `'legacy'`/no-ledger-gate branches (`MaintenanceService.ts:338-348`).
 - **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
   steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
   `source_documents` row, its `source_passages`, and their FTS rows; keys still live are
-  dropped from the ledger un-deleted. A `storeSource`-only document with zero facts therefore
+  dropped from the ledger un-deleted. **Key matching predicate (T3 delta-4 MAJOR-1):**
+  `source_documents` has **two** unique indexes — `(entity_id, source_ref)` and
+  `(entity_id, source_hash)` (`schema.ts` `idx_source_documents_ref`/`idx_source_documents_hash`,
+  created in `createSourceDocumentIndexesIfColumnsExist`) — and `entries.source_hash` is
+  **nullable** (`schema.ts:13`), with `source_ref_index` tracking the canonical ref per hash
+  (a document can be re-keyed to a new ref). Therefore: a document is a GC **candidate** if it
+  matches the deleted fact's key on `(entity_id, source_ref)` **or** `(entity_id,
+  source_hash)`; it is **live** if any live entry matches it on **either** column, with NULL
+  hashes ignored (a NULL-hash fact key matches on ref alone). Required test cases: a NULL-hash
+  fact key still GC-matches; a re-keyed document (`R_old`→`R_new`, same hash) is matched by
+  the old fact's hash; a live fact sharing the ref but carrying a **different** hash keeps the
+  document live. A `storeSource`-only document with zero facts therefore
   **always survives compact()** (its keys never enter the ledger). One document backing N
   facts is untouched while any live fact references it.
 - Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
@@ -258,7 +267,7 @@ back), and the no-opt-out pragma statement.
   post-VACUUM `wal_checkpoint(TRUNCATE)`; the watermark wrapper stays in
   `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 5 governs).
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
-  lift + `chainEntryIds`/`truncated`); `compact()` (7-step composition per §2, incl.
+  lift + `chainEntryIds`/`truncated`); `compact()` (8-step composition per §2, incl.
   source-store GC ledger drain and `_wrappedVacuum()`); hold catching/reporting (external
   holds via the error channel, event holds via result + diagnostic).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
@@ -322,6 +331,9 @@ back), and the no-opt-out pragma statement.
 5. **Source GC:** document backing two facts, one forgotten — document stays; both forgotten +
    compact — document and passages gone (including `source_passages_fts`). **B1 regression
    test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged.
+   **Key-matching cases (T3 delta-4 MAJOR-1):** a NULL-hash fact key GC-matches on ref alone;
+   a re-keyed document (`R_old`→`R_new`, same hash) is matched by the old fact's hash; a live
+   fact sharing the ref but with a **different** hash keeps the document live.
 6. **Gate tests:** mock runtimes (refuses option / below the gate / format-5 read error) —
    the per-open gate warns and skips; no-FTS path stays green; pragma read-back surfaces
    refusal. Gate acceptance is tested against a mocked version **at and above** the pinned
