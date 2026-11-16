@@ -65,8 +65,10 @@ overrides:
   '@babel/core@<=7.29.0': 7.29.6
   # GHSA-mrhx-c7xc-m3w5 (HIGH): zod memory exhaustion validating oversized
   # constrained collections; 4.6.6 published 2026-10-11, clears the 14-day
-  # age gate. Scoped to the 4.x line — @expo/cli's zod 3.25.76 has no
-  # in-range patch and stays on the pnpm-audit allowlist (issue #278).
+  # age gate. Scoped to the 4.x line. The @expo/cli-consumed zod 3.25.76
+  # instance left the tree 2026-11-16 (expo 58.0.22 -> @expo/cli 58.1.18,
+  # the first @expo/cli line without a zod dependency) and the audit
+  # allowlist entries were removed in the same PR (issue #278).
   'zod@>=4.0.0 <4.6.6': 4.6.6
   # GHSA-27r3-jxmh-p828 (HIGH, body-parser DoS): patched in 2.4.0, published
   # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
@@ -76,9 +78,26 @@ overrides:
   # GHSA-jc66-7q78-782g, GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx,
   # GHSA-5x38-2vff-x55p HIGH, plus moderate/low siblings): all patched in
   # 1.4.1, published 2026-10-27 04:44Z, cleared the 14-day age gate
-  # 2026-11-10 04:44Z. Reach is @expo/cli dev tooling. GHSA-86w9-cpqp-85rv
-  # has no patch and stays allowlisted (issue #278).
+  # 2026-11-10 04:44Z. Reach is @expo/cli dev tooling. Correction
+  # 2026-11-16: GHSA-86w9-cpqp-85rv (vulnerable <=1.4.0) stopped emitting
+  # the moment 1.4.1 landed — its allowlist entry was inert and was removed
+  # in the same pass. Four NEW 1.4.x advisories (GHSA-w4xr-hqv8-ch44,
+  # GHSA-j8rw-jp99-435v, GHSA-6cv4-p8m7-4r25, GHSA-6889-vf6x-f3g5) are
+  # patched ONLY in 1.4.3, published 2026-11-04 01:06Z — age gate clears
+  # 2026-11-18 01:06Z; bump this floor in the next cooldown pass.
   'node-forge@<1.4.1': 1.4.1
+  # hono 4.x advisory set (GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v,
+  # GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq MODERATE; GHSA-3gg2-335m-rxc6
+  # LOW): all patched in 4.13.16, published 2026-11-01 03:04Z, cleared the
+  # 14-day age gate 2026-11-15 03:04Z. Reach: @modelcontextprotocol/sdk
+  # (mcp-server, dev-only). SDK 1.32.2 is the newest release and declares
+  # hono ^4.11.4 — no bump path exists, hence the exact override; drop it
+  # once a natural re-resolution picks >=4.13.16.
+  'hono@>=4.0.0 <4.13.16': 4.13.16
+  # @hono/node-server (GHSA-jpvv-r467-5p4w, GHSA-qv5m-9pm6-hqp3 MODERATE):
+  # patched in 2.1.6, published 2026-11-02 10:22Z, cleared the age gate
+  # 2026-11-16 10:22Z. Same SDK reach and override rationale as hono above.
+  '@hono/node-server@>=2.0.0 <2.1.6': 2.1.6
   # undici HIGH advisories (GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26,
   # GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm — fetch/redirect issues;
   # patches published 2026-10-15, age gate waived by Kurt 2026-10-28,
