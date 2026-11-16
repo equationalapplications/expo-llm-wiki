@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 10 — under review (T3 delta-5 pending; delta-4's findings folded)**  
+**Status: Draft rev 11 — under review (T3 delta-6 pending; delta-5's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -77,13 +77,17 @@ Store-wide `wiki.compact()` (owner question A on scope; a **new public API** —
 `compact` exists in this tree). Composition, in order (T3 M7 — each step surfaces errors; a
 failed step fails the compact and reports where it stopped):
 
-1. **Per-entity prune** with `retainSoftDeletedFor: 0`, **inheriting `runPrune`'s safety
-   holds**: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
-   `retainEventsFor` is pinned to the engine default (events are kept; the
-   `includeEvents`-shaped opt-in governs their deletion, T3 m1 — under the `'legacy'`
-   retention mode events delete by age without a watermark guard, so the
-   keep-librarian-unread guarantee holds under ops/deferred modes only; documented). Holds are
-   **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
+1. **Per-entity prune** with `retainSoftDeletedFor: 0` **and `retainEventsFor: null`** — events
+   are genuinely **kept** by compact (T3 delta-6 MAJOR-2: the engine default is
+   `pruneEventsAfter ?? 30` (`MaintenanceService.ts:254`), which silently deletes events older
+   than 30 days — the opposite of this spec's "events kept unless an `includeEvents`-shaped
+   opt-in" framing; compact passes `retainEventsFor: null` explicitly, and the opt-in for
+   event deletion is the `clearAll({ includeEvents: true })` full-wipe path, owner question D).
+   Inheriting `runPrune`'s safety
+   holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
+   Under the `'legacy'` retention mode events delete by age without a watermark guard, so the
+   keep-librarian-unread guarantee holds under ops/deferred modes only; documented.
+   Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
    than throwing (T3 m2). **Scope (T3 delta-2 M2):** that error covers **external-removal
    holds only** (hook/timeout/unconfirmed removal, `MaintenanceService.ts:397-401`);
@@ -120,6 +124,9 @@ failed step fails the compact and reports where it stopped):
 6. **`syncEntries` for the entities compact pruned** — **immediately after the VACUUM**
    (mirroring `runPrune`, `MaintenanceService.ts:451`) so the FTS index is rebuilt against
    the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
+   Note: step 1's `runPrune` already ran `syncEntries` (pre-VACUUM) — that pass is
+   **redundant but harmless**; do not "deduplicate" by removing this post-VACUUM one (T3
+   delta-6 m2).
 7. FTS `'optimize'` on both FTS tables when they exist — **after** `syncEntries`, so the
    delete markers `syncEntries` introduces are merged away under the pragma (a `rebuild`
    escape hatch is exposed as `compact({ rebuild: true })` for stores recovering from
@@ -213,12 +220,22 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
   required — failure injected **after `bulkDeletePruned` returns, before the ledger insert**,
   asserting the staged outbox rows (`EntryRepository.ts:868-874`) roll back too; T3 delta-4
-  m4). **Key source inside the transaction (T3 delta-3 M2):** `bulkDeletePruned` already runs
-  `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) — it is pinned to return
-  `RETURNING id, source_ref, source_hash` (the in-transaction SELECT alternative is rejected:
-  the guard at `:852-853` can keep rows the SELECT already read, making it over-inclusive).
+  m4). **Key source inside the transaction (T3 delta-3 M2, refined T3 delta-6 m1):**
+  `bulkDeletePruned` already runs
+  `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) **and already collects deleted ids
+  through its `{ deletedIds }` output-array option** (`:365`) — that option is extended to
+  collect `{id, source_ref, source_hash}`; **the return value stays a row count**
+  (`deletedEntries` depends on it). The in-transaction SELECT alternative is rejected:
+  the guard at `:852-853` can keep rows the SELECT already read, making it over-inclusive.
   **All prune paths write the ledger**, including the
   `'legacy'`/no-ledger-gate branches (`MaintenanceService.ts:338-348`).
+  **Gate on table existence (T3 delta-6 MAJOR-1):** that branch is the store whose
+  `setup()` never ran — no ledger table exists ("no ledger table", `:339`; it is a
+  removal-ledger gate, **not** the librarian's `'legacy'` retention mode). There, the ledger
+  write is **skipped** (an `INSERT` would throw "no such table" inside the transaction and
+  roll back `bulkDeletePruned`, turning every working prune into a failure) and a
+  **`source_gc_degraded` diagnostic** fires: prune proceeds, GC coverage is degraded and
+  surfaced. Test: prune with no `source_gc_pending` table still hard-deletes.
 - **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
   steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
