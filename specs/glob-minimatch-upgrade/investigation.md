@@ -1,6 +1,6 @@
 # Investigation: adopt glob 14.0.2 / minimatch 11.0.1 to clear GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249
 
-**Date:** 2026-11-16 (rev 3 — Opus r2 delta folded: drop-condition substance, status caveat, drift attribution precision)
+**Date:** 2026-11-16 (rev 4 — Opus ladder CONVERGED: r3 APPROVE WITH NITS, nit folded)
 **Status:** Step 0 — investigation, converged pending owner ruling (see
 Precondition). The branch must NOT merge as the fix until `spec.md`,
 `plan.md` and `LEDGER.md` exist in this folder and the #278 ruling is
@@ -151,7 +151,10 @@ workbox duplicate-entry drift; and the drop condition:
 > declare glob or minimatch — the range holders to watch are the
 > transitive parents: @expo/\* (glob `^13.0.0`), workbox-build (glob
 > `^11.0.1`), eslint + @typescript-eslint/typescript-estree +
-> @expo/fingerprint (minimatch `^10.2.x`). Re-check in every cooldown
+> @expo/fingerprint (minimatch `^10.2.x`). `pnpm why` lists the parents
+> but shows only resolved versions — check each parent's DECLARED range
+> with `pnpm view <parent>@<locked> dependencies.glob` (or
+> `dependencies.minimatch`). Re-check in every cooldown
 > sweep (the standing cadence that already re-derives the audit surface).
 
 No allowlist change: neither GHSA was allowlisted.
@@ -239,3 +242,12 @@ pnpm-workspace.yaml with drop condition)"; the PR #400 status comment's
   to "attributed — only variable in the A/B, precise pattern unidentified";
   the unprobed @expo/fingerprint + @expo/config anchored-ignore exposure is
   now an explicit acceptance item in Open question 2.
+- **rev 4 (2026-11-16):** Opus r3 delta (effort low, $0.29, 1 turn):
+  **APPROVE WITH NITS** — all r2 findings verified fixed, facts re-checked
+  against pnpm-workspace.yaml (in-major examples, gate dates, allowlist).
+  One nit folded: `pnpm why` shows only resolved versions, so the drop
+  condition now also specifies `pnpm view <parent>@<locked>
+  dependencies.glob|minimatch` for the declared-range check. **Opus ladder
+  converged.**
+- **rev 5 (pending):** Tier-4 Fable review of this converged doc (final
+  step-0 tier).
