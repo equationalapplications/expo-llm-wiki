@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 7 — under review (T3 delta-2 pending; owner tier selection)**  
+**Status: Draft rev 8 — under review (T3 delta-3 pending)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -85,7 +85,13 @@ failed step fails the compact and reports where it stopped):
    keep-librarian-unread guarantee holds under ops/deferred modes only; documented). Holds are
    **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
-   than throwing (T3 m2).
+   than throwing (T3 m2). **Scope (T3 delta-2 M2):** that error covers **external-removal
+   holds only** (hook/timeout/unconfirmed removal, `MaintenanceService.ts:397-401`);
+   **event-retention holds do not throw** — they surface solely as the
+   `event_retention_held` diagnostic (`:436-439`), so compact reports them via its result
+   (a held-event count per entity, from `countHeldBack`) and the diagnostic, not via the
+   error channel. Step 1 runs prune with **`vacuum: false`** — the per-entity VACUUM must not
+   run N times; the wrapped store-wide VACUUM happens once at step 6 (T3 delta-2 m2).
 2. **Source-store GC** (§5) — drains the durable `source_gc_pending` ledger (§5), never
    collect-by-absence.
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
@@ -197,7 +203,10 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   7-day sweep) and compact's step 1 — records the
   `(entity_id, source_ref, source_hash)` keys of the rows it hard-deleted into a new
   **`source_gc_pending` ledger table** (new migration; unconditional schema, unlike the
-  dropped v18). `runPrune` returns counts today (`MaintenanceService.ts:249`, `:457`), so the
+  dropped v18). **The ledger insert commits in the same transaction as the entry
+  hard-deletes** (T3 delta-2 M3: a crash between delete and insert would lose the key forever
+  — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
+  required). `runPrune` returns counts today (`MaintenanceService.ts:249`, `:457`), so the
   ledger is the only durable channel.
 - **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
@@ -229,11 +238,15 @@ back), and the no-opt-out pragma statement.
   retired-table reclaim-to-completion + full ledger drain with surfaced errors.
 - `packages/core/src/db/migrations.ts` — new migration: `source_gc_pending` ledger table
   (unconditional schema). No option migration (per-open gate, §4).
-- `packages/core/src/db/schema.ts` / setup path — `PRAGMA secure_delete=ON` + read-back in
-  `setup()`.
+- `packages/core/src/db/schema.ts` / `packages/core/src/WikiMemory.ts` `setup()` —
+  `PRAGMA secure_delete=ON` + read-back in `setup()` (T3 delta-2 m1: one file named).
+- `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains **only** the
+  post-VACUUM `wal_checkpoint(TRUNCATE)`; the watermark wrapper stays in
+  `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 6 governs).
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
   lift + `chainEntryIds`/`truncated`); `compact()` (7-step composition per §2, incl.
-  source-store GC with the positive predicate and wrapped VACUUM); hold catching/reporting.
+  source-store GC ledger drain and `_wrappedVacuum()`); hold catching/reporting (external
+  holds via the error channel, event holds via result + diagnostic).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
 - `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
   detection) + dry-run chain listing helper.
@@ -262,9 +275,13 @@ back), and the no-opt-out pragma statement.
      must not be vacuous). Then `forget({ entryId })`, `runPrune({ retainSoftDeletedFor: 0 })`,
      `compact()` — assert the canary is absent from the entry row, all FTS surfaces (db file,
      `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and — via the compact-time
-     source GC — from `source_documents`/`source_passages`. **Second case:** a document backing
-     **two** facts — after forgetting one, its `source_documents` row and passages must
-     **survive** (GC must not fire while a live fact references it). `events.summary` and the
+     `source_documents`/`source_passages`. **Second case:** a document backing **two** facts —
+     after forgetting one, its `source_documents` row and passages must **survive** (GC must
+     not fire while a live fact references it). The explicit
+     `runPrune({ retainSoftDeletedFor: 0 })` before `compact()` is **intentional** (T3
+     delta-2 m4): it exercises the ledger path across separate prune and compact calls — the
+     exact shape of the documented host recipe, where the ledger must carry the keys.
+     `events.summary` and the
      entity summary are documented carve-outs at this tier (owner question D).
    - *Full-wipe tier:* **seed every derived copy explicitly and assert each exists before the
      wipe** (T3 M1 — none of them arise from ingestion alone): an event whose `summary`
@@ -276,8 +293,13 @@ back), and the no-opt-out pragma statement.
    proof).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
    canary — pins why the pragma is unconditional.
-3. **compact() holds:** with an unconfirmed external removal and an unread event, `compact()`
-   hard-deletes nothing held and reports the holds.
+3. **compact() holds:** with an unconfirmed external removal, `compact()` hard-deletes nothing
+   held and reports the holds via `PrunePartialFailureError` semantics; with a held-back
+   unread event, compact **reports the held-event count in its result** and the
+   `event_retention_held` diagnostic fires (no throw — T3 delta-2 M2). Plus the
+   **ledger crash-injection test** (T3 delta-2 M3): a crash between the entry hard-delete and
+   the `source_gc_pending` insert is impossible (same transaction) — inject a failure and
+   assert neither the delete nor the ledger row landed.
 4. **Chain forget:** fixture lineage with fan-in (A→C←B: forgetting A reaches C, not B —
    documented); dry-run lists exactly the walked ids, `truncated` + cap notice on truncation;
    real run soft-deletes the chain (chain ids covered by sync/drain/backstop); erasure
