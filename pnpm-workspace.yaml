@@ -74,6 +74,11 @@ overrides:
   # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
   # express dependency (new with packages/mcp-server). Same waiver rationale.
   'body-parser@>=2.0.0 <2.4.0': 2.4.0
+  # glob 14.0.2 / minimatch 11.0.1 forced majors (GHSA-3g3m-2fjr-6pw4 /
+  # GHSA-g3hv-75wg-m249) — step-0 isolation experiment,
+  # specs/glob-minimatch-upgrade (issue #278).
+  'glob@>=9.0.0 <14.0.2': 14.0.2
+  'minimatch@>=7.0.0 <11.0.1': 11.0.1
   # node-forge 2026-11-01 advisory burst (GHSA-7wch-p9px-956x,
   # GHSA-jc66-7q78-782g, GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx,
   # GHSA-5x38-2vff-x55p HIGH, plus moderate/low siblings): all patched in
