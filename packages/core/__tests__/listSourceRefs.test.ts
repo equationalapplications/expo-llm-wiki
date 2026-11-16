@@ -50,8 +50,8 @@ describe('EntryRepository.listSourceRefs', () => {
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out).toEqual([
-      { sourceRef: 'a.md', sourceHash: hashC, factCount: 2, lastIngestedAt: 1100 },
-      { sourceRef: 'b.md', sourceHash: hashD, factCount: 1, lastIngestedAt: 1200 },
+      { sourceRef: 'a.md', sourceHash: hashC, factCount: 2, lastIngestedAt: 1100, stored: null },
+      { sourceRef: 'b.md', sourceHash: hashD, factCount: 1, lastIngestedAt: 1200, stored: null },
     ]);
   });
 
@@ -71,7 +71,7 @@ describe('EntryRepository.listSourceRefs', () => {
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out).toEqual([
-      { sourceRef: 'a.md', sourceHash: hashLive, factCount: 1, lastIngestedAt: 1100 },
+      { sourceRef: 'a.md', sourceHash: hashLive, factCount: 1, lastIngestedAt: 1100, stored: null },
     ]);
   });
 
@@ -99,7 +99,7 @@ describe('EntryRepository.listSourceRefs', () => {
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out).toEqual([
-      { sourceRef: 'a.md', sourceHash: null, factCount: 1, lastIngestedAt: 1000 },
+      { sourceRef: 'a.md', sourceHash: null, factCount: 1, lastIngestedAt: 1000, stored: null },
     ]);
   });
 

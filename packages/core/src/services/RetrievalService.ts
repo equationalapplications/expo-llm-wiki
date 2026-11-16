@@ -1,5 +1,5 @@
 import type { SQLiteAdapter } from '../types';
-import type { WikiOptions, MemoryBundle, WikiFact, ReadOptions } from '../types';
+import type { WikiOptions, MemoryBundle, WikiFact, ReadOptions, SourcePassage } from '../types';
 import { WikiInvalidReadOptions, isWikiSearchUnavailableError } from '../types';
 import { EntryRepository, EntryRowMetadata, EntryRowWithEmbeddings } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -16,6 +16,91 @@ type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
+const DEFAULT_SOURCE_PASSAGES = 8;
+const DEFAULT_SOURCE_CHAR_BUDGET = 4000;
+
+const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase()); // length-preserving
+const isHigh = (c: number): boolean => c >= 0xD800 && c <= 0xDBFF;
+const isLow = (c: number): boolean => c >= 0xDC00 && c <= 0xDFFF;
+
+/**
+ * Terms the engine anchors on. Strategies return no matched-term list, so the
+ * query's own tokens stand in for "terms the strategy matched" (spec section 7).
+ */
+function queryTerms(query: string): string[] {
+  // No `_`: MiniSearch 7.2.0's default tokenizer splits on
+  // /[\n\r\p{Z}\p{P}]+/u, and `_` is Unicode Pc (inside \p{P}) — FTS5's
+  // unicode61 treats it as a separator too. A term of underscores alone has
+  // no searchable form in either engine, so it must not satisfy §7's
+  // at-least-one-searchable-term rule.
+  return [...new Set(asciiLower(query).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 0))];
+}
+
+/**
+ * Spec source-store section 7: the sources read-option requires a non-empty
+ * query on EVERY read path — including the zero-entity early return — so
+ * callers get one consistent contract instead of a silent empty group.
+ */
+function assertSourcesQuery(opt: NonNullable<ReadOptions['sources']> | undefined): void {
+  const query = opt?.query;
+  if (typeof query !== 'string' || query.trim() === '') {
+    throw new WikiInvalidReadOptions('sources.query', 'must be a non-empty string');
+  }
+  if (queryTerms(query).length === 0) {
+    throw new WikiInvalidReadOptions('sources.query', 'must contain at least one searchable term');
+  }
+}
+
+/**
+ * Window `text` (one passage) to at most `budget` UTF-16 units; offsets are
+ * relative to `text` (spec section 7). Anchor: earliest literal occurrence of
+ * any term, ASCII-case-insensitive; none -> passage start. The window is the
+ * WIDEST whitespace-bounded one (edges on whitespace-delimited token
+ * boundaries) containing the whole match that fits `budget`, never smaller
+ * than the match's own tokens; if those tokens (or the match) exceed the
+ * budget, hard-cut `budget` units from the match start, never splitting a
+ * surrogate pair.
+ */
+function windowPassage(text: string, terms: readonly string[], budget: number): { start: number; end: number; truncated: boolean } {
+  if (text.length <= budget) return { start: 0, end: text.length, truncated: false };
+  const lower = asciiLower(text);
+  let a = -1;
+  let len = 0;
+  for (const t of terms) {
+    const i = lower.indexOf(t);
+    if (i >= 0 && (a < 0 || i < a || (i === a && t.length > len))) { a = i; len = t.length; }
+  }
+  const hardCut = (from: number): { start: number; end: number; truncated: boolean } => {
+    let end = Math.min(text.length, from + budget);
+    if (end < text.length && isHigh(text.charCodeAt(end - 1)) && isLow(text.charCodeAt(end))) {
+      if (end - 1 > from) end -= 1; // keep whole units only: step back inside the window
+      else return { start: from, end: from, truncated: true }; // budget 1: no surrogate-safe cut fits
+    }
+    return { start: from, end, truncated: from > 0 || end < text.length };
+  };
+  if (a < 0) return hardCut(0);
+  if (len > budget) return hardCut(a);
+  const toks: Array<[number, number]> = [];
+  for (const m of text.matchAll(/\S+/g)) toks.push([m.index!, m.index! + m[0].length]);
+  const mEnd = a + len;
+  const ti = toks.findIndex(([, e]) => e > a);
+  if (ti < 0) return hardCut(a);
+  let tj = ti;
+  while (tj + 1 < toks.length && toks[tj]![1] < mEnd) tj++;
+  if (toks[tj]![1] - toks[ti]![0] > budget) return hardCut(a);
+  // Widest token-aligned window [l..r] with l <= ti, r >= tj. As l moves left the
+  // furthest fitting r only shrinks, so r is one moving pointer.
+  let r = toks.length - 1;
+  let best = { start: toks[ti]![0], end: toks[tj]![1] };
+  for (let l = ti; l >= 0; l--) {
+    const s = toks[l]![0];
+    while (r > tj && toks[r]![1] - s > budget) r--;
+    if (toks[r]![1] - s > budget) break;
+    if (toks[r]![1] - s > best.end - best.start) best = { start: s, end: toks[r]![1] };
+  }
+  return { ...best, truncated: true };
+}
 
 export class RetrievalService {
   constructor(
@@ -35,8 +120,13 @@ export class RetrievalService {
       : undefined;
     const exposeMetadata = shouldExposeReadMetadata(entityId);
 
+    // Spec source-store §7: the sources query rule holds on every read path —
+    // a blank query throws even when no entities resolve (delta finding A).
+    if (options?.sources) assertSourcesQuery(options.sources);
+
     if (entityIds.length === 0) {
       const empty: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
+      if (options?.sources) empty.sources = [];
       if (exposeMetadata) {
         empty.metadata = { query, entityIds: [] };
         if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) empty.metadata.tierWeights = sanitizedTierWeights;
@@ -775,6 +865,7 @@ export class RetrievalService {
     }
 
     const bundle: MemoryBundle = { facts, tasks, events: events.reverse(), edges: [] };
+    if (options?.sources) bundle.sources = await this._readSources(entityIds, options.sources);
 
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };
@@ -784,6 +875,42 @@ export class RetrievalService {
     }
 
     return bundle;
+  }
+
+  /**
+   * The `sources` group (spec source-store section 7). One search per entity,
+   * so ranking and caps never cross entities. No model call anywhere.
+   * `charBudget` is per entity: windows are cut in rank order against the
+   * entity's remaining budget, and once it is spent lower-ranked hits are not returned.
+   */
+  private async _readSources(
+    entityIds: readonly string[],
+    opt: NonNullable<ReadOptions['sources']>,
+  ): Promise<SourcePassage[]> {
+    const pos = (v: unknown, d: number): number =>
+      typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : d;
+    const maxPassages = pos(opt.maxPassages, DEFAULT_SOURCE_PASSAGES);
+    const charBudget = pos(opt.charBudget, DEFAULT_SOURCE_CHAR_BUDGET);
+    assertSourcesQuery(opt);
+    const query = opt.query as string;
+    const terms = queryTerms(query);
+    const out: SourcePassage[] = [];
+    for (const entityId of entityIds) {
+      const hits = await this.searchService.searchPassages(query, entityId, maxPassages);
+      let remaining = charBudget; // per entity: this entity's windows together never exceed charBudget
+      for (const h of hits) {
+        if (remaining <= 0) break;
+        const w = windowPassage(h.text, terms, remaining);
+        if (w.end === w.start) continue; // budget 1 on an astral boundary: nothing surrogate-safe to show
+        remaining -= w.end - w.start;
+        out.push({
+          entityId, sourceRef: h.source_ref, sourceHash: h.source_hash, seq: h.seq,
+          startOffset: h.start_offset + w.start, endOffset: h.start_offset + w.end,
+          truncated: w.truncated, text: h.text.slice(w.start, w.end),
+        });
+      }
+    }
+    return out;
   }
 
   /**

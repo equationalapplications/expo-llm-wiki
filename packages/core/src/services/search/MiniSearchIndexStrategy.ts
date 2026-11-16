@@ -1,12 +1,38 @@
 // packages/core/src/services/search/MiniSearchIndexStrategy.ts
 
 import MiniSearch from 'minisearch';
+import type { SQLiteAdapter } from '../../types';
 import type {
   IndexDocument,
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
+  PassageHit,
 } from './IndexStrategy';
+import { hydratePassageHits } from './Fts5IndexStrategy';
+
+interface PassageDoc { id: string; entity_id: string; document_id: string; text: string }
+
+export type { PassageSearchResult } from './Fts5IndexStrategy';
+
+/**
+ * Passage slices of one entity, cut from `source_documents.text` at the stored
+ * UTF-16 offsets. Reads one document at a time.
+ */
+async function loadStoredPassages(db: SQLiteAdapter, prefix: string, entityId: string): Promise<PassageDoc[]> {
+  const out: PassageDoc[] = [];
+  const docs = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${prefix}source_documents WHERE entity_id = ?`, [entityId]);
+  for (const d of docs) {
+    const doc = await db.getFirstAsync<{ text: string }>(`SELECT text FROM ${prefix}source_documents WHERE id = ?`, [d.id]);
+    if (!doc) continue;
+    const rows = await db.getAllAsync<{ id: string; start_offset: number; end_offset: number }>(
+      `SELECT id, start_offset, end_offset FROM ${prefix}source_passages WHERE document_id = ? ORDER BY seq`, [d.id]);
+    for (const r of rows) {
+      out.push({ id: r.id, entity_id: entityId, document_id: d.id, text: doc.text.slice(Number(r.start_offset), Number(r.end_offset)) });
+    }
+  }
+  return out;
+}
 
 /**
  * In-RAM keyword index. Extracted from `SearchService` without behavior
@@ -151,6 +177,77 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       entity_id: r.entity_id as string,
       score: r.score,
     }));
+  }
+
+  // ---- Source-store passage index (spec source-store §6) --------------------
+  // A second in-heap instance over the same passage slices as the FTS5 path.
+
+  private passageIndex: MiniSearch<PassageDoc> = this.createPassageIndex();
+  private passageIdsByEntity = new Map<string, Set<string>>();
+  /** Handle `reindexSourcePassages` last indexed from; `searchPassages` hydrates hits through it. */
+  private passageSource: { db: SQLiteAdapter; prefix: string } | null = null;
+
+  private createPassageIndex(): MiniSearch<PassageDoc> {
+    return new MiniSearch({
+      fields: ['text'],
+      storeFields: ['entity_id', 'document_id'],
+      autoVacuum: false, // explicit vacuum below, same reason as the facts instance (#64)
+      searchOptions: { fuzzy: 0.2, prefix: true },
+    });
+  }
+
+  /**
+   * Re-index stored passages from SQLite: one entity, or every stored entity
+   * when `entityId` is omitted (the open-time pass; up to `maxTotalChars` per
+   * entity, and the heap grows with the number of stored entities, spec §6).
+   * It is also the post-commit sync after forget/clearAll: deleted passages
+   * drop out because the reload no longer finds their rows (spec §5).
+   * Reads happen first; the discard and add are synchronous, so the swap is
+   * atomic (a concurrent search sees the index wholly before or wholly after),
+   * and the vacuum runs after the swap.
+   */
+  async reindexSourcePassages(db: SQLiteAdapter, prefix: string, entityId?: string): Promise<void> {
+    this.passageSource = { db, prefix };
+    const entityIds = entityId !== undefined
+      ? [entityId]
+      : [...new Set([
+        ...(await db.getAllAsync<{ entity_id: string }>(`SELECT DISTINCT entity_id FROM ${prefix}source_documents`)).map((r) => r.entity_id),
+        ...this.passageIdsByEntity.keys(),
+      ])];
+    for (const id of entityIds) {
+      const passages = await loadStoredPassages(db, prefix, id);
+      for (const old of this.passageIdsByEntity.get(id) ?? []) {
+        if (this.passageIndex.has(old)) this.passageIndex.discard(old);
+      }
+      const ids = new Set<string>();
+      for (const d of passages) { this.passageIndex.add({ ...d }); ids.add(d.id); }
+      if (ids.size > 0) this.passageIdsByEntity.set(id, ids);
+      else this.passageIdsByEntity.delete(id);
+      if (this.passageIndex.dirtCount > 0) await this.passageIndex.vacuum();
+    }
+  }
+
+  /** Best-match-first passage search over the entities in `options.entityIds`. */
+  async searchPassages(query: string, options: { entityIds: string[]; limit: number }): Promise<PassageHit[]> {
+    if (options.entityIds.length === 0 || !this.passageSource) return [];
+    const allowed = new Set(options.entityIds);
+    const raw = this.passageIndex.search(query, { filter: (r) => allowed.has(r.entity_id as string), combineWith: 'OR' });
+    raw.sort((a, b) => (b.score - a.score) || a.id.localeCompare(b.id));
+    // The index may hold rows deleted after it loaded; a hit counts only
+    // while its source_passages row exists (spec §5). Drop dead rows BEFORE
+    // slicing, so a deleted passage never consumes a limit slot a live one
+    // can fill (the FTS5 path's SQL join does the same). One indexed lookup
+    // per entity.
+    const live = new Set<string>();
+    for (const eid of options.entityIds) {
+      const rows = await this.passageSource.db.getAllAsync<{ id: string }>(
+        `SELECT id FROM ${this.passageSource.prefix}source_passages WHERE entity_id = ?`, [eid]);
+      for (const row of rows) live.add(row.id);
+    }
+    const hits = raw.filter((r) => live.has(r.id as string)).slice(0, options.limit).map((r) => ({
+      id: r.id as string, entity_id: r.entity_id as string, document_id: r.document_id as string, score: r.score,
+    }));
+    return hydratePassageHits(this.passageSource.db, this.passageSource.prefix, hits);
   }
 
   /**

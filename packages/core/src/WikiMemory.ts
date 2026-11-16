@@ -26,6 +26,8 @@ import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
+import { SourceStoreService } from './services/SourceStoreService';
+import type { StoreSourceResult, StoredSource, StoredSourceSummary } from './types';
 import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
 import { createIndexStrategy } from './services/search/createIndexStrategy';
 import { monotonicNow } from './utils/monotonicNow';
@@ -125,6 +127,7 @@ export class WikiMemory {
   private importExportService: ImportExportService;
   private retrievalService: RetrievalService;
   private writeService: WriteService;
+  private sourceStoreService: SourceStoreService;
   private promptService: PromptService;
   private ontologyService: OntologyService;
   private graphTraversalService: GraphTraversalService;
@@ -229,6 +232,7 @@ export class WikiMemory {
       this.embeddingService,
       this.options,
       this.vectorRemovalService,
+      this.prefix,
     );
     this.retrievalService = new RetrievalService(
       this.options,
@@ -238,6 +242,7 @@ export class WikiMemory {
       this.metadataRepo,
       this.searchService,
     );
+    this.sourceStoreService = new SourceStoreService(this.db, this.prefix, this.options, this.jobManager);
     this.writeService = new WriteService(
       this.db,
       this.options,
@@ -407,9 +412,13 @@ export class WikiMemory {
    * host runs a plain `setup()` outside the lease.
    *
    * Keyword-index catch-up work is bounded by `config.setupBudgetMs`; anything
-   * left converges on later opens and no-arg `syncSearchIndex()` calls. Not
-   * bounded: an index reset (tokenizer change, re-attach after detach, a lost
-   * or inconsistent index), which runs as one unchunked transaction.
+   * left converges on later opens, and on no-arg `syncSearchIndex()` calls for
+   * the entries ledger. Passage-ledger leftover converges on later opens and on
+   * passage-store writes for the entity (`storeSource`, `forget`,
+   * `importDump`), which drain that entity's rows; no-arg calls do not touch
+   * the passage ledger. Not bounded: an index reset (tokenizer change, re-attach
+   * after detach, a lost or inconsistent index), which runs as one unchunked
+   * transaction.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
     const setupBudgetMs = this.setupBudgetMs();
@@ -467,6 +476,8 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
+    // Spec source-store §6: FTS5 drains the passage ledger; the fallback re-indexes every stored entity at open.
+    await this.searchService.syncPassages(this.db, this.prefix, undefined, openDeadline);
     await this.startSetupRemovalDrain();
   }
 
@@ -725,6 +736,7 @@ export class WikiMemory {
     sourceHash: string | null;
     factCount: number;
     lastIngestedAt: number;
+    stored?: { charCount: number; staleHash?: true } | null;
   }>> {
     return this.entryRepo.listSourceRefs(entityId);
   }
@@ -997,6 +1009,7 @@ export class WikiMemory {
             // A new MiniSearch index starts empty and needs the full sync. A ledger
             // strategy gets its one quantum from the syncStale() below (#284 review).
             if (this.searchService.isKeywordAvailable() && !this.searchService.hasLedger()) await this.searchService.sync();
+            if (this.searchService.isKeywordAvailable()) await this.searchService.syncPassages(this.db, this.prefix);
           } finally {
             if (this.searchService.isKeywordAvailable()) {
               this.reinitFailures = 0;
@@ -1042,8 +1055,17 @@ export class WikiMemory {
     return this.metadataRepo.getMeta(entitySummaryMetaKey(entityId));
   }
 
-  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
-    return this.importExportService.importDump(dump, opts);
+  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<import('./types').ImportDumpResult> {
+    try {
+      return await this.importExportService.importDump(dump, opts);
+    } finally {
+      // Import re-cuts stored sources inside its transaction; index them once it committed (spec §6, §8).
+      // Also runs after a failed import (e.g. WikiBusyError): intentional and harmless — it reads committed state and never rejects.
+      // Scoped to the dump's entities so MiniSearch does not re-read every stored entity.
+      for (const entityId of Object.keys(dump?.entities ?? {})) {
+        await this.searchService.syncPassages(this.db, this.prefix, entityId);
+      }
+    }
   }
 
   /**
@@ -1069,7 +1091,40 @@ export class WikiMemory {
     params: ForgetParams,
     opts?: { dryRun?: boolean },
   ): Promise<ForgetResult> {
-    return this.maintenanceService.forget(entityId, params, opts);
+    try {
+      return await this.maintenanceService.forget(entityId, params, opts);
+    } finally {
+      // Spec §5/§6: removal sync for stored passages, after the delete committed (also when the
+      // external-deletion hook threw, since the local delete stays committed; a sync after any other
+      // failure is intentional and harmless — it reads committed state and never rejects). clearAll
+      // wipes only THIS entity (MaintenanceService deletes WHERE entity_id = ?), so the sync is
+      // entity-scoped like every other forget shape; a store-wide sync would drain other entities'
+      // ledgers (FTS5) or re-read every stored entity's text (MiniSearch) on an ordinary call.
+      if (!opts?.dryRun) {
+        await this.searchService.syncPassages(this.db, this.prefix, entityId);
+      }
+    }
+  }
+
+  /** Store a source's text (spec source-store §7). Refusals return `stored: false`; a busy lock throws. */
+  async storeSource(
+    entityId: string,
+    params: { sourceRef: string; sourceHash: string; text: string },
+  ): Promise<StoreSourceResult> {
+    assertEntityId(entityId);
+    const result = await this.sourceStoreService.storeSource(entityId, params);
+    if (result.stored) await this.searchService.syncPassages(this.db, this.prefix, entityId);
+    return result;
+  }
+
+  async getStoredSource(entityId: string, sourceRef: string): Promise<StoredSource | null> {
+    assertEntityId(entityId);
+    return this.sourceStoreService.getStoredSource(entityId, sourceRef);
+  }
+
+  async listStoredSources(entityId: string): Promise<StoredSourceSummary[]> {
+    assertEntityId(entityId);
+    return this.sourceStoreService.listStoredSources(entityId);
   }
 
   /**

@@ -291,6 +291,8 @@ export interface LibrarianConfig {
 }
 
 export interface WikiConfig {
+  /** Source-store limits (spec source-store section 9). Defaults live in SourceStoreService. */
+  sourceStore?: { maxCharsPerSource?: number; maxTotalChars?: number };
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
    * `^[A-Za-z][A-Za-z0-9_]{0,30}_$` (letter, then alphanumeric/underscore,
@@ -428,6 +430,12 @@ export interface WikiConfig {
 }
 
 export interface ReadOptions {
+  /**
+   * Opt in to stored-source passages (spec source-store section 7). Per entity:
+   * at most `maxPassages` (default 8) windows, each at most `charBudget`
+   * (default 4,000) UTF-16 code units.
+   */
+  sources?: { query: string; maxPassages?: number; charBudget?: number };
   maxResults?: number;
   /**
    * undefined → use WikiConfig.preFilterLimit (or no pre-filter if also unset).
@@ -883,11 +891,16 @@ export type WikiDiagnosticCode =
   | 'guidance_too_long'
   | 'guidance_resolver_failed'
   | 'source_pointer_unresolved'
-  | 'source_pointer_invalid';
+  | 'source_pointer_invalid'
+  | 'source_store_source_too_large'
+  | 'source_store_budget_exceeded'
+  | 'source_store_hash_mismatch'
+  | 'source_store_duplicate_hash'
+  | 'source_store_text_not_storable';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -1053,16 +1066,34 @@ export interface WikiOptions {
   onDiagnostic?: (diagnostic: WikiDiagnostic) => void;
 }
 
+/** One windowed stored-source passage in a `read()` `sources` group (spec source-store section 7). */
+export interface SourcePassage {
+  entityId: string;
+  sourceRef: string;
+  sourceHash: string;
+  seq: number;
+  /** UTF-16 offset of `text` within the stored source, inclusive. */
+  startOffset: number;
+  /** UTF-16 offset, exclusive: `storedText.slice(startOffset, endOffset) === text`. */
+  endOffset: number;
+  /** True when `text` is a window cut from a larger passage. */
+  truncated: boolean;
+  text: string;
+}
+
 export interface MemoryBundle {
   facts: WikiFact[];
+  /** Present only when `read()` was given the `sources` option. Per-entity groups, never merged. */
+  sources?: SourcePassage[];
   tasks: WikiTask[];
   events: WikiEvent[];
   edges?: WikiEdge[];
   /** Entity summary prose for OKF profile ≥ 1 round-trip. Omitted = no summary (Clanker default). */
   summary?: string;
   /**
-   * The source store's librarian position. Set by export only; the importer
-   * trusts events at or before it as consolidated at the source.
+   * The exporting database's librarian position. Set by export only; the
+   * importer trusts events at or before it as consolidated at the exporting
+   * database. (Not the source text store; spec source-store §8 naming note.)
    */
   librarian_watermark?: { at: number; id: string };
   factScores?: Record<string, number>;
@@ -1075,9 +1106,59 @@ export interface MemoryBundle {
   };
 }
 
+/** Result of `storeSource` (spec source-store §7). Refusals return `stored: false` with their diagnostics. */
+export type StoreSourceResult =
+  | {
+      stored: true;
+      sourceRef: string;
+      sourceHash: string;
+      charCount: number;
+      passageCount: number;
+      storedAt: number;
+    }
+  | { stored: false; diagnostics: WikiDiagnostic[] };
+
+/** A stored source's text and metadata, as returned by `getStoredSource`. */
+export interface StoredSource {
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  charCount: number;
+  storedAt: number;
+}
+
+/** One entry of `listStoredSources`. */
+export interface StoredSourceSummary {
+  sourceRef: string;
+  sourceHash: string;
+  charCount: number;
+  passageCount: number;
+  storedAt: number;
+}
+
+/** One stored source in a `MemoryDump` (spec source-store §8). Import re-derives passages and `text_hash` from `text`. */
+export interface StoredSourceDump {
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  textHash: string;
+  charCount: number;
+  storedAt: number;
+  /** Fidelity only: import ignores this and re-cuts from `text`. */
+  passages: Array<{ seq: number; startOffset: number; endOffset: number }>;
+}
+
+/** Result of `importDump` (spec source-store §8): sources the import refused. */
+export interface ImportDumpResult {
+  skippedSources: Array<{ sourceRef: string; code: WikiDiagnosticCode }>;
+}
+
+/** A dump entity: the bundle plus its stored sources (dump-only; `MemoryBundle` stays the read shape). */
+export type MemoryDumpEntity = MemoryBundle & { storedSources?: StoredSourceDump[] };
+
 export interface MemoryDump {
   generatedAt: number;
-  entities: Record<string, MemoryBundle>;
+  entities: Record<string, MemoryDumpEntity>;
   /**
    * Source-pointer parse report (specs/source-pointers §Export, import, and OKF).
    * Present ONLY when `parseOkfBundle` dropped a malformed `source_pointer`
@@ -1133,7 +1214,8 @@ export type WikiBusyOperation =
   | 'reembed'
   | 'import'
   | 'forget'
-  | 'ontologyBackfill';
+  | 'ontologyBackfill'
+  | 'store';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.

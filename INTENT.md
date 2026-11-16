@@ -183,28 +183,32 @@ around embedding switches both land here.
 time; the fallback, the callback, the mismatch count and `runReembed` all
 exist.
 
-### 5. Documents are immutable facts
+### 5. Documents are immutable sources and facts
 
 A fact extracted by `ingestDocument()` is stored as `immutable_document`.
 The librarian and heal never rewrite it, and the ops librarian refuses to
 supersede it. It leaves only when you call `forget()` or re-ingest the
 same source.
 
+The engine may also keep a document's text in the source store. The store
+keeps the text as the host handed it. The engine never rewrites, summarizes
+or re-chunks stored text into a different shape. Stored text is not
+evidence on its own: evidence quotes live inside the fact records that
+point at the source. Stored text leaves when you call `forget()` on the
+source, when you store a changed copy under the same `sourceRef`, when
+you wipe the entity, or when you import a dump with `merge: false`
+(which replaces the entity's stored sources with the dump's). The engine
+may not edit a document; deleting one at your request is not editing.
+
+Source pointers on librarian facts shipped 2026-11-14
+(`specs/source-pointers/`); ops facts carry a `source_pointer`, and
+legacy and heal facts carry none — the accepted gap. See
+`docs/ROADMAP.md`, steps 3 and 4.
+
 *Why:* a document is evidence. The engine may reason around it; it may
 not edit it.
 
 **Status: Built.**
-
-**Planned** (owner ruling, 2026-11-13): the engine will also keep a
-document's text as a *source*: stored as it is, searched with no model
-call, and never rewritten. Until that ships, the host keeps the source
-text. A pointer from each fact the librarian writes back to its source
-is planned too (#377) — **status: shipped for the librarian write path**
-(2026-11-14, next minor release, `specs/source-pointers/`: ops facts
-carry a `source_pointer`; legacy and heal facts carry none, recorded as
-the accepted gap). This rule's
-text is reworded in the pull request that ships the source store, not
-before. See `docs/ROADMAP.md`, steps 3 and 4.
 
 ### 6. Honest reporting
 
@@ -380,6 +384,18 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-15 — Rule 5 reworded: the source store ships (PR #396,
+  `specs/source-store/`). The rule now says the engine may keep a
+  document's text in the source store — kept as the host handed it,
+  never rewritten, summarized or re-chunked; not evidence on its own;
+  it leaves on `forget()` of the source, a changed copy under the same
+  `sourceRef`, an entity wipe, or an import of a dump with
+  `merge: false` (Opus impl review, 2026-11-15: the import path
+  hard-deletes the entity's stored sources, so the rule names it), and
+  deleting at your request is not editing. The Planned paragraph's store
+  commitments are removed; the source-pointer shipped-status line and
+  the roadmap cross-reference stay. Why: the rule promised this reword
+  would ride the PR that ships the store, and the store now exists.
 - 2026-11-14 — "How changes are made" step 1 and `specs/README.md` pin
   the cleanup-commit timing: the cleanup commit is the PR's last
   lifecycle commit, pushed after the review loops converge and before

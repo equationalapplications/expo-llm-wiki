@@ -1,4 +1,4 @@
-import type { MemoryBundle, WikiFact, WikiTask, WikiEvent, FormatContextOptions } from '../types';
+import type { MemoryBundle, WikiFact, WikiTask, WikiEvent, FormatContextOptions, SourcePassage } from '../types';
 
 function validateMaxOption(value: number, name: string): void {
   if (!isFinite(value) || value < 0) {
@@ -73,6 +73,11 @@ function renderEventPlain(event: WikiEvent): string {
   return `[${event.event_type} @ ${ts}] ${event.summary}`;
 }
 
+function renderSourceLabel(p: SourcePassage, includeEntityId: boolean): string {
+  const entity = includeEntityId ? `${p.entityId} ` : '';
+  return `${entity}${p.sourceRef} #${p.seq}${p.truncated ? ' (excerpt)' : ''}`;
+}
+
 export function formatContext(
   bundle: MemoryBundle,
   options?: FormatContextOptions
@@ -115,7 +120,10 @@ export function formatContext(
     .sort((a, b) => b.created_at - a.created_at)
     .slice(0, opts.maxEvents);
 
-  if (sortedFacts.length === 0 && sortedTasks.length === 0 && sortedEvents.length === 0) {
+  // Spec source-store §7: the Sources group prints last, and only when present.
+  const sources = bundle.sources ?? [];
+
+  if (sortedFacts.length === 0 && sortedTasks.length === 0 && sortedEvents.length === 0 && sources.length === 0) {
     return '';
   }
 
@@ -148,6 +156,14 @@ export function formatContext(
         lines.push(renderEventMarkdown(event));
       }
     }
+
+    if (sources.length > 0) {
+      lines.push('');
+      lines.push('### Sources');
+      for (const p of sources) {
+        lines.push(`- [${renderSourceLabel(p, opts.includeEntityIds)}] ${p.text.replace(/\n/g, '\n  ')}`);
+      }
+    }
   } else {
     if (sortedFacts.length > 0) {
       lines.push('KNOWN FACTS:');
@@ -165,6 +181,12 @@ export function formatContext(
       lines.push('RECENT EVENTS:');
       for (const event of sortedEvents) {
         lines.push(renderEventPlain(event));
+      }
+    }
+    if (sources.length > 0) {
+      lines.push('SOURCES:');
+      for (const p of sources) {
+        lines.push(`[${renderSourceLabel(p, opts.includeEntityIds)}] ${p.text}`);
       }
     }
   }

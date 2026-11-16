@@ -7,8 +7,10 @@ import type {
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
+  PassageHit,
 } from './search/IndexStrategy';
 import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
+import type { SQLiteAdapter } from '../types';
 
 export interface ScoredRow {
   id: string;
@@ -325,6 +327,46 @@ export class SearchService {
     return results
       .sort((a, b) => this._compareSearchResults(a, b))
       .slice(0, limit);
+  }
+
+  /**
+   * Post-commit passage index sync (spec source-store section 6). FTS5: drains the
+   * passage ledger (per document, entity-scoped when given). MiniSearch: reloads
+   * the entity's stored passages (all stored entities when omitted: the open-time
+   * pass). Serialized on the sync chain; never rejects, like sync().
+   */
+  async syncPassages(
+    db: SQLiteAdapter,
+    prefix: string,
+    entityId?: string,
+    deadline?: number,
+  ): Promise<void> {
+    const s = this.indexStrategy as unknown as {
+      drainPassages?: (o: { entityId?: string; deadline?: number }) => Promise<void>;
+      reindexSourcePassages?: (db: SQLiteAdapter, prefix: string, entityId?: string) => Promise<void>;
+    };
+    if (!s.drainPassages && !s.reindexSourcePassages) return;
+    const work = this.syncChain.then(async () => {
+      try {
+        if (s.drainPassages) await s.drainPassages({ entityId, deadline });
+        else await s.reindexSourcePassages!(db, prefix, entityId);
+      } catch (err) {
+        console.warn(`[WikiMemory] passage index sync failed for ${entityId ?? '*'}:`, err);
+      }
+    });
+    this.syncChain = work;
+    return work;
+  }
+
+  /**
+   * Stored-source passage search for ONE entity (spec source-store section 7:
+   * ranking and caps are per entity). Rides the active strategy; a strategy
+   * without passage search yields none.
+   */
+  async searchPassages(query: string, entityId: string, limit: number): Promise<PassageHit[]> {
+    if (!this.indexStrategy.searchPassages) return [];
+    const hits = await this.indexStrategy.searchPassages(query, { entityIds: [entityId], limit });
+    return hits.filter((h) => Number.isFinite(h.score) && h.entity_id === entityId).slice(0, limit);
   }
 
   /**

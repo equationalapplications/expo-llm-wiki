@@ -200,3 +200,46 @@ export function sweepChunkSql(p: string): readonly string[] {
     `DELETE FROM ${p}fts_map WHERE fts_rowid IN (${orphans})`,
   ];
 }
+
+// ---- Source-store passage index (spec source-store §6) ----------------------
+// Same enqueue-and-drain ledger pattern as entries_fts, with one stated
+// departure: the drain is not all-SQL (it slices the one drained document in JS).
+
+export function passageFtsTriggerNames(p: string): readonly [string, string] {
+  return [`${p}source_passages_fts_ai`, `${p}source_passages_fts_ad`];
+}
+
+/** Virtual table, map, ledger. Created by Fts5IndexStrategy.init, never by setupDatabase. */
+export function passageFtsTablesDdl(p: string): string {
+  return `
+CREATE VIRTUAL TABLE IF NOT EXISTS ${p}source_passages_fts USING fts5(
+  passage_id UNINDEXED, entity_id UNINDEXED, doc_id UNINDEXED, text,
+  tokenize = 'porter unicode61'
+);
+CREATE TABLE IF NOT EXISTS ${p}source_passages_fts_map (
+  fts_rowid INTEGER PRIMARY KEY,
+  passage_id TEXT NOT NULL UNIQUE,
+  doc_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ${p}source_passages_fts_map_doc ON ${p}source_passages_fts_map(doc_id);
+CREATE TABLE IF NOT EXISTS ${p}source_passages_fts_pending (
+  seq INTEGER PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  doc_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ${p}source_passages_fts_pending_doc ON ${p}source_passages_fts_pending(doc_id);`;
+// Column is `doc_id`, not `document_id`: migration17's additivity guard reserves
+// `document_id` for the two store tables.
+}
+
+/** Writes to source_passages enqueue the document id (rows are never updated). */
+export function passageFtsTriggersDdl(p: string): string {
+  const [ai, ad] = passageFtsTriggerNames(p);
+  return `
+CREATE TRIGGER IF NOT EXISTS ${ai} AFTER INSERT ON ${p}source_passages BEGIN
+  INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id) VALUES (NEW.entity_id, NEW.document_id);
+END;
+CREATE TRIGGER IF NOT EXISTS ${ad} AFTER DELETE ON ${p}source_passages BEGIN
+  INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id) VALUES (OLD.entity_id, OLD.document_id);
+END;`;
+}

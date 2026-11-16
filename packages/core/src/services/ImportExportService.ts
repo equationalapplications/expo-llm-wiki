@@ -1,4 +1,4 @@
-import type { SQLiteAdapter, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiOptions } from '../types';
+import type { SQLiteAdapter, MemoryBundle, MemoryDump, MemoryDumpEntity, ImportDumpResult, StoredSourceDump, WikiDiagnosticCode, WikiEvent, WikiFact, WikiOptions } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
@@ -8,7 +8,9 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import type { VectorRemovalService } from './VectorRemovalService';
-import { clip, normalizeSourceRef } from '../utils/pure';
+import { clip, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
+import { upsertStoredSource } from './sourceStoreUpsert';
+import { DEFAULT_MAX_CHARS_PER_SOURCE, DEFAULT_MAX_TOTAL_CHARS } from './SourceStoreService';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { validateSourcePointerValue } from '../utils/sourcePointer';
@@ -30,8 +32,10 @@ export class ImportExportService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
-    private options: Pick<WikiOptions, 'onDiagnostic' | 'forceDeleteIgnoreRankerHook'> = {},
+    private options: Pick<WikiOptions, 'onDiagnostic' | 'forceDeleteIgnoreRankerHook' | 'config'> = {},
     private vectorRemoval?: VectorRemovalService,
+    /** Table prefix for the source store; undefined (unit-test mocks) means no store access. */
+    private prefix?: string,
   ) {}
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
@@ -40,18 +44,27 @@ export class ImportExportService {
       ids = Array.from(new Set(entityIds));
     } else {
       ids = await this.metadataRepo.getDistinctEntityIds();
+      // Spec §8: entities that exist only in the source store (no facts) must
+      // still be discovered, or a full backup silently drops their sources.
+      const prefix = this.storePrefix();
+      if (prefix !== undefined && (await this.storePresent(prefix))) {
+        const rows = await this.db.getAllAsync<{ entity_id: string }>(
+          `SELECT DISTINCT entity_id FROM ${prefix}source_documents`);
+        ids = Array.from(new Set([...ids, ...rows.map((r) => r.entity_id)])).sort();
+      }
     }
 
-    const entities: Record<string, MemoryBundle> = {};
+    const entities: Record<string, MemoryDumpEntity> = {};
     const BATCH = 3;
     for (let i = 0; i < ids.length; i += BATCH) {
       const batch = ids.slice(i, i + BATCH);
       const batchResults = await Promise.all(
         batch.map(
-          async (id): Promise<[string, MemoryBundle]> => [
-            id,
-            await this.getFullBundle(id, { includeBlobs: true }),
-          ],
+          async (id): Promise<[string, MemoryDumpEntity]> => {
+            const bundle = await this.getFullBundle(id, { includeBlobs: true });
+            const storedSources = await this.exportStoredSources(id);
+            return [id, storedSources.length > 0 ? { ...bundle, storedSources } : bundle];
+          },
         ),
       );
       for (const [id, bundle] of batchResults) {
@@ -65,18 +78,114 @@ export class ImportExportService {
   async importDump(
     dump: MemoryDump,
     opts?: { merge?: boolean },
-  ): Promise<void> {
+  ): Promise<ImportDumpResult> {
     const merge = opts?.merge ?? false;
+    const skippedSources: ImportDumpResult['skippedSources'] = [];
     const entityIds = Object.keys(dump.entities);
 
     this.jobManager.acquireImportLocks(entityIds);
     try {
       await this.assertNoLegacySourceTypes();
       for (const [entityId, bundle] of Object.entries(dump.entities)) {
-        await this.doImportEntity(entityId, bundle, merge);
+        skippedSources.push(...(await this.doImportEntity(entityId, bundle, merge)));
       }
     } finally {
       this.jobManager.releaseImportLocks(entityIds);
+    }
+    return { skippedSources };
+  }
+
+  private storePrefix(): string | undefined {
+    return typeof this.prefix === 'string' ? this.prefix : undefined;
+  }
+
+  // `source_ref_index` needs no check: the v9 migration (add_source_ref_index) creates it, and the
+  // store tables come from v17, which only runs after v9 — so it exists whenever they do.
+  private async storePresent(prefix: string, tx?: SQLiteAdapter): Promise<boolean> {
+    return (await this.metadataRepo.tableExists(`${prefix}source_documents`, tx))
+      && (await this.metadataRepo.tableExists(`${prefix}source_passages`, tx));
+  }
+
+  /** Spec source-store §8: stored sources for one exported entity; [] when none. */
+  private async exportStoredSources(entityId: string): Promise<StoredSourceDump[]> {
+    const prefix = this.storePrefix();
+    if (prefix === undefined || !(await this.storePresent(prefix))) return [];
+    const docs = await this.db.getAllAsync<{
+      id: string; source_ref: string; source_hash: string; text: string; text_hash: string; char_count: number; created_at: number;
+    }>(
+      `SELECT id, source_ref, source_hash, text, text_hash, char_count, created_at FROM ${prefix}source_documents
+       WHERE entity_id = ? ORDER BY source_ref COLLATE BINARY`,
+      [entityId],
+    );
+    const out: StoredSourceDump[] = [];
+    for (const d of docs) {
+      const ps = await this.db.getAllAsync<{ seq: number; start_offset: number; end_offset: number }>(
+        `SELECT seq, start_offset, end_offset FROM ${prefix}source_passages
+         WHERE entity_id = ? AND document_id = ? ORDER BY seq`,
+        [entityId, d.id],
+      );
+      out.push({
+        sourceRef: d.source_ref,
+        sourceHash: d.source_hash,
+        text: d.text,
+        textHash: d.text_hash,
+        charCount: Number(d.char_count),
+        storedAt: Number(d.created_at),
+        passages: ps.map((p) => ({ seq: Number(p.seq), startOffset: Number(p.start_offset), endOffset: Number(p.end_offset) })),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Spec source-store §8/§9 import step, inside the import transaction. One
+   * source at a time; a refusal skips that source only. Uses the
+   * same upsert helper as SourceStoreService.storeSource, inside this transaction. A ref already stored is replaced: the dump is the
+   * truth for that ref (so no hash_mismatch refusal on import).
+   */
+  private async importStoredSources(
+    tx: SQLiteAdapter,
+    entityId: string,
+    sources: StoredSourceDump[] | undefined,
+    merge: boolean,
+    skipped: ImportDumpResult['skippedSources'],
+    deferredDiagnostics: Parameters<typeof emitDiagnostic>[1][],
+  ): Promise<void> {
+    const prefix = this.storePrefix();
+    if (prefix === undefined) return;
+    if (merge && !sources?.length) return;
+    if (!(await this.storePresent(prefix, tx))) return; // never-set-up store: nothing to wipe or write
+    const docs = `${prefix}source_documents`;
+    const passages = `${prefix}source_passages`;
+
+    if (!merge) {
+      await tx.runAsync(`DELETE FROM ${passages} WHERE entity_id = ?`, [entityId]);
+      await tx.runAsync(`DELETE FROM ${docs} WHERE entity_id = ?`, [entityId]);
+    }
+
+    const cfg = this.options.config?.sourceStore;
+    const lim = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
+    const limits = {
+      maxCharsPerSource: lim(cfg?.maxCharsPerSource, DEFAULT_MAX_CHARS_PER_SOURCE),
+      maxTotalChars: lim(cfg?.maxTotalChars, DEFAULT_MAX_TOTAL_CHARS),
+    };
+
+    for (const src of sources ?? []) {
+      const sourceRef = normalizeSourceRef(src?.sourceRef);
+      const sourceHash = normalizeSourceHash(src?.sourceHash);
+      if (!sourceRef || !sourceHash || typeof src.text !== 'string') {
+        throw new Error(`importDump: invalid stored source for entity "${entityId}" (sourceRef, sourceHash and text are required)`);
+      }
+      // text_hash is re-computed and passages re-cut; the dump's values are ignored (spec §8).
+      await upsertStoredSource(
+        tx, prefix, entityId,
+        { sourceRef, sourceHash, text: src.text, storedAt: src.storedAt },
+        limits,
+        (code) => {
+          skipped.push({ sourceRef, code });
+          deferredDiagnostics.push({ code, operation: 'importDump', trigger: 'call', entityId, detail: { sourceRef } });
+        },
+      );
     }
   }
 
@@ -136,9 +245,11 @@ export class ImportExportService {
   /** Single-entity import transaction + post-processing; package-internal hook for tests. */
   async doImportEntity(
     entityId: string,
-    bundle: MemoryBundle,
+    bundle: MemoryDumpEntity,
     merge: boolean,
-  ): Promise<void> {
+  ): Promise<ImportDumpResult['skippedSources']> {
+    const skippedSources: ImportDumpResult['skippedSources'] = [];
+    const refusalDiagnostics: Parameters<typeof emitDiagnostic>[1][] = [];
     const upsertedFactIds = new Set<string>();
     const upsertedDeletedFactIds = new Set<string>();
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
@@ -506,7 +617,11 @@ export class ImportExportService {
           tx,
         );
       }
+
+      await this.importStoredSources(tx, entityId, bundle.storedSources, merge, skippedSources, refusalDiagnostics);
     });
+    // Committed: only now may the host hear about refusals (a failed commit emits nothing).
+    for (const d of refusalDiagnostics) emitDiagnostic(this.options, d);
 
     if (clampedEvents > 0) {
       emitDiagnostic(this.options, {
@@ -705,6 +820,7 @@ export class ImportExportService {
     } finally {
       this.searchService.evictCache(entityId);
     }
+    return skippedSources;
   }
 
   private _warnCrossEntityCollision(
