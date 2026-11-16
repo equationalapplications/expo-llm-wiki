@@ -4,7 +4,8 @@ import { openTestDatabase } from './helpers/sqliteAdapter';
 import { openSqlJsDatabase } from './helpers/sqlJsAdapter';
 import { setupDatabase } from '../src/db/schema';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
-import { createIndexStrategy, probeFts5 } from '../src/services/search/createIndexStrategy';
+import { createIndexStrategy, detachFts5, probeFts5 } from '../src/services/search/createIndexStrategy';
+import { cutPassages } from '../src/utils/passageCutter';
 import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
 import { MiniSearchIndexStrategy } from '../src/services/search/MiniSearchIndexStrategy';
 import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
@@ -119,7 +120,6 @@ describe('createIndexStrategy', () => {
     const s = await createIndexStrategy(db, P, meta, 'fts5', FRESH);
     // A document with passages, fully drained: map rowids 1..N and matching fts rows.
     const text = 'zebrafish habitat notes '.repeat(500);
-    const { cutPassages } = await import('../src/utils/passageCutter');
     await db.runAsync(
       `INSERT INTO ${P}source_documents (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
        VALUES ('d1', 'e', 'a.md', ?, ?, 'th', ?, 1)`, ['a'.repeat(64), text, text.length]);
@@ -131,13 +131,16 @@ describe('createIndexStrategy', () => {
       seq += 1;
     }
     await s.drainPassages();
-    const stored = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`)!.then((r) => r!.n);
+    const stored = (await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`))!.n;
     const hits0 = await s.searchPassages('zebrafish', { entityIds: ['e'], limit: 1000 });
     expect(hits0.length).toBe(stored);
 
     // Detach on a module-less host: the virtual-table DROP fails and detachFts5
     // swallows it, while the triggers, map and ledger drop fine — the fts table
-    // survives WITH its indexed rows and no map to ever clean them.
+    // survives WITH its indexed rows and no map to ever clean them. This only
+    // works because that DROP runs OUTSIDE the detach transaction (so the
+    // patched execAsync sees it); if it ever moves inside, this patch stops
+    // firing and the ftsRows assertion fails for the wrong reason.
     const origExec = db.execAsync.bind(db);
     const patched = Object.assign(Object.create(db), {
       execAsync: async (sql: string) => {
@@ -147,7 +150,6 @@ describe('createIndexStrategy', () => {
         return origExec(sql);
       },
     }) as SQLiteAdapter;
-    const { detachFts5 } = await import('../src/services/search/createIndexStrategy');
     await detachFts5(patched, P, meta);
     expect(await meta.tableExists(`${P}source_passages_fts_pending`)).toBe(false);
     const ftsRows = (await db.getFirstAsync<{ n: number }>(
@@ -165,7 +167,7 @@ describe('createIndexStrategy', () => {
     const Database = (await import('better-sqlite3')).default;
     const raw = new Database(':memory:');
     const b: SQLiteAdapter = {
-       async execAsync(s) { raw.exec(s); },
+      async execAsync(s) { raw.exec(s); },
       async runAsync(s, a = []) { const i = raw.prepare(s).run(...(a as any[])); return { changes: i.changes, lastInsertRowId: Number(i.lastInsertRowid) }; },
       async getAllAsync(s, a = []) { return raw.prepare(s).all(...(a as any[])) as any; },
       async getFirstAsync(s, a = []) { return (raw.prepare(s).get(...(a as any[])) ?? null) as any; },

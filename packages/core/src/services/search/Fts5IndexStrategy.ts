@@ -111,8 +111,10 @@ export class Fts5IndexStrategy implements IndexStrategy {
         // this table (detachFts5 swallows the failure). The re-seeded map's
         // rowids then collide with the surviving rows — every drain fails, or
         // duplicated hits surface. The entries side resets the same way in
-        // resetAndRearm. The bootstrap is the only writer that runs on an
-        // empty map, so clearing here covers every survival path.
+        // resetAndRearm. This clear is UNCONDITIONAL on the bootstrap path
+        // (every open where map and ledger are both empty runs it) and is
+        // harmless when the table is not stale: in that state it is empty
+        // too. The bootstrap is the only writer that runs on an empty map.
         await tx.runAsync(`DELETE FROM ${p}source_passages_fts`);
         await tx.runAsync(
           `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
