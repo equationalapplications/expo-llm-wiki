@@ -1,16 +1,17 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 5 — under review (T3/T4 ladder; owner tier selection)**  
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 9, converged)
+**Status: Draft rev 6 — under review (T3 delta pending; owner tier selection)**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
 
 A `forget()` call does not erase. Facts are soft-deleted and hard-delete only through
 `runPrune` (default 7-day retention); FTS5 postings and row content survive deletes in the
 database file; WAL/journal residue is host-dependent. The hosted consumer (SynapseTree) gates
-its privacy promises on real erasure: charter rule 8 promises deletion, and a delete whose text
-is still recoverable from the store file is not done (INTENT.md:468; §2 "Your database stays
-yours", INTENT.md:135).
+its privacy promises on real erasure: charter rule 8 promises deletion — INTENT.md:468 says
+"a delete the host's index never heard about is not done"; this spec **extends that precedent**
+to storage: a delete whose text is still recoverable from the store file is not done (§2 "Your
+database stays yours", INTENT.md:135).
 
 Reproduced in the investigation with a canary-string forensic harness
 (`canary-repro.cjs`): after a plain delete + checkpoint, the canary is byte-recoverable from
@@ -39,13 +40,15 @@ The issue's proposed mechanism — the FTS5 `'secure-delete'` option — is **un
 required mechanism**: the upstream merge bug (investigation §5) is unfixed in every released
 SQLite the investigation could confirm (wrong in 3.46.0→3.53.2, fix on trunk only), so the
 version gate over supported
-runtimes passes nothing the investigation could verify. It also opens a one-way file-format
+runtimes passes nothing the investigation could verify, and the gate (§4) is **closed until a
+fixed release exists**. It also opens a one-way file-format
 door (format 5).
 
 The measured alternative (F/G/F2/G2, option asserted off via `ft_config`, multi-segment
 300-row index, integrity + MATCH green, erasure proven on **both** surfaces — row content AND
 `%_data` term bytes — on unicode61 **and** the engine's `porter unicode61`; K/K2 measure the
-full compact() composition as one unit, also clean; a second independent run is recorded in
+full compact() composition as one unit, also clean; a second independent run (A-H2) **and a
+third full run including K/K2** are recorded in
 the LEDGER; these are synthetic-schema proofs of the *mechanism* — the engine-schema proof is
 the acceptance test below): core pragma + plain delete + FTS `'optimize'`
 **or** `'rebuild'` + `wal_checkpoint(TRUNCATE)` erases the canary completely.
@@ -70,60 +73,126 @@ not at `forget()` time.** Between them the soft-delete window and journal residu
 
 ### 2. `compact()` — the erasure API
 
-Store-wide `wiki.compact()` (owner question A on scope). Composition, in order:
+Store-wide `wiki.compact()` (owner question A on scope; a **new public API** — nothing named
+`compact` exists in this tree). Composition, in order (T3 M7 — each step surfaces errors; a
+failed step fails the compact and reports where it stopped):
 
-1. Per-entity prune with `retainSoftDeletedFor: 0`, **inheriting `runPrune`'s safety holds**:
-   no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56); keep
-   librarian-unread events unless an `includeEvents`-shaped opt-in is passed (guide 213-216).
-   The result reports what it held back, per entity.
-2. FTS `'optimize'` on both FTS tables when they exist (a `rebuild` escape hatch is exposed as
+1. **Per-entity prune** with `retainSoftDeletedFor: 0`, **inheriting `runPrune`'s safety
+   holds**: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
+   `retainEventsFor` is pinned to the engine default (events are kept; the
+   `includeEvents`-shaped opt-in governs their deletion, T3 m1 — under the `'legacy'`
+   retention mode events delete by age without a watermark guard, so the
+   keep-librarian-unread guarantee holds under ops/deferred modes only; documented). Holds are
+   **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
+   continues to the file steps for the other entities and returns the holds per entity rather
+   than throwing (T3 m2).
+2. **Source-store GC** (§5) — positive candidate set only.
+3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
+   surfaced** (today `syncPassages` swallows failures, `SearchService.ts:353-355`, and
+   `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134` — if the
+   passage index is disabled but its tables exist, compact **fails and reports** rather than
+   claiming erasure, T3 M7).
+4. **Retired-table reclaim to completion** — `DROP` + delist for every
+   `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
+   reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired
+   table's `%_content` holds verbatim fact text and VACUUM would copy it intact — T3 M4).
+5. FTS `'optimize'` on both FTS tables when they exist (a `rebuild` escape hatch is exposed as
    `compact({ rebuild: true })` for stores recovering from corruption).
-3. `VACUUM`.
-4. `wal_checkpoint(TRUNCATE)` — **after** the VACUUM (`MetadataRepository.vacuum()` today
+6. **Wrapped VACUUM** — the existing `runPrune` sequence
+   (`resetNormalizeWatermarks` → `metadataRepo.vacuum()` → `restartRebuildAfterVacuum`,
+   `MaintenanceService.ts:443-449`: VACUUM may renumber rowids; a watermark must never survive
+   it; the restarted rebuild must snapshot the renumbered rowids) — compact must not call
+   `metadataRepo.vacuum()` bare (T3 M3). Preferably the wrapper lives in `vacuum()` itself so
+   `runPrune({ vacuum: true })` gains it too.
+7. `wal_checkpoint(TRUNCATE)` — **after** the VACUUM (`MetadataRepository.vacuum()` today
    checkpoints only before; the post-VACUUM checkpoint is what clears the rebuilt file's
    passage through the WAL).
 
-A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips step 2 and
-remains correct: there is nothing to optimize, and steps 1/3/4 still erase.
+A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips steps 3-5
+for FTS surfaces that don't exist and remains correct: there is nothing to drain or optimize,
+and the other steps still erase. VACUUM and checkpoint are whole-file operations — they
+rewrite the host's own tables too, and VACUUM fails while the host holds a transaction on the
+shared connection (guide 110-113); compact's locking contract states this (today locks are
+per-entity, `MaintenanceService.ts:250`) and the whole-file scope joins owner question B's
+INTENT.md:137-138 tension (T3 m6).
 
 ### 3. Chain forget — `forget({ entryId, includeChain: true })`
 
 New optional flag on the entryId selector. Reuses `EntryRepository.findSupersessionChainIds`
 (`:1085-1116`): both directions, capped at `HISTORY_MAX_DEPTH = 100`
 (`TemporalService.ts:9`). The walk has **no `deleted_at` filter** — soft-deleted chain members
-are included, which is the desired erasure semantics; the dry-run preview lists every id the
-walk touches, the depth cap, and **says so when the cap truncates the walk**. Chain members are
+are included, which is the desired erasure semantics.
+
+**Dry-run contract change (T3 M2):** `forgetDryRun` today **throws** on `entryId`/`taskId`
+selectors (`MaintenanceService.ts:875-877`, "the spec keeps dry-run narrow" per the JSDoc at
+`:864-865`). That rejection is **lifted for `entryId` when `includeChain` is set** (taskId
+stays rejected): the preview returns `chainEntryIds` (every id the walk touches) and
+`truncated: true` **with the depth cap stated** when the cap cut the walk. Truncation
+detection needs the walk to expose depth — `findSupersessionChainIds` returns ids only, so the
+walk gains a `maxDepth + 1` probe or a depth-returning CTE variant. Without this there is no
+preview of a walk whose forward CTE (`EntryRepository.ts:1092-1102`) reaches the **live
+current fact** — forgetting an old version would silently delete the current one.
+
+**Explicit semantics (T3 m3):** the walk is **not the connected component** — from leaf A in a
+fan-in A→C←B it reaches C but not B (the predecessor walk starts at the fact being forgotten,
+`EntryRepository.ts:1103-1113`); the forward walk **does delete the live current fact** (that
+is the point of `includeChain`, documented); chain ids are added to `deletedEntryIds` so
+`syncEntries`, the vector-removal drain and `backstopEnqueue` cover them
+(`MaintenanceService.ts:730-743`). Chain members are
 **soft-deleted** into the existing prune flow; their erasure completes at `compact()` like
-every other fact. `dryRun` output gains `chainEntryIds` alongside the existing fields.
+every other fact.
 
 Mutually exclusive with `clearAll` (existing selector rules unchanged; the flag composes only
 with `entryId`).
 
 ### 4. Optional immediate-erasure enhancement, gated (the issue's FTS5 option)
 
-Migration **v18**: when the runtime passes the version gate — FTS5 capability (the option is
-accepted) **and** `sqlite_version()` outside the known-buggy merge range (upper bound
-re-checked against the sqlite release history at implementation time) — the migration sets the
-option on both FTS tables, `Fts5IndexStrategy.init` sets it for fresh stores, and the
-retired-table lifecycle (`delistRetired`) carries it to rebuilt tables. Outside the gate the
-migration **skips with a surfaced warning**; the compact-time guarantee (§1-2) is unaffected.
-Format-5 read errors on older builds (the one-way door) fall back to the no-FTS path
-(precedent: migration v1, `migrations.ts:12-19`) or `rebuild`.
+**No numbered migration (T3 M5).** `setup()` runs each migration once and stamps
+`schema_version` unconditionally (`WikiMemory.ts:450-455`), so a v18 one-shot would stamp
+every existing store as "done" while the gate passes no runtime today — upgraded stores would
+**never** get the option even after a fixed SQLite ships. Instead the gate is evaluated **on
+every open** inside `Fts5IndexStrategy.init` / `ensurePassageObjects` / `rearmInTx` via an
+idempotent `ft_config` write: option set when the runtime passes the gate, otherwise skipped
+with a surfaced warning. The compact-time guarantee (§1-2) is unaffected either way.
+
+**The gate is equality-based on a known-good release, not a range (T3 M6).** The gate is
+`sqlite_version() >= <first release containing the fix check-in 0b486e53a4>` — that release
+does not exist yet, so **the gate is closed today** (no runtime passes). Wording like
+"outside the known-buggy range 3.46.0→3.53.2" is forbidden: it would admit 3.42.0-3.45.x
+(untested, same merge code) and 3.53.3/3.53.4 (unfixed).
+
+Format-5 read errors on older builds (the one-way door): the real fallback path is
+`initEntries` rethrow → `UnavailableIndexStrategy` (`Fts5IndexStrategy.ts:213`) — migration
+v1 (`migrations.ts:12-19`) is a no-op kept for upgrade paths, **not** a read-error fallback
+(T3 m4). Rolling the engine back to an older version after the option was set is **not
+mitigable** and is documented as such.
 
 The pragma (§1) is unconditional on every runtime — it has no version constraint and no format
 door.
 
-### 5. Source-store erasure: document GC when the last live fact goes
+### 5. Source-store erasure: positive-predicate document GC (T3 B1 redesign)
 
-`forget({ entryId })` today leaves the fact's stored source text (`source_documents.text`,
-`schema.ts:74`) on disk when the selector is entry-based. Decision: `compact()` gains a
-source-store GC pass — a `source_documents` row (and its `source_passages`, and their FTS
-rows via the index strategy) is hard-deleted when **no live entry references it** anymore
-(all referencing entries soft-deleted/pruned in the same compact run). A single-fact
-`forget({ entryId })` must NOT erase the document outright — one document backs N facts, and
-erasing it would destroy the passages and `source_pointer` targets of the document's other
-live facts. Documents backing any live fact are untouched. Hosts that need certainty erase via
-`sourceRef` selectors today (already hard-deleting); the GC pass closes the entryId path.
+`forget({ entryId })` today leaves stored source text (`source_documents.text`,
+`schema.ts:74`) on disk when the selector is entry-based. But `source_documents` rows are
+host-owned data: they are written **only** by `storeSource` (`SourceStoreService.ts:43-73`,
+exposed at `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) — **never** by
+`remember` or `ingestDocument` (T3 B1/M1) — so a fact-less stored document is a normal,
+supported state (`getStoredSource`, passage search).
+
+Decision: `compact()`'s GC pass collects candidates **positively, never by absence**: the
+`(entity_id, source_ref, source_hash)` keys of the facts **this compact run's prune
+hard-deleted**, **minus** any key still carried by a live entry. Only those keys'
+`source_documents` rows (and their `source_passages`, and their FTS rows) are hard-deleted. A
+`storeSource`-only document with zero facts therefore **always survives compact()**. One
+document backing N facts is untouched while any live fact references it; erasing it on a
+single-fact forget would destroy the other facts' passages and `source_pointer` targets.
+Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
+at forget time, `MaintenanceService.ts:696-701`).
+
+**Owner question E (T3 B1):** should forgetting the last fact referencing a stored document
+delete the host's stored text at all (the GC above), or is `forget({ sourceRef })` the
+documented erasure path with compact() leaving host-stored text alone? The GC is the
+erasure-complete default; the alternative is document-as-host-property.
 
 ### 6. Docs: the deleting-data guide gets the erasure section
 
@@ -135,16 +204,21 @@ back), and the no-opt-out pragma statement.
 
 ## Files touched
 
-- `packages/core/src/db/migrations.ts` — v18 (gated option set).
-- `packages/core/src/services/search/Fts5IndexStrategy.ts` — init-time option set (gated);
-  retired-table carry.
+- `packages/core/src/services/search/Fts5IndexStrategy.ts` — per-open gated option set
+  (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent `ft_config` write); compact-time
+  retired-table reclaim-to-completion + full ledger drain with surfaced errors.
 - `packages/core/src/db/schema.ts` / setup path — `PRAGMA secure_delete=ON` + read-back in
   `setup()`.
-- `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag; `compact()`
-  (prune-with-holds + optimize/rebuild + VACUUM + post-VACUUM checkpoint); source-store GC.
+- `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
+  lift + `chainEntryIds`/`truncated`); `compact()` (7-step composition per §2, incl.
+  source-store GC with the positive predicate and wrapped VACUUM); hold catching/reporting.
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
-- `packages/core/src/repositories/EntryRepository.ts` — dry-run chain listing helper (reuses
-  `findSupersessionChainIds`).
+- `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
+  detection) + dry-run chain listing helper.
+- `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains the
+  watermark-reset/rebuild-restart wrapper + post-VACUUM checkpoint.
+- `packages/core/src/services/SearchService.ts` — passage drain surfaced (no swallow) in the
+  compact path.
 - `apps/docs/src/content/docs/guides/deleting-data.md` — erasure section.
 - `INTENT.md` — status lines touched by this behavior (updated in the implementation PR per
   house rule).
@@ -157,33 +231,46 @@ back), and the no-opt-out pragma statement.
    verified via fts5vocab + pre-delete MATCH) — a mixed-case/hyphenated canary can only ever be
    found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
    surface.
-   - *Fact-path tier:* fixture pinned (not vacuous): ingest via **`ingestDocument`** (not
-     `remember`, which creates no `source_documents` row) a document backing **exactly one**
-     fact into a tempdir store with 300+ filler facts (multi-segment index), and assert the
-     `source_documents` row **exists before** the forget. Then `forget({ entryId })`,
-     `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert the canary is absent from
-     the entry row, all FTS surfaces (db file, `-wal`, `-journal`, `-shm`, **and every
-     `%_data` block**), and — via the compact-time source GC — from
-     `source_documents`/`source_passages`. **Second case:** a document backing **two** facts —
-     after forgetting one, its `source_documents` row and passages must **survive** (GC must
-     not fire while a live fact references it). `events.summary` and the entity summary are
-     documented carve-outs at this tier (owner question D).
-   - *Full-wipe tier:* `clearAll({ includeEvents: true })` + outbox drain + `compact()`,
-     **run hookless** (no vector-removal hook, or a removal-confirmed stub) — assert the canary
-     is absent from the whole file. Whole-file absence claims are made only at this tier.
+   - *Fact-path tier:* fixture pinned (T3 B1/M1 — `source_documents` is written only by
+     `storeSource` and import; `remember`/`ingestDocument` create no source rows and no
+     events): **`storeSource({ sourceRef: R, sourceHash, text containing the canary })`** into
+     a tempdir store with 300+ filler facts (multi-segment index), then create **exactly one**
+     canary fact carrying the same `sourceRef` (via `remember`/`ingestDocument` with a stub
+     provider), and **assert the `source_documents` row exists before the forget** (the check
+     must not be vacuous). Then `forget({ entryId })`, `runPrune({ retainSoftDeletedFor: 0 })`,
+     `compact()` — assert the canary is absent from the entry row, all FTS surfaces (db file,
+     `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and — via the compact-time
+     source GC — from `source_documents`/`source_passages`. **Second case:** a document backing
+     **two** facts — after forgetting one, its `source_documents` row and passages must
+     **survive** (GC must not fire while a live fact references it). `events.summary` and the
+     entity summary are documented carve-outs at this tier (owner question D).
+   - *Full-wipe tier:* **seed every derived copy explicitly and assert each exists before the
+     wipe** (T3 M1 — none of them arise from ingestion alone): an event whose `summary`
+     carries the canary (via `write()`), an unsent outbox row, and an entity summary containing
+     it. Then `clearAll({ includeEvents: true })` + outbox drain + `compact()`, **run
+     hookless** (no vector-removal hook, or a removal-confirmed stub) — assert the canary is
+     absent from the whole file. Whole-file absence claims are made only at this tier.
    Mirror scenario F and G (optimize and rebuild variants; K/K2 are the composed-sequence
    proof).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
    canary — pins why the pragma is unconditional.
 3. **compact() holds:** with an unconfirmed external removal and an unread event, `compact()`
    hard-deletes nothing held and reports the holds.
-4. **Chain forget:** fixture lineage with fan-in; dry-run lists exactly the walked ids and the
-   cap-truncation notice; real run soft-deletes the chain; erasure completes after compact.
+4. **Chain forget:** fixture lineage with fan-in (A→C←B: forgetting A reaches C, not B —
+   documented); dry-run lists exactly the walked ids, `truncated` + cap notice on truncation;
+   real run soft-deletes the chain (chain ids covered by sync/drain/backstop); erasure
+   completes after compact.
 5. **Source GC:** document backing two facts, one forgotten — document stays; both forgotten +
-   compact — document and passages gone (including `source_passages_fts`).
-6. **Gate tests:** mock runtimes (refuses option / in-buggy-range / format-5 read error) —
-   migration warns and skips; no-FTS path stays green; pragma read-back surfaces refusal.
-7. Baseline gates: `pnpm -r typecheck`, unit suite (wall-clock-flake-prone timeouts under load
+   compact — document and passages gone (including `source_passages_fts`). **B1 regression
+   test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged.
+6. **Gate tests:** mock runtimes (refuses option / below the gate / format-5 read error) —
+   the per-open gate warns and skips; no-FTS path stays green; pragma read-back surfaces
+   refusal. Gate acceptance is tested against a mocked version **at and above** the pinned
+   first-good release only — never a range.
+7. **M3/M4 regression tests:** compact while FTS rebuild state is `rebuilding` (watermark
+   reset + rebuild restart correct); a forced corruption reset leaves a retired table, then
+   forget + compact reclaims it to completion and the whole-file scan is clean.
+8. Baseline gates: `pnpm -r typecheck`, unit suite (wall-clock-flake-prone timeouts under load
    are re-run in isolation per the known flake signature).
 
 ## Rejected alternatives
@@ -233,3 +320,7 @@ migration is safe on every current runtime. No format change occurs unless the g
   text and only `clearAll({ includeEvents: true })` deletes events. (a) documented host-step
   carve-out (recommended — guide states the full-wipe steps); (b) engine-side scoped event
   deletion on forget; (c) engine-side entity-summary rewrite.
+- **E.** Source-document ownership on last-fact forget (T3 B1): does compact()'s GC delete
+  host-stored text (`storeSource`) when the last fact referencing it is gone (erasure-complete
+  default, §5), or is `forget({ sourceRef })` the documented erasure path with compact()
+  leaving host-stored text alone (document-as-host-property)?

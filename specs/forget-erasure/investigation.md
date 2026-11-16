@@ -1,6 +1,6 @@
 # Investigation — #401: forget must erase (FTS5 secure-delete, chain forget, compact())
 
-**Date:** 2026-11-16 · **Status:** Rev 10 — CONVERGED (Opus r1 + Fable r1-r4 + haiku verify×4; verify4 APPROVE WITH NITS — citation nits folded: compact() marked new-API, lock/anchor ranges tightened)
+**Date:** 2026-11-16 · **Status:** Rev 11 — CONVERGED, T3 corrections folded (source-store writers corrected: storeSource/import only; positive-predicate GC; retired-tables census row; storeSource-based fixture; third full canary run incl. K/K2 in LEDGER)
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Repo baseline:** `27f8e5e9` (main after #400, v9.2.0)
 **Evidence tags:** [V] = controller-verified against this tree / live driver; [C] = child- or web-reported, not independently reproduced.
 **Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2 + Fable r3 BLOCKER rework): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the canary is a **single lowercase alphanumeric token** (`zxq7f3a9k`) — byte-identical under the unicode61 **and** porter unicode61 tokenizers — with two per-scenario harness assertions that it is a real, stable term (fts5vocab holds the exact token; pre-delete MATCH returns exactly the TARGET row); every scenario **byte-scans the db file, the `-wal` sidecar, and every `%_data` block separately**, so row-content erasure (`db`) and term-bytes erasure (`postings`) are distinct columns; the `deleted-term` MATCH probe is reported but is **not** byte evidence (FTS5 hides deleted rowids by design); `segpages` counts non-structure `%_data` rows (structure record = id 1, config = id 10; >1 = a non-trivial multi-page index); porter scenarios F2/G2/H2 reproduce F/G/H on the **engine's own tokenizer** (`porter unicode61`); the SQLite version line is `SELECT sqlite_version()` output, not a hard-coded string.
@@ -132,7 +132,7 @@ what `forget()` does today and what the spec must decide:
 | embedding-failure markers | `db/schema.ts:33-35` | ids + error state, no text | with the row | no text to erase |
 | `events` | `db/schema.ts:124-128` (`summary TEXT NOT NULL`) | **fact text** — the librarian rebuilds facts from them | `forget({entryId})` keeps events; only `clearAll + includeEvents` hard-deletes (guide lines 207-216) | must-erase path or scoped promise (below) |
 | `outbox` | `db/schema.ts:156-162` (`payload TEXT` at `:162`) | **fact text** — unacked rows hold it (guide 218-220) | left in place | guide already instructs hosts to drain (`markOutboxEventsProcessed()`); documented as a host step |
-| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | hard-deleted under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`) **and by `clearAll` for the entity** (`:646-649`, `DELETE FROM source_documents` at `:648`); **`forget({entryId})` leaves it on disk** | spec decides (Fable r3): one document backs N facts — erasing it on a single-fact forget would destroy the passages and `source_pointer` targets of the document's **other live facts**; per-document erasure via `sourceRef`/`sourceHash` or entity wipe via `clearAll`; compact-time GC (§6) removes a document only once **all** of its facts are gone |
+| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | rows written **only** by `storeSource` (`SourceStoreService.ts:43-73`, `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) — never by `remember`/`ingestDocument` (T3 B1/M1); hard-deleted under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`) **and by `clearAll` for the entity** (`:646-649`, `DELETE FROM source_documents` at `:648`); **`forget({entryId})` leaves it on disk** | spec decides (Fable r3 + T3 B1): one document backs N facts and fact-less stored documents are a supported host state — GC candidates are collected **positively** from the keys of facts hard-deleted this run (§6), never by absence; per-document erasure via `sourceRef`/`sourceHash`; **owner question E** on whether last-fact GC should touch host-stored text at all |
 | `source_passages` | `db/schema.ts:80-87` — **offsets only, no text stored** ("Passage text is not stored: offsets … slice source_documents.text", comment at `:68`) | no text; identifies source spans | hard-deleted with the source-store block (`:647`) | covered by the source_documents decision |
 | `source_passages_fts` | virtual table | **indexed source text** | rebuilt from the store | covered by the same decision + §3.1 |
 | entity summary | `meta.value` under `entitySummaryMetaKey` (`MaintenanceService.ts:664`) | summarized fact content | deleted only on `clearAll` | same decision shape as events |
@@ -141,6 +141,7 @@ what `forget()` does today and what the spec must decide:
 | graph edges | `db/schema.ts:112` (`edge_type` at `:117`) | no fact text; but `edge_type` may hold **fact-derived type names** under an emergent ontology — same category as the manifest row (Fable r3) | deleted on `clearAll` | document as left, same decision shape as the manifest row |
 | graph nodes | stored as entries (facts) | — | covered by entry deletion | no separate surface |
 | FTS `%_content` / `%_data` shadow tables (`entries_fts_*`, `source_passages_fts_*`) | FTS5 shadow tables | **full copies**: `%_content` stores the indexed title/body/tags text verbatim; `%_data` stores terms + postings (Fable r3) | scrubbed only by the §6 mechanism (or the option); measured in §2 | primary surface; covered by the compact-time mechanism |
+| retired FTS tables (`entries_fts_retired_N` + shadow) | rename-retired on corruption reset (`Fts5IndexStrategy.ts:318-335`); reclamation is deadline-bounded best-effort (`:410-452`) | **verbatim fact text** in `%_content` at retirement time, forgotten facts included (T3 M4) | VACUUM copies their shadow tables intact; compact must reclaim to completion before VACUUM | primary surface addition (T3 M4); covered by the §6 reclaim step |
 | `vector_removals` ledger | `db/schema.ts:177-185` | no — ids/timestamps only [V] | retained by design (durable-vector-removal spec) | no text to erase |
 | VACUUM temporary database file | SQLite temp file during `VACUUM` | can carry pre-VACUUM page images during the rewrite (Fable r3) | deleted at VACUUM commit; residue possible on crash/rollback-journal hosts | document as a crash-window residue; no engine change |
 | export files | `ImportExportService` dumps | fact text, outside the store | — | document (guide already warns re-import brings data back) |
@@ -238,20 +239,26 @@ above, explicitly.
     (`MaintenanceService.ts:249-250`: signature at `:249`, the per-entity lock acquisition
     `acquireLock('prune', entityId)` at `:250`); checkpoint and VACUUM are store-wide.
   - **Source-store GC:** `compact()` also hard-deletes `source_documents` — and their
-    `source_passages`, and their FTS rows via the index strategy — when **no live entry
-    references them** anymore (every entry carrying that `source_ref`/`source_hash` was
-    soft-deleted and pruned in this compact run; documents forgotten via
-    `sourceRef`/`sourceHash` selectors are already hard-deleted at forget time,
-    `MaintenanceService.ts:696-701`, so the GC never sees them). Documents backing any live
+    `source_passages`, and their FTS rows via the index strategy — for the **positive
+    candidate set**: the `(entity_id, source_ref, source_hash)` keys of the facts this run's
+    prune hard-deleted, **minus** any key still carried by a live entry (T3 B1: never collect
+    by absence — `source_documents` is written only by `storeSource` and import, so a
+    fact-less stored document is a supported host state and must survive compact). Documents
+    forgotten via `sourceRef`/`sourceHash` selectors are already hard-deleted at forget time,
+    `MaintenanceService.ts:696-701`, so the GC never sees them. Documents backing any live
     fact are untouched: one
     document backs N facts, and erasing it on a single-fact forget would destroy the other
-    facts' passages and `source_pointer` targets (§3.5). This closes the entryId path the
-    census flags; without it the §7 full-wipe tier cannot pass (haiku verify2 MAJOR 1).
+    facts' passages and `source_pointer` targets (§3.5). **Owner question E** (spec) on
+    whether last-fact GC should touch host-stored text at all.
 - **Optional immediate-erasure enhancement:** FTS5 `'secure-delete'` option behind the §5
-  version gate — new migration **v18** in `db/migrations.ts` (latest is v17 at `:388`), plus
-  init-time set for fresh stores (FTS tables are created lazily by `Fts5IndexStrategy.init`,
-  never by `setupDatabase`), and the same for later-created/rebuilt tables (retired-table
-  lifecycle, `delistRetired`, passage tables). Refuses (surfaces a warning) outside the gate.
+  version gate — **no numbered migration** (T3 M5: `setup()` stamps `schema_version`
+  unconditionally, `WikiMemory.ts:450-455`, so a v18 one-shot would permanently mark upgraded
+  stores as done while the gate passes no runtime today); instead the gate is evaluated **on
+  every open** in `Fts5IndexStrategy.init` / `ensurePassageObjects` / `rearmInTx` via an
+  idempotent `ft_config` write. The gate is **closed today** and is
+  `sqlite_version() >= <first release containing fix 0b486e53a4>` — never a range (T3 M6:
+  range wording admits 3.42.0-3.45.x and 3.53.3/3.53.4). Refuses (surfaces a warning) outside
+  the gate.
 - **Chain forget:** reuse the existing primitive — `EntryRepository.findSupersessionChainIds`
   (`EntryRepository.ts:1085-1116`), recursive CTEs, both directions, capped at
   `HISTORY_MAX_DEPTH = 100` (`TemporalService.ts:9`; used as the product's lineage definition at
@@ -275,10 +282,12 @@ plus the documented host steps (outbox drain) — plus `compact()`, the canary i
 database file **and** the journal files. Fact-path absence (single-fact forget) is scoped to
 the fact's own copies — the two tiers are pinned because the copies have different documented
 owners (haiku verify2 MAJOR 2; §8 Q5). Pinned shape:
-- **Two tiers.** (1) *Fact-path tier*: fixture pinned (haiku verify3 — the source-GC check must
-  not be vacuous): ingest via **`ingestDocument`** (not `remember`, which creates no
-  `source_documents` row) a document that backs **exactly one** fact, and assert the
-  `source_documents` row **exists before** the forget. Then single-fact
+- **Two tiers.** (1) *Fact-path tier*: fixture pinned (T3 B1/M1 — `source_documents` is
+  written only by `storeSource` and import; `remember`/`ingestDocument` create no source rows
+  **and no events**): **`storeSource({ sourceRef: R, sourceHash, text containing the canary
+  })`**, then create **exactly one** canary fact carrying the same `sourceRef`
+  (`remember`/`ingestDocument` with a stub provider), and **assert the `source_documents` row
+  exists before** the forget (not vacuous). Then single-fact
   `forget({ entryId })` + `runPrune({ retainSoftDeletedFor: 0 })` + `compact()`: canary absent
   from the entry row, all FTS surfaces (db file + `%_data` blocks + WAL/journal) and — via the
   source-store GC — from `source_documents`/`source_passages`. **Second case:** a document
@@ -286,7 +295,10 @@ owners (haiku verify2 MAJOR 2; §8 Q5). Pinned shape:
   **survive** (GC must not fire while a live fact references it). `events.summary` and the
   entity summary are
   **documented carve-outs** at this tier (they still hold the text until the full-wipe steps —
-  §8 Q5). (2) *Full-wipe tier*: `clearAll({ includeEvents: true })` + outbox drain +
+  §8 Q5). (2) *Full-wipe tier*: **seed every derived copy explicitly and assert each exists
+  before the wipe** — an event with a canary `summary` (via `write()`; events arise only from
+  `write`/import, never ingestion), an unsent outbox row, an entity summary containing the
+  canary. Then `clearAll({ includeEvents: true })` + outbox drain +
   `compact()`, **run hookless** (no vector-removal hook, or a removal-confirmed stub — an
   unconfirmed/failing hook legitimately holds rows back via runPrune's holds): canary absent
   from the whole file (db + `-wal`/`-journal`/`-shm`). Whole-file
