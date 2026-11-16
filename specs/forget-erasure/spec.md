@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 14 — under review (T3 delta-9 pending; delta-8's findings folded)**  
+**Status: Draft rev 15 — under review (T3 delta-11 pending; delta-10's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -93,7 +93,12 @@ failed step fails the compact and reports where it stopped):
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
-   than throwing (T3 m2). **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** that error
+   than throwing (T3 m2). **Entity enumeration (T3 delta-10 m3):** step 1 prunes every
+   distinct `entity_id` that has soft-deleted rows past the hard-delete cutoff (one
+   `SELECT DISTINCT entity_id` over eligible rows), not every entity in the store. A
+   `WikiBusyError` on a per-entity `'prune'` lock (`MaintenanceService.ts:459`) — a concurrent
+   operation on that entity — **skips that entity** with a surfaced diagnostic and does not
+   fail the compact; the report lists skipped entities. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** that error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -264,23 +269,30 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
   steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
   `source_documents` row, its `source_passages`, and their FTS rows; keys still live are
-  dropped from the ledger un-deleted. **Key matching predicate (T3 delta-4 MAJOR-1):**
+  dropped from the ledger un-deleted. **Key matching predicate (T3 delta-4 MAJOR-1, corrected T3 delta-10 M1):**
   `source_documents` has **two** unique indexes — `(entity_id, source_ref)` and
   `(entity_id, source_hash)` (`schema.ts` `idx_source_documents_ref`/`idx_source_documents_hash`,
-  created in `createSourceDocumentIndexesIfColumnsExist`) — and `entries.source_hash` is
-  **nullable** (`schema.ts:13`), with `source_ref_index` tracking the canonical ref per hash
-  (a document can be re-keyed to a new ref). Therefore: a document is a GC **candidate** if it
-  matches the deleted fact's key on `(entity_id, source_ref)` **or** `(entity_id,
-  source_hash)`; it is **live** if any live entry matches it on **either** column, with NULL
-  hashes ignored (a NULL-hash fact key matches on ref alone). **NULL symmetry (T3 delta-8
-  MAJOR-2):** a NULL column never matches on either side (`source_ref = ?` bound to NULL
-  matches nothing — that is the rule, not luck; an `IS`-based match that treats every
-  NULL-ref fact as live would permanently block GC); a key with **both** columns NULL is
-  **not written to the ledger** (nothing to match). Required test cases: a NULL-hash
-  fact key still GC-matches; a NULL-ref fact key with a hash GC-matches on hash alone; a
-  re-keyed document (`R_old`→`R_new`, same hash) is matched by
+  created in `createSourceDocumentIndexesIfColumnsExist`) — and `entries.source_hash` and
+  `entries.source_ref` are **nullable** (`schema.ts:13-14`), with `source_ref_index` tracking
+  the canonical ref per hash (a document can be re-keyed to a new ref). **Ref-OR-hash matching
+  is forbidden (T3 delta-10 M1):** `storeSource` upserts by ref (`SourceStoreService.ts:61-63`),
+  so a host can replace the text under a ref — an old ledger key `(R, H1)` must NOT delete a
+  document now stored at `(R, H2)` (the ref matches, the text is new). Therefore a document is
+  a GC **candidate** only when its **current `(source_ref, source_hash)` pair agrees with the
+  ledger key on the hash** — `(R_doc == R_key AND H_doc == H_key)` **or** `H_doc == H_key`
+  (hash matching alone covers the `R_old→R_new` re-key case) — with NULLs never matching
+  (T3 delta-8 MAJOR-2 NULL-symmetry rule: a NULL column never matches on either side —
+  `source_ref = ?` bound to NULL matches nothing, that is the rule; an `IS`-based match that
+  treats every NULL-ref fact as live would permanently block GC — and a key with **both**
+  columns NULL is not written to the ledger). It is **live** if any live entry matches it on
+  **either** column (the
+  conservative direction: liveness errs toward keeping). Required test cases: a NULL-hash
+  fact key still GC-matches a NULL-hash document on ref; a NULL-ref fact key with a hash
+  GC-matches on hash alone; a re-keyed document (`R_old`→`R_new`, same hash) is matched by
   the old fact's hash; a live fact sharing the ref but carrying a **different** hash keeps the
-  document live. A `storeSource`-only document with zero facts therefore
+  document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts yet survives
+  compact() when an old `(R, H1)` key drains** (T3 delta-10 M1 scenario). A
+  `storeSource`-only document with zero facts therefore
   **always survives compact()** (its keys never enter the ledger). One document backing N
   facts is untouched while any live fact references it.
 - Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
@@ -294,9 +306,14 @@ erasure-complete default; the alternative is document-as-host-property.
 
 ### 6. Docs: the deleting-data guide gets the erasure section
 
-`apps/docs/src/content/docs/guides/deleting-data.md` gains: the erasure recipe (forget → prune
-`retainSoftDeletedFor: 0` → `compact()`), the "guaranteed at compact-time, not forget-time"
-scoping, the host-connection pragma requirement, the copy census (events kept unless
+`apps/docs/src/content/docs/guides/deleting-data.md` gains: the erasure recipe
+(`forget` → `compact()` — **no standalone `runPrune` step** (T3 delta-10 m2): compact's step 1
+already prunes with `retainSoftDeletedFor: 0` and `retainEventsFor: null`, and a standalone
+prune with default options would delete events older than 30 days, contradicting the
+events-kept framing), the "guaranteed at compact-time, not forget-time"
+scoping **with the `pruneSupersededAfter` caveat** (facts soft-deleted by step 1 during this
+compact hard-delete at the *next* compact — T3 delta-10 m1), the host-connection pragma
+requirement, the copy census (events kept unless
 `includeEvents`; drain the outbox; source documents GC; manifest stays; exports bring data
 back), and the no-opt-out pragma statement.
 
