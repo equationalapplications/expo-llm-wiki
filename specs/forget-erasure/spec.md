@@ -1,8 +1,9 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 17 — T3 CONVERGED (full pass + 7 delta rounds, all findings folded);
-T4 Fable gate pending.**  
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
+**Status: Draft rev 18 — T4 Fable gate round 1 findings folded; T4 delta pending. INTENT
+alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
+requires a rule-5 amendment before implementation (see §5 / owner question E).**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
 
 ## Problem
 
@@ -94,13 +95,22 @@ failed step fails the compact and reports where it stopped):
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
-   than throwing (T3 m2). **Entity enumeration (T3 delta-10 m3):** step 1 prunes every
-   distinct `entity_id` that has soft-deleted rows past the hard-delete cutoff (one
-   `SELECT DISTINCT entity_id` over eligible rows), not every entity in the store. A
+   than throwing (T3 m2).   **Entity enumeration (T3 delta-10 m3, extended T4 MAJOR-2):** step 1 prunes every
+   distinct `entity_id` with soft-deleted rows past the hard-delete cutoff — the enumeration
+   is the **`UNION` of distinct `entity_id` from soft-deleted entries AND soft-deleted tasks**
+   past the cutoff (`runPrune` hard-deletes soft-deleted tasks too,
+   `MaintenanceService.ts:387` → `TaskRepository.ts:294-303`, and `tasks.description` holds
+   user text, `schema.ts:92`; a task-only `forget({ taskId })` can leave an entity with
+   soft-deleted tasks and zero soft-deleted entries). Test: task-only forget + compact → task
+   rows gone from the file. A
    `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
    `MaintenanceService.ts:250` — T3 delta-11 m1; `:459` is the release call) — a concurrent
    operation on that entity — **skips that entity** with a surfaced diagnostic and does not
-   fail the compact; the report lists skipped entities. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** that error
+   fail the compact; the report lists skipped entities. **Compact's own lock (T4 m7):**
+   compact takes `acquireLock('compact', entityId ?? '*')` (the store-wide pattern already
+   used at `MaintenanceService.ts:531`), conflicting with per-entity `'prune'`/`'store'`/
+   `'forget'` operations for its duration; per-entity prune locks inside step 1 still apply.
+   **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -108,9 +118,12 @@ failed step fails the compact and reports where it stopped):
    run N times; the wrapped store-wide VACUUM happens once at step 5 (T3 delta-2 m2). Known
    edge (T3 delta-7 m2, documented): with `pruneSupersededAfter` set, step 1 soft-deletes
    expired history stamped at/after this run's cutoff, so those rows hard-delete at the
-   **next** compact — accepted.
-2. **Source-store GC** (§5) — drains the durable `source_gc_pending` ledger (§5), never
-   collect-by-absence.
+   **next** compact — accepted. **Scope (T4 m5):** the expired-history soft-delete runs only
+   for entities step 1 enumerates; an entity with expired history but no soft-deleted rows is
+   never visited — the "next compact" claim holds only for enumerated entities.
+2. **Source-store GC** (§5) — **conditional on owner question E** (E=default: absent in v1;
+   E=GC: drains the durable `source_gc_pending` ledger after the INTENT rule-5 amendment,
+   exact-pair matching, never collect-by-absence).
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
    surfaced** (today `syncPassages` swallows failures, `SearchService.ts:353-355`, and
    `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134` — if the
@@ -165,7 +178,9 @@ failed step fails the compact and reports where it stopped):
 A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips the FTS
 steps (3, 4, 7) for surfaces that don't exist — but step 4 still runs for any retired tables
 left behind — and remains correct: there is nothing to drain or optimize,
-and the other steps still erase. VACUUM and checkpoint are whole-file operations — they
+and the other steps still erase. **`syncEntries` never rejects** (`SearchService.ts:199-208`) —
+it **resolves `false` only when a ledger drain failed** (the caller's ids were not applied), so
+step 6 treats a `false` return as a **failed step** (T4 m3). VACUUM and checkpoint are whole-file operations — they
 rewrite the host's own tables too, and VACUUM fails while the host holds a transaction on the
 shared connection (guide 110-113); compact's locking contract states this (today locks are
 per-entity, `MaintenanceService.ts:250`) and the whole-file scope joins owner question B's
@@ -198,7 +213,9 @@ is the point of `includeChain`, documented); chain ids are added to `deletedEntr
 every other fact.
 
 Mutually exclusive with `clearAll` (existing selector rules unchanged; the flag composes only
-with `entryId`).
+with `entryId`). **Future selector cross-ref (T4 m6):** `forget({ eventId })` is the named
+deletion path for retained quotes (INTENT.md:428-430, filed as **#386**) — the `ForgetParams`
+typing and dry-run selector rules changed here must not box that selector in.
 
 ### 4. Optional immediate-erasure enhancement, gated (the issue's FTS5 option)
 
@@ -212,9 +229,15 @@ with a surfaced warning. The compact-time guarantee (§1-2) is unaffected either
 
 **The gate is equality-based on a known-good release, not a range (T3 M6).** The gate is
 `sqlite_version() >= <first release containing the fix check-in 0b486e53a4>` — that release
-does not exist yet, so **the gate is closed today** (no runtime passes). Wording like
+does not exist yet, so **the gate is closed today** (no runtime passes); 3.53.4 is
+"**treated as unfixed**" (not listed as fixed — the investigation's wording, T4 m8), never
+asserted unfixed as fact. The version comparison is a **numeric tuple compare**
+(major.minor.patch), never a string compare. Wording like
 "outside the known-buggy range 3.46.0→3.53.2" is forbidden: it would admit 3.42.0-3.45.x
-(untested, same merge code) and 3.53.3/3.53.4 (unfixed).
+(untested, same merge code) and 3.53.3/3.53.4 (unfixed). **Gate-test detail (T4 m8):** the
+format-5 mock must raise a **non-`SQLITE_CORRUPT*` code** — FTS5 reports format mismatch as
+`SQLITE_ERROR`, and `ftsCorruptionClass` (`Fts5IndexStrategy.ts:737-742`) routes
+`SQLITE_CORRUPT*` to `resetAndRearm` instead of the `UnavailableIndexStrategy` path (§4).
 
 Format-5 read errors on older builds (the one-way door): the real fallback path is
 `initEntries` rethrow → `UnavailableIndexStrategy` (`Fts5IndexStrategy.ts:213`) — migration
@@ -225,7 +248,15 @@ mitigable** and is documented as such.
 The pragma (§1) is unconditional on every runtime — it has no version constraint and no format
 door.
 
-### 5. Source-store erasure: positive-predicate document GC (T3 B1 redesign)
+### 5. Source-store erasure: INTENT rule 5 governs — document-as-host-property is the v1 default (T4 BLOCKER-1)
+
+**INTENT.md rule 5 (`INTENT.md:193-200`, re-affirmed by the 2026-11-15 amendment at
+`:387-395` after the source store shipped) enumerates exactly when stored text leaves:**
+`forget()` on the source, a changed copy stored under the same `sourceRef`, an entity wipe,
+or an import with `merge: false`. Compact's last-fact GC would be a **fifth leaving path not
+in that list** — a contradiction of intent, which per AGENTS.md makes the spec wrong until
+INTENT is amended. The original §5 checked INTENT :135/:137/:468 but never rule 5 (T4
+BLOCKER-1); rule 5 governs this data.
 
 `forget({ entryId })` today leaves stored source text (`source_documents.text`,
 `schema.ts:74`) on disk when the selector is entry-based. But `source_documents` rows are
@@ -234,7 +265,21 @@ exposed at `WikiMemory.ts:1110-1118`) and import (`ImportExportService.ts:180`) 
 `remember` or `ingestDocument` (T3 B1/M1) — so a fact-less stored document is a normal,
 supported state (`getStoredSource`, passage search).
 
-Decision: `compact()`'s GC pass drains a **durable pending-GC ledger** (T3 delta B1 — a
+**v1 decision (recommended default): document-as-host-property.** `compact()` does **not**
+touch `source_documents`. The documented erasure path for stored text is
+`forget({ sourceRef })`/`forget({ sourceHash })` — hard-deleting at forget time
+(`MaintenanceService.ts:696-700`) — plus `clearAll`; both are already rule-5 paths, so **no
+INTENT amendment is needed**. A `forget({ entryId })` erases everything **except** host-stored
+source text; the guide (§6) states this scoping explicitly. Consequences: no GC machinery, no
+`source_gc_pending` ledger in v1, and the B1 invariant (host-stored text survives compact)
+holds trivially.
+
+**The GC alternative — ships only if owner question E answers "GC"**, and then only after an
+**INTENT rule-5 amendment naming compact-time GC as a fifth leaving path** (moved out of the
+end-of-build batch; it gates §5-GC implementation, T4 BLOCKER-1). The full design negotiated
+through T3 is retained here as that path's blueprint:
+
+Decision (E=yes design): `compact()`'s GC pass drains a **durable pending-GC ledger** (T3 delta B1 — a
 per-run candidate list is empty whenever the hard-deletes happened in an earlier `runPrune`,
 which is exactly what the documented recipe and the 7-day automatic prune do):
 - **Every prune that hard-deletes facts** — standalone `runPrune` (including the automatic
@@ -291,11 +336,17 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   so a host can replace the text under a ref — an old ledger key `(R, H1)` must NOT delete a
   document now stored at `(R, H2)` (the ref matches, the text is new). Therefore a document is
   a GC **candidate** only when the ledger key matches the document's **current
-  `(source_ref, source_hash)` pair** exactly (T3 delta-11 M1, correcting T3 delta-10 M1):
-  **`H_key IS NOT NULL AND H_doc = H_key`**, **or** **`H_key IS NULL AND H_doc IS NULL AND
-  R_doc = R_key`** (a ref match on a NULL hash is allowed only when **both** hashes are NULL —
-  this keeps the `(R, H1)`→`(R, H2)` re-store case safe while letting a NULL-hash fact's
-  document go). Plain ref-OR-hash matching is forbidden (T3 delta-10 M1: `storeSource` upserts
+  `(source_ref, source_hash)` pair** exactly (T3 delta-11 M1, **narrowed to exact-pair by T4
+  MAJOR-1** — the hash-alone branch is dropped):
+  **`H_key IS NOT NULL AND H_doc = H_key AND R_doc = R_key`**, **or** **`H_key IS NULL AND
+  H_doc IS NULL AND R_doc = R_key`** (a ref match on a NULL hash is allowed only when **both**
+  hashes are NULL). **Why not hash-alone (T4 MAJOR-1):** `sourceStoreUpsert` refuses duplicate
+  hashes across the store and live registry (`sourceStoreUpsert.ts:70-80`; upsert-by-ref
+  logic: `sourceStoreUpsert.ts:53-93`, T4 m4), so a document can
+  never be re-keyed in place — the only way `(R_new, H)` exists while `(R_old, H)` is pending
+  is that the old document was already forgotten and the host **freshly re-stored** the text;
+  `sourceStoreUpsert.ts:53-93`
+  (T4 m4). Plain ref-OR-hash matching is also forbidden (T3 delta-10 M1: `storeSource` upserts
   by ref, so an old `(R, H1)` key must not delete new `(R, H2)` text; and a bare `H_doc ==
   H_key` rule would strand NULL-hash documents). It is **live** if any live entry matches it on
   **either** column (the
@@ -303,10 +354,11 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   delta-8 MAJOR-2): a NULL column never matches a non-NULL one on either side, and a key with
   **both** columns NULL is not written to the ledger. Required test cases: a NULL-hash
   fact key still GC-matches a NULL-hash document on ref (delta-11 M1); a NULL-ref fact key with a hash
-  GC-matches on hash alone; a re-keyed document (`R_old`→`R_new`, same hash) is matched by
-  the old fact's hash; a live fact sharing the ref but carrying a **different** hash keeps the
+  GC-matches on hash alone; a live fact sharing the ref but carrying a **different** hash keeps the
   document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts yet survives
-  compact() when an old `(R, H1)` key drains** (T3 delta-10 M1 scenario). A
+  compact() when an old `(R, H1)` key drains** (T3 delta-10 / T4 MAJOR-1 scenario — the
+  T3 "re-keyed document matched by old hash" case is deleted: re-keying in place is impossible
+  under the duplicate-hash refusal). A
   `storeSource`-only document with zero facts therefore
   **always survives compact()** (its keys never enter the ledger). One document backing N
   facts is untouched while any live fact references it.
@@ -314,10 +366,11 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   the stored document at forget time — the facts themselves still soft-delete,
   `MaintenanceService.ts:696-700`/`:709`; T3 delta-3 m4).
 
-**Owner question E (T3 B1):** should forgetting the last fact referencing a stored document
-delete the host's stored text at all (the GC above), or is `forget({ sourceRef })` the
-documented erasure path with compact() leaving host-stored text alone? The GC is the
-erasure-complete default; the alternative is document-as-host-property.
+**Owner question E (T3 B1 + T4 BLOCKER-1) — decide at the spec stop, before the plan:** does
+forgetting the last fact referencing a stored document delete the host's stored text at all
+(GC — requires the INTENT rule-5 amendment first), or is `forget({ sourceRef })` the erasure
+path with compact() leaving host-stored text alone (document-as-host-property — **recommended
+v1 default**)? E is **not** parked for the end-of-build batch: it gates the §5-GC design.
 
 ### 6. Docs: the deleting-data guide gets the erasure section
 
@@ -337,8 +390,12 @@ back), and the no-opt-out pragma statement.
 - `packages/core/src/services/search/Fts5IndexStrategy.ts` — per-open gated option set
   (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent `ft_config` write); compact-time
   retired-table reclaim-to-completion + full ledger drain with surfaced errors.
-- `packages/core/src/db/migrations.ts` — new migration: `source_gc_pending` ledger table
-  (unconditional schema). No option migration (per-open gate, §4).
+- `packages/core/src/db/migrations.ts` — **only if owner question E answers GC**: new
+  migration for the `source_gc_pending` ledger table (unconditional schema). No option
+  migration (per-open gate, §4); under the v1 default there is **no** GC migration.
+- `INTENT.md` — status lines touched by this behavior (implementation PR per house rule);
+  **plus a rule-5 amendment naming compact-time GC as a fifth leaving path — only if E
+  answers GC, and it gates §5-GC implementation** (T4 BLOCKER-1).
 - `packages/core/src/db/schema.ts` / `packages/core/src/WikiMemory.ts` `setup()` —
   `PRAGMA secure_delete=ON` + read-back in `setup()` (T3 delta-2 m1: one file named).
 - `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains **only** the
@@ -371,8 +428,10 @@ back), and the no-opt-out pragma statement.
      `storeSource` and import; `remember`/`ingestDocument` create no source rows and no
      events): **`storeSource({ sourceRef: R, sourceHash, text containing the canary })`** into
      a tempdir store with 300+ filler facts (multi-segment index), then create **exactly one**
-     canary fact carrying the same `sourceRef` (via `remember`/`ingestDocument` with a stub
-     provider), and **assert the `source_documents` row exists before the forget** (the check
+     canary fact carrying the same `sourceRef` (via **`ingestDocument` with a stub provider**
+     or `upsertGraph` — `remember`'s `RememberInput` carries no `sourceRef`/`sourceHash`,
+     `types.ts:1613-1628`, so it cannot build this fixture; T4 m1), and **assert the
+     `source_documents` row exists before the forget** (the check
      must not be vacuous). Then `forget({ entryId })`,
      `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` (T3 delta-8 m2 —
      explicit options; the bare default would delete 30-day-old events),
@@ -413,10 +472,15 @@ back), and the no-opt-out pragma statement.
    completes after compact.
 5. **Source GC:** document backing two facts, one forgotten — document stays; both forgotten +
    compact — document and passages gone (including `source_passages_fts`). **B1 regression
-   test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged.
-   **Key-matching cases (T3 delta-4 MAJOR-1):** a NULL-hash fact key GC-matches on ref alone;
-   a re-keyed document (`R_old`→`R_new`, same hash) is matched by the old fact's hash; a live
-   fact sharing the ref but with a **different** hash keeps the document live.
+   test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged —
+   and under the v1 default **every** stored document survives compact.
+   **Key-matching cases (GC path only, T3 delta-4 MAJOR-1 narrowed by T4 MAJOR-1):** a
+   NULL-hash fact key GC-matches a NULL-hash document on ref; a NULL-ref fact key with a hash
+   GC-matches on hash alone; a live fact sharing the ref but with a **different** hash keeps
+   the document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts survives an
+   old `(R, H1)` key** (the T3 re-key case is deleted — re-keying in place is impossible
+   under the duplicate-hash refusal). **Task-only case (T4 MAJOR-2):** forget tasks only +
+   compact → task rows gone from the file.
 6. **Gate tests:** mock runtimes (refuses option / below the gate / format-5 read error) —
    the per-open gate warns and skips; no-FTS path stays green; pragma read-back surfaces
    refusal. Gate acceptance is tested against a mocked version **at and above** the pinned
@@ -476,8 +540,10 @@ gate passes (and then the one-way door applies, documented).
   `forget({ entryId })` cannot promise whole-file erasure while `events.summary` holds fact
   text and only `clearAll({ includeEvents: true })` deletes events. (a) documented host-step
   carve-out (recommended — guide states the full-wipe steps); (b) engine-side scoped event
-  deletion on forget; (c) engine-side entity-summary rewrite.
-- **E.** Source-document ownership on last-fact forget (T3 B1): does compact()'s GC delete
-  host-stored text (`storeSource`) when the last fact referencing it is gone (erasure-complete
-  default, §5), or is `forget({ sourceRef })` the documented erasure path with compact()
-  leaving host-stored text alone (document-as-host-property)?
+  deletion on forget; (c) engine-side entity-summary rewrite. Cross-ref: `forget({ eventId })`
+  (#386, INTENT.md:428-430) is the named future path for retained-quote deletion (T4 m6).
+- **E.** Source-document ownership on last-fact forget (T3 B1 + T4 BLOCKER-1): **recommended
+  v1 default is document-as-host-property** — compact leaves host-stored text alone;
+  `forget({ sourceRef })`/`forget({ sourceHash })` (already rule-5 paths) and `clearAll` are
+  the documented erasure paths. The alternative (compact-time GC) **requires an INTENT rule-5
+  amendment first** and ships the §5 blueprint design.
