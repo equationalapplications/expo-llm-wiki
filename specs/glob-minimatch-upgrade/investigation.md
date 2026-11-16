@@ -1,8 +1,8 @@
 # Investigation: adopt glob 14.0.2 / minimatch 11.0.1 to clear GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249
 
-**Date:** 2026-11-16 (rev 5 — Tier-4 Fable REQUEST CHANGES folded: the
-"workbox duplicate-entry drift" was NOT glob-14 drift; confounder found and
-proven by decisive experiment. Adoption shows ZERO observable drift.)
+**Date:** 2026-11-16 (rev 6 — step 0 COMPLETE. Opus ladder: APPROVE WITH
+NITS. Tier-4 Fable: r1 REQUEST CHANGES → rev 5 fold → r2 delta APPROVE
+WITH NITS, all nits folded below.)
 **Status:** Step 0 — investigation, converged pending owner ruling (see
 Precondition). The branch must NOT merge as the fix until `spec.md`,
 `plan.md` and `LEDGER.md` exist in this folder (first post-ruling task) and
@@ -109,12 +109,14 @@ semantics are observably different". **That was wrong: the A/B was
 confounded by untracked build state.** The decisive re-run:
 
 1. **Reproducibility:** fresh builds on main (`27f8e5e9` worktree,
-   glob 11) produce **7 entries 3/3 runs**; branch (glob 14) produced
-   **8 entries 3/3 builds** — but the branch runs inherited an untracked
-   leftover `apps/scopelab/public/sql-wasm.wasm` from prior builds (the
-   `sql-wasmPlugin` in `apps/scopelab/vite.config.ts:11-19` copies it into
-   `public/` at every `buildStart` and never removes it; it is not
-   git-tracked).
+   glob 11) produce **7 entries 3/3 runs** — with the leftover
+   `apps/scopelab/public/sql-wasm.wasm` explicitly deleted before each run
+   (the branch runs, by contrast, inherited the leftover from prior
+   builds; the `sqlWasmPlugin` in `apps/scopelab/vite.config.ts:11-19`
+   copies it into `public/` at every `buildStart` and never removes it;
+   it is **gitignored** — `.gitignore:41`, `apps/**/public/sql-wasm.wasm`
+   — so `git status` never surfaces it; delete it explicitly before any
+   A/B).
 2. **Confounder isolated by instrumentation** (temporary debug logging in
    `node_modules/vite-plugin-pwa/dist/index.js` on both sides, both trees):
    in a REAL build, vite-plugin-pwa resolves its options and runs its
@@ -129,7 +131,10 @@ confounded by untracked build state.** The decisive re-run:
    produces the IDENTICAL 8-entry manifest as the branch (glob 14)** —
    same count, same size (1270.92 KiB), same duplicated `sql-wasm.wasm`
    (same url, same revision `a152cddb…`). The glob version is not the
-   variable; the leftover is.
+   variable; the leftover is. The eight ordered entries (identical on
+   both sides): `sql-wasm.wasm` (×2, first and seventh), `registerSW.js`,
+   `index.html`, `assets/index-DSK93Wbl.css`, `assets/index-CktsN_ga.js`,
+   `favicon.svg`, `manifest.webmanifest`.
 4. **Mechanism (verified from source):** scopelab's
    `includeAssets: ['favicon.svg', 'sql-wasm.wasm']`
    (`apps/scopelab/vite.config.ts:30`) double-lists a file the default
@@ -137,17 +142,25 @@ confounded by untracked build state.** The decisive re-run:
    `workbox-build`'s `additionalManifestEntriesTransform`
    (`build/lib/additional-manifest-entries-transform.js:16-32`) pushes the
    includeAssets entries onto the globbed manifest with NO dedupe. The
+   includeAssets half runs in vite-plugin-pwa's `configResolved`
+   (`dist/index.js:991` → `resolveOptions` `:970` → `configureStaticAssets`
+   `:79`, tinyglobby import `:46`, glob `:111-116` with `cwd: publicDir`) —
+   Rollup fires `configResolved` before the copy plugin's `buildStart`,
+   which is why fresh-state builds see only `favicon.svg` there. The
    runtime is unaffected: workbox-precaching's `precache()` "adds items to
    the precache list, removing any duplicates"
    (`node_modules/workbox-precaching/build/workbox-precaching.dev.js`,
-   L492/L510).
+   comment L492, call L502, `addToCacheList` L516).
 5. **Conclusion: glob 14/minimatch 11 produce ZERO observable manifest or
    build drift in this repo.** The duplicate only manifests when the
-   untracked `public/sql-wasm.wasm` leftover exists — CI fresh checkouts
-   never have it, so CI manifests are always the 7-entry form. Exit codes
-   alone would still have been insufficient evidence: the 7-vs-8 split was
-   REAL and reproducible per-side; only the instrumented mechanism trace
-   plus the planted-leftover experiment identified its true cause.
+   gitignored `public/sql-wasm.wasm` leftover exists — CI fresh checkouts
+   never have it, and `deploy.yml:51-53` builds scopelab exactly once per
+   checkout, so the service worker actually published to GitHub Pages has
+   always been the 7-entry form: **the duplicate has never shipped.**
+   Exit codes alone would still have been insufficient evidence: the
+   7-vs-8 split was REAL and reproducible per-side; only the instrumented
+   mechanism trace plus the planted-leftover experiment identified its
+   true cause.
 6. **Other probes (branch):** `pnpm exec eslint .` in apps/wiki-demo
    (eslint 10 + typescript-estree, minimatch 10→11) — clean;
    `pnpm --filter @equationalapplications/expo-llm-wiki test` (12 tests)
@@ -275,7 +288,7 @@ comment, (3) open the PR.
 - **rev 4 (2026-11-16):** Opus r3 delta (effort low, $0.29, 1 turn):
   APPROVE WITH NITS — facts re-checked; `pnpm view` clause folded. Opus
   ladder converged.
-- **rev 5 (2026-11-16):** Tier-4 Fable (effort high, $4.36, 85 turns):
+- **rev 5 (2026-11-16):** Tier-4 Fable r1 (effort high, $4.36, 85 turns):
   REQUEST CHANGES — MAJOR: the 7-vs-8 manifest difference is explained by
   scopelab's `includeAssets` double-listing (`sql-wasm.wasm` matched by
   both the includeAssets half and the default workbox `**/*.wasm` pattern,
@@ -294,3 +307,18 @@ comment, (3) open the PR.
   folded. Net effect on the decision: adoption shows ZERO observable
   drift; the residual cost is only Open question 2's unprobed @expo/\*
   exposure.
+- **rev 6 (2026-11-16):** Fable r2 delta (effort high, $1.71, 20 turns):
+  **APPROVE WITH NITS** — MAJOR 1 resolved and independently verified from
+  source end-to-end (Fable traced the hook-ordering link itself:
+  `configResolved` fires before `buildStart`). 3 MINORs + 3 nits folded:
+  "untracked" corrected to "gitignored (`.gitignore:41`) — git status
+  never surfaces it, delete explicitly before any A/B"; the main-side
+  3/3 reproducibility claim annotated (leftover was deleted before each
+  run); the eight ordered manifest entries pasted as the decisive
+  experiment's on-record artifact; `sqlWasmPlugin` identifier corrected;
+  workbox-precaching citations corrected (L502/L516); the stronger
+  consequence stated (deploy.yml builds scopelab once per checkout, so
+  the published service worker has always been the 7-entry form — the
+  duplicate has never shipped). **Step 0 COMPLETE: Opus APPROVE WITH NITS
+  + Fable APPROVE WITH NITS, all findings folded. Awaiting owner ruling
+  per Precondition.**
