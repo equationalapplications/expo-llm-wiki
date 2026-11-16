@@ -1,9 +1,9 @@
 # Investigation — #401: forget must erase (FTS5 secure-delete, chain forget, compact())
 
-**Date:** 2026-11-16 · **Status:** Rev 4 (Opus r1 + Fable r1/r2 findings folded; delta re-present pending)
+**Date:** 2026-11-16 · **Status:** Rev 5 (Opus r1 + Fable r1/r2 folded; Fable r3 folded — harness reworked for a tokenizer-stable canary, `%_data` postings surface now directly measured, porter scenarios added)
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Repo baseline:** `27f8e5e9` (main after #400, v9.2.0)
 **Evidence tags:** [V] = controller-verified against this tree / live driver; [C] = child- or web-reported, not independently reproduced.
-**Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the deleted row carries a **unique probe term**; every scenario ends with `'integrity-check'` + MATCH probes; 300 filler rows push the index into a **multi-segment layout**.
+**Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2 + Fable r3 BLOCKER rework): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the canary is a **single lowercase alphanumeric token** (`zxq7f3a9k`) — byte-identical under the unicode61 **and** porter unicode61 tokenizers — with two per-scenario harness assertions that it is a real, stable term (fts5vocab holds the exact token; pre-delete MATCH returns exactly the TARGET row); every scenario **byte-scans the db file, the `-wal` sidecar, and every `%_data` block separately**, so row-content erasure (`db`) and term-bytes erasure (`postings`) are distinct columns; the `deleted-term` MATCH probe is reported but is **not** byte evidence (FTS5 hides deleted rowids by design); `segpages` counts non-structure `%_data` rows (structure record = id 1, config = id 10; >1 = a non-trivial multi-page index); porter scenarios F2/G2/H2 reproduce F/G/H on the **engine's own tokenizer** (`porter unicode61`); the SQLite version line is `SELECT sqlite_version()` output, not a hard-coded string.
 
 ## 1. Summary
 
@@ -13,61 +13,78 @@ B: canary present after a plain delete + checkpoint, on a multi-segment index). 
 requires addressing **four primary retention surfaces in the store file** (§3) **plus the
 derived and upstream copies of fact text elsewhere in the store** (§3.5).
 
-**Mechanism finding (Fable r1 B1 → re-measured unconfounded after Fable r2 B1):** the FTS5
-`'secure-delete'` option the issue proposes is **unusable as the required mechanism on every
-runtime the package supports today** — the upstream merge bug (§5) is unfixed in every released
-SQLite. The guaranteed erasure mechanism is **compact-time**: core `PRAGMA secure_delete=ON` +
-plain deletes + FTS `'optimize'` or `'rebuild'` at `compact()` + a truncating checkpoint —
-measured clean in scenarios F and G **with the option genuinely off** (`ft_config` asserted),
-on multi-segment indexes, with green integrity and correct MATCH probes. Scenario H isolates
-the pragma as the load-bearing piece: rebuild **without** the pragma leaves the canary in
-freed pages. The option remains valuable as an **optional immediate-erasure enhancement**
+**Mechanism finding (Fable r1 B1 → re-measured unconfounded after Fable r2 B1 → re-measured at the
+postings level after Fable r3's BLOCKER):** the FTS5 `'secure-delete'` option the issue proposes
+is **unusable as the required mechanism on every runtime the package supports today** — the
+upstream merge bug (§5) is unfixed in every released SQLite. The guaranteed erasure mechanism is
+**compact-time**: core `PRAGMA secure_delete=ON` + plain deletes + FTS `'optimize'` or
+`'rebuild'` at `compact()` + a truncating checkpoint — measured clean in scenarios F/G/F2/G2
+**with the option genuinely off** (`ft_config` asserted), on multi-page indexes (`segpages` 11→7),
+on **both** the harness tokenizer (unicode61) and the engine's own (`porter unicode61`), green
+integrity, and with erasure now proven on **both surfaces**: the row-content copy (`db` scan) AND
+the term-bytes copy in `%_data` segment pages (`postings` scan). Scenario H isolates the pragma:
+`'rebuild'` **without** the pragma clears the postings surface but leaves the canary in freed
+pages (`db` present). The option remains valuable as an **optional immediate-erasure enhancement**
 behind a version gate.
 
-**On VACUUM (Fable r1 M4, measured):** VACUUM drops freed pages from the file, so scenario B′
-(plain delete + VACUUM, no pragma, no option) is clean — on the measured layout, where the
-deleted row sat in the same segment as its insert (postings removed outright, no delete
-markers). This is **measured, not guaranteed**: where a deleted row's postings survive in older
-segments under delete markers, term bytes live in live `%_data` pages that VACUUM copies as-is;
-only a merge of those segments (or the option) removes them. VACUUM shrinks the file; the
-guarantee comes from pragma + merge (`'optimize'`/`'rebuild'`).
+**On VACUUM (Fable r1 M4 → now directly measured, Fable r3):** VACUUM does **not** erase the
+deleted fact. Scenario B′ (plain delete + VACUUM, no pragma, no option) leaves the canary on
+**both** surfaces: freed row-content pages AND live `%_data` pages carrying the deleted row's
+term bytes, which VACUUM copies as-is when it rewrites the file. (The rev-4 B′ "clean" result was
+an artifact of the old harness's content-only scan — its canary string could not appear in
+tokenized `%_data` bytes at all.) VACUUM shrinks the file; only pragma + a segment merge
+(`'optimize'`/`'rebuild'`) scrubs term bytes.
 
 ## 2. Repro table (live driver: better-sqlite3 13.0.3, bundled SQLite 3.53.4, WAL mode) [V]
 
-Output of `node specs/forget-erasure/canary-repro.cjs` (byte-scan of db file and `-wal`;
-`integ` = FTS5 `'integrity-check'`; `deleted-term` = MATCH on the deleted row's unique probe
-term; `live-rows` = MATCH on live rows):
+Output of `node specs/forget-erasure/canary-repro.cjs` (`db` = byte-scan of the db file;
+`postings` = byte-scan of every `%_data` block; `wal` = byte-scan of `-wal`; `integ` = FTS5
+`'integrity-check'`; `segpages` = non-structure `%_data` row count; `deleted-term` = MATCH on the
+deleted row's unique probe term — hiding only, not byte evidence; `live-rows` = MATCH on live
+rows; u61 = unicode61, porter = `porter unicode61`):
 
-| # | Scenario (fresh db each) | Canary in db | wal | integ | deleted-term | live-rows |
-|---|---|---|---|---|---|---|
-| A | insert + `wal_checkpoint(TRUNCATE)` (baseline) | **present** | clean | ok | `["TARGET"]` | 300 |
-| B | plain `DELETE` + checkpoint (pragma off, option off) | **present** | clean | ok | `[]` | 300 |
-| B′ | plain `DELETE` + `VACUUM` (pragma off, option off) | clean | clean | ok | `[]` | 300 |
-| C1 | FTS5 `'secure-delete'` option only: delete + checkpoint | **present** | clean | ok | `[]` | 300 |
-| C2 | scenario C1 continued with `VACUUM` | clean | clean | ok | `[]` | 300 |
-| D | `PRAGMA secure_delete=ON` + option: delete + checkpoint | **clean** | clean | ok | `[]` | 300 |
-| E | scenario D continued with `VACUUM` | clean | clean | ok | `[]` | 300 |
-| F | `PRAGMA secure_delete=ON`, **option off**: delete + `'optimize'` + checkpoint | **clean** | clean | ok | `[]` | 300 |
-| G | `PRAGMA secure_delete=ON`, **option off**: delete + `'rebuild'` + checkpoint | **clean** | clean | ok | `[]` | 300 |
-| H | pragma **off**, option off: delete + `'rebuild'` + checkpoint | **present** | clean | ok | `[]` | 300 |
+| # | Scenario (fresh db each) | db | postings | wal | integ | segpages | deleted-term | live-rows |
+|---|---|---|---|---|---|---|---|---|
+| A | insert + `wal_checkpoint(TRUNCATE)` (baseline, u61) | **present** | **present** | clean | ok | 11 | `["TARGET"]` | 300 |
+| B | plain `DELETE` + checkpoint (pragma off, option off) | **present** | **present** | clean | ok | 12 | `[]` | 300 |
+| B′ | plain `DELETE` + `VACUUM` (pragma off, option off) | **present** | **present** | clean | ok | 12 | `[]` | 300 |
+| C1 | FTS5 `'secure-delete'` option only: delete + checkpoint | **present** | clean | clean | ok | 11 | `[]` | 300 |
+| C2 | scenario C1 continued with `VACUUM` | clean | clean | clean | ok | 11 | `[]` | 300 |
+| D | `PRAGMA secure_delete=ON` + option: delete + checkpoint | clean | clean | clean | ok | 11 | `[]` | 300 |
+| E | D's config: delete + `VACUUM` (fresh db) | clean | clean | clean | ok | 11 | `[]` | 300 |
+| F | pragma ON, **option off**: delete + `'optimize'` + ckpt (u61) | clean | clean | clean | ok | 7 | `[]` | 300 |
+| G | pragma ON, **option off**: delete + `'rebuild'` + ckpt (u61) | clean | clean | clean | ok | 7 | `[]` | 300 |
+| H | pragma **off**, option off: delete + `'rebuild'` + ckpt (u61) | **present** | clean | clean | ok | 7 | `[]` | 300 |
+| F2 | pragma ON, **option off**: delete + `'optimize'` + ckpt (porter) | clean | clean | clean | ok | 7 | `[]` | 300 |
+| G2 | pragma ON, **option off**: delete + `'rebuild'` + ckpt (porter) | clean | clean | clean | ok | 7 | `[]` | 300 |
+| H2 | pragma **off**, option off: delete + `'rebuild'` + ckpt (porter) | **present** | clean | clean | ok | 7 | `[]` | 300 |
 
 Notes [V]:
-- **B is the bug**: postings for the deleted rowid are gone (`deleted-term: []`) but the canary
-  bytes stay in the freed row-content pages.
-- **F and G are the compact-time mechanism proof**, with the option asserted off via `ft_config`.
-- **H isolates the pragma**: `'rebuild'` alone purges postings (`deleted-term: []`) but leaves
-  the canary in freed pages — `PRAGMA secure_delete=ON` is the load-bearing piece.
+- **B is the bug, on both surfaces**: the deleted rowid is hidden from MATCH (`deleted-term: []`)
+  — that is FTS5 hiding a deleted rowid by design, **not** byte evidence — while the canary
+  bytes stay in freed row-content pages **and** in `%_data` segment pages.
+- **B′ is NOT clean (measured, Fable r3)**: VACUUM drops freed content pages but copies live
+  `%_data` pages as-is; the deleted row's term bytes survive (§1). The rev-4 "clean" B′ was an
+  artifact of the old content-only scan.
+- **C1/C2 pin the option's own scope**: the option alone scrubs the postings surface (C1
+  `postings: clean`) but leaves row content in freed pages (`db` present) — it needs the pragma
+  (D) or a VACUUM (C2) for full-file erasure. Both mechanisms need the pragma for full erasure.
+- **F/G/F2/G2 are the compact-time mechanism proof**, with the option asserted off via
+  `ft_config`, on both tokenizers, erasure proven on both surfaces.
+- **H/H2 isolate the pragma**: `'rebuild'` alone clears the postings surface (new segments carry
+  no deleted-term bytes) but leaves the canary in freed pages (`db` present) —
+  `PRAGMA secure_delete=ON` is the load-bearing piece for full-file erasure.
 - In every run the WAL held no canary because each step ended in a `TRUNCATE` checkpoint;
   hosts without a truncating checkpoint keep old frames in `-wal` (§7 pins this).
-- B′ caveat: clean because the deleted row shared its insert's segment (no delete markers);
-  §1 scopes the residual risk.
 
 ## 3. Primary retention surfaces — the store file (all [V] against this tree)
 
-1. **FTS5 postings survive deletes by design.** `entries_fts` and `source_passages_fts` are
-   ordinary-content FTS5 virtual tables (`packages/core/src/services/search/fts5Sql.ts:51-54`,
-   `:215-218`). Without the FTS5 `'secure-delete'` option, deletes leave postings in segments
-   until merges reclaim them (scenario B, H); nothing in `packages/core/src` sets
+1. **FTS5 postings survive deletes by design — measured directly (Fable r3).** `entries_fts` and
+   `source_passages_fts` are ordinary-content FTS5 virtual tables
+   (`packages/core/src/services/search/fts5Sql.ts:51-54`, `:215-218`). Without the FTS5
+   `'secure-delete'` option, deletes leave the deleted row's term bytes in `%_data` segments —
+   measured `postings: CANARY PRESENT` in scenarios B and B′ (surviving even VACUUM) — until
+   merges reclaim them; nothing in `packages/core/src` sets
    `automerge`/`crisismerge`, so FTS5 defaults apply on the live tables; the only explicit
    `'merge'` targets retired tables (`services/search/Fts5IndexStrategy.ts:446`).
 2. **Deleted row content is not zeroed.** The engine never sets `PRAGMA secure_delete` — zero
@@ -102,15 +119,17 @@ what `forget()` does today and what the spec must decide:
 | embedding-failure markers | `db/schema.ts:33-35` | ids + error state, no text | with the row | no text to erase |
 | `events` | `db/schema.ts:124-128` (`summary TEXT NOT NULL`) | **fact text** — the librarian rebuilds facts from them | `forget({entryId})` keeps events; only `clearAll + includeEvents` hard-deletes (guide lines 207-216) | must-erase path or scoped promise (below) |
 | `outbox` | `db/schema.ts:156-162` (`payload TEXT` at `:162`) | **fact text** — unacked rows hold it (guide 218-220) | left in place | guide already instructs hosts to drain (`markOutboxEventsProcessed()`); documented as a host step |
-| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | hard-deleted only under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`); **`forget({entryId})` leaves it on disk** | must-erase gap for entryId-forgets |
+| `source_documents.text` | `db/schema.ts:74` (70-72 are id/entity_id/source_ref) | **fact/source text** | hard-deleted only under `sourceRef`/`sourceHash` selectors (`MaintenanceService.ts:687-701`); **`forget({entryId})` leaves it on disk** | spec decides (Fable r3): one document backs N facts — erasing it on a single-fact forget would destroy the passages and `source_pointer` targets of the document's **other live facts**; the `sourceRef` path is the documented route to per-document erasure, and compact-time GC (§6) removes a document only once **all** of its facts are gone |
 | `source_passages` | `db/schema.ts:68` — **offsets only, no text stored** ("Passage text is not stored: offsets … slice source_documents.text") | no text; identifies source spans | hard-deleted with the source-store block | covered by the source_documents decision |
 | `source_passages_fts` | virtual table | **indexed source text** | rebuilt from the store | covered by the same decision + §3.1 |
 | entity summary | `meta.value` under `entitySummaryMetaKey` (`MaintenanceService.ts:664`) | summarized fact content | deleted only on `clearAll` | same decision shape as events |
 | entity ontology manifest | `entity_manifests.manifest_json` (`db/schema.ts:144-149`; guide 221-224 — "node and edge types learned from the entity's facts") | fact-**derived** type names, not fact text | wipe leaves it (guide) | document as left (Fable r1 M1) |
 | `entries.source_ref` / `source_pointer`, `source_ref_index.source_ref` | entries table; source_ref_index | **no fact text, but identifying data** (filenames, URLs) | pointer index rows hard-delete on source wipes; entry rows soft-delete | spec decides/document (Fable r1 M1) |
-| graph edges | `db/schema.ts:112-116` | no — id/type columns only [V] | deleted on `clearAll` | no text to erase |
+| graph edges | `db/schema.ts:112-116` | no fact text; but `edge_type` may hold **fact-derived type names** under an emergent ontology — same category as the manifest row (Fable r3) | deleted on `clearAll` | document as left, same decision shape as the manifest row |
 | graph nodes | stored as entries (facts) | — | covered by entry deletion | no separate surface |
+| FTS `%_content` / `%_data` shadow tables (`entries_fts_*`, `source_passages_fts_*`) | FTS5 shadow tables | **full copies**: `%_content` stores the indexed title/body/tags text verbatim; `%_data` stores terms + postings (Fable r3) | scrubbed only by the §6 mechanism (or the option); measured in §2 | primary surface; covered by the compact-time mechanism |
 | `vector_removals` ledger | `db/schema.ts:177-185` | no — ids/timestamps only [V] | retained by design (durable-vector-removal spec) | no text to erase |
+| VACUUM temporary database file | SQLite temp file during `VACUUM` | can carry pre-VACUUM page images during the rewrite (Fable r3) | deleted at VACUUM commit; residue possible on crash/rollback-journal hosts | document as a crash-window residue; no engine change |
 | export files | `ImportExportService` dumps | fact text, outside the store | — | document (guide already warns re-import brings data back) |
 
 **Consequence for §7:** the canary acceptance test must ingest through the public write path
@@ -124,11 +143,14 @@ above, explicitly.
   (release history). Once a table has had rows deleted under the option, its FTS5 file format
   moves to version 5 and older FTS5 builds cannot read it ("invalid fts5 file format (found 5,
   expected 4)") [C-web]. Experiment D read the table fine on 3.53.4 [V].
-- **The FTS5 option alone does not erase row content** (C1). Both the option and the core
-  pragma are required [C-web].
-- **VACUUM (Fable r1 M4, measured):** drops freed pages (B′) but cannot scrub term bytes that
-  survive under delete markers in live `%_data` pages; it shrinks the file and is part of the
-  compact-time recipe, not the erasure mechanism itself.
+- **The FTS5 option alone does not erase row content** (C1, measured): it scrubs the postings
+  surface but leaves row content in freed pages — both the option and the core pragma are
+  required for full-file erasure [V]. Note also that D/E (option-based) are **not usable in
+  production today**: with the §5 merge bug unfixed in every released SQLite, the option cannot
+  carry the guarantee on any supported runtime.
+- **VACUUM (Fable r1 M4 → measured, Fable r3):** drops freed content pages but copies live
+  `%_data` pages as-is, so term bytes under delete markers survive it (B′ measured NOT clean);
+  it shrinks the file and is part of the compact-time recipe, not the erasure mechanism itself.
 - **The option cannot be the required mechanism (Fable r1 B1):** the version gate over the
   known-buggy range (§5) passes **zero supported runtimes today** — better-sqlite3 13.0.3
   bundles 3.53.4 (`packages/core/package.json:69`), and the expo-sqlite peer range
@@ -178,7 +200,14 @@ above, explicitly.
     never opens the connection — `createWiki(db, …)` receives a host-opened handle, guide line
     61; `secure_delete` is per-connection), **read the pragma back and surface it**; document
     that host connections writing wiki tables directly must set it themselves (guide §"If your
-    app writes to the wiki tables itself", lines 157-166).
+    app writes to the wiki tables itself", lines 157-166). **Connection-wide scope (Fable r3):**
+    the pragma changes delete behavior for **every table on the connection, including the
+    host's own tables** (their hard deletes also zero freed pages — a write-cost/behavior change
+    outside the engine's prefix). This sits in tension with INTENT.md:137-138 ("writes only to
+    tables under a prefix you choose and never touches other tables"), so the no-opt-out
+    recommendation (§8 Q2) is an owner decision, not a settled call; `secure_delete=FAST` is the
+    cheaper middle option (zeroes deleted content with a smaller write pattern) and belongs in
+    the same decision.
   - `compact()` composition, in order (Fable r2 m1): **per-entity prune** with
     `retainSoftDeletedFor: 0` **inheriting runPrune's safety holds** → FTS `'optimize'` or
     `'rebuild'` → `VACUUM` → `wal_checkpoint(TRUNCATE)` **after** the VACUUM (Fable r1 m2:
@@ -210,14 +239,19 @@ above, explicitly.
 
 Canary-string forensic test: after `forget()` plus the documented steps, the string is absent
 from the database file **and** the journal files. Pinned shape:
+- **The canary is a single lowercase alphanumeric token** (byte-identical under the engine's
+  `porter unicode61` tokenizer), verified in-tree via fts5vocab and a pre-delete MATCH, with
+  **separate `%_data` block assertions** (Fable r3: a mixed-case/hyphenated canary can only ever
+  be found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
+  surface).
 - **Ingest through the public write path** so the event and outbox copies exist (§3.5).
 - Scan the **db file, `-wal`, `-journal`, and `-shm`** at every checkpoint of the test.
 - `compact()` is the step that runs the erasure mechanism (pragma + optimize/rebuild +
   `wal_checkpoint(TRUNCATE)` after VACUUM); **erasure is guaranteed at `compact()` time, not at
   `forget()` time** (soft-delete window + WAL residue between them).
-- F and G are the mechanism proofs [V, option asserted off]; the test reproduces them through
-  the engine's public API in a tempdir, on a **multi-segment index** (bulk inserts crossing
-  automerge thresholds), not a single-segment fresh index.
+- F/G/F2/G2 are the mechanism proofs [V, option asserted off, both surfaces, both tokenizers];
+  the test reproduces them through the engine's public API in a tempdir, on a **multi-segment
+  index** (bulk inserts crossing automerge thresholds), not a single-segment fresh index.
 
 ## 8. Open questions for the spec (owner input only where product-shaped)
 
@@ -231,10 +265,14 @@ from the database file **and** the journal files. Pinned shape:
    spec's promise matches it. Open: does the option hard-delete the chain members immediately
    (documented erasure semantics) or soft-delete them into the existing prune flow?
    Recommendation: soft-delete + document that erasure completes at `compact()` (§7).
-2. **Can hosts disable `secure_delete`?** Recommendation: always on in `setup()` on the engine's
-   handle, no opt-out in v1; hosts' *other* connections must set it themselves (documented).
-   Revisit only on a real perf complaint. (Scenario H shows why: without the pragma, even
-   `'rebuild'` leaves text in freed pages.)
+2. **Can hosts disable `secure_delete`?** (amended Fable r3: the pragma is **connection-wide**
+   and alters delete behavior/cost on the host's own tables — an INTENT.md:137-138 tension).
+   Options: (a) always on, no opt-out in v1, pragma read-back surfaced (prior recommendation);
+   (b) always on + an opt-out engine option for hosts who accept the residue; (c) `secure_delete=FAST`
+   as the default with `FULL` available. Hosts' *other* connections must set it themselves
+   (documented) in every option. **Owner question B — now carries this scope dimension.**
+   (Scenario H shows why something is needed: without the pragma, even `'rebuild'` leaves text
+   in freed pages.)
 3. **Immediate-erasure enhancement (re-answered, Fable r1 B1):** ship v18 as OPTIONAL: set the
    FTS5 option only when the runtime passes the version gate (capability ≥3.42 **and** outside
    the known-buggy range, re-checked against the release history at implementation time);
@@ -261,6 +299,3 @@ from the database file **and** the journal files. Pinned shape:
   release history at implementation time before pinning the version gate's upper bound.
 - The census rows marked "spec decides" (§3.5) are inventoried, not decided — the spec owns
   the per-copy scoping.
-- B′'s clean result holds for the measured layout (deleted row in its insert's segment); the
-  delete-marker-surviving layout is covered by the guarantee path (pragma + merge), not
-  measured in isolation (§1).
