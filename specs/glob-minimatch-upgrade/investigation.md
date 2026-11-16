@@ -1,7 +1,10 @@
 # Investigation: adopt glob 14.0.2 / minimatch 11.0.1 to clear GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249
 
-**Date:** 2026-11-16 (rev 2 — Opus r1 findings folded, differential probes run)
-**Status:** Step 0 — investigation, converged pending owner ruling (see Precondition)
+**Date:** 2026-11-16 (rev 3 — Opus r2 delta folded: drop-condition substance, status caveat, drift attribution precision)
+**Status:** Step 0 — investigation, converged pending owner ruling (see
+Precondition). The branch must NOT merge as the fix until `spec.md`,
+`plan.md` and `LEDGER.md` exist in this folder and the #278 ruling is
+recorded — the branch already carries live override + lockfile changes.
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278
@@ -102,15 +105,19 @@ stale dists masquerade as behavior differences (first attempt showed
    (`node_modules/workbox-precaching/build/workbox-precaching.dev.js`,
    `precache()`/"addToCacheList" docs, L492/L510): the runtime
    "adds items to the precache list, **removing any duplicates**" — so the
-   runtime precache is functionally identical. The duplicate arises inside
-   workbox-build 7.4.1's manifest generation under glob 14's changed
-   pattern/ignore semantics (glob 11's behavior produced one match; glob 14
-   produces two for `sql-wasm.wasm`). workbox-build 7.4.1 is the LATEST
-   upstream release (published 2026-05-04, declares glob `^11.0.1`) — there
-   is no newer workbox that fixes or absorbs this. This drift is disclosed,
-   bounded (same url + same revision, runtime-deduped), and is the concrete
-   evidence that glob-14 semantics ARE observably different in this repo's
-   real build surfaces — exit codes alone would have hidden it.
+   runtime precache is functionally identical. The duplicate is ATTRIBUTED
+   to the glob 11→14 delta — the only variable in this A/B (identical vite
+   config, identical dist inputs, fresh builds on both sides); the precise
+   glob pattern responsible is NOT identified, and whether the
+   anchored-`ignore` semantic change also affects @expo/fingerprint or
+   @expo/config globbing has no evidence either way (no probe target
+   exists in-repo) — see Open question 2. workbox-build 7.4.1 is the
+   LATEST upstream release (published 2026-05-04, declares glob
+   `^11.0.1`) — there is no newer workbox that fixes or absorbs this.
+   The drift is bounded (same url + same revision, runtime-deduped) and is
+   the concrete evidence that glob-14 semantics ARE observably different
+   in this repo's real build surfaces — exit codes alone would have hidden
+   it.
 2. **eslint 10 + typescript-estree (minimatch 10→11):** `pnpm exec eslint .`
    in apps/wiki-demo — clean on the branch (no config-resolution errors,
    no lint failures). No differential output to compare (eslint is quiet
@@ -138,10 +145,14 @@ eslint chain in apps/wiki-demo — all dev/build-time); that this override
 forces a MAJOR outside every consumer's declared range; the known-benign
 workbox duplicate-entry drift; and the drop condition:
 
-> **Drop condition:** remove each line when no lockfile importer declares a
-> range that excludes 14.0.2 / 11.0.1 respectively; re-check in every
-> cooldown sweep (the standing cadence that already re-derives the audit
-> surface).
+> **Drop condition:** remove each line when no package in the resolved
+> graph (`pnpm why glob` / `pnpm why minimatch`) declares a range that
+> excludes 14.0.2 / 11.0.1. NOTE: the workspace importers themselves never
+> declare glob or minimatch — the range holders to watch are the
+> transitive parents: @expo/\* (glob `^13.0.0`), workbox-build (glob
+> `^11.0.1`), eslint + @typescript-eslint/typescript-estree +
+> @expo/fingerprint (minimatch `^10.2.x`). Re-check in every cooldown
+> sweep (the standing cadence that already re-derives the audit surface).
 
 No allowlist change: neither GHSA was allowlisted.
 
@@ -185,10 +196,14 @@ pnpm-workspace.yaml with drop condition)"; the PR #400 status comment's
    into the pass-2 PR on 2026-11-20? Default: fold into pass 2 — one
    cooldown PR, no lane collision with the cron's brief (which would need
    this branch's existence added to its context if landed separately).
-2. Accept the disclosed workbox duplicate-entry drift (runtime-deduped,
-   same revision) as the cost of adoption? Alternative is waiting for
-   upstream (indefinite). Recommended: accept, with the drift documented in
-   the override comment.
+2. Accept the two disclosed costs of adoption? (a) the workbox
+   duplicate-entry drift (runtime-deduped, same revision) and (b) the
+   UNPROBED @expo/fingerprint + @expo/config exposure to glob 14's
+   anchored-`ignore` semantics change — no probe target exists in-repo
+   (no expo app), those surfaces run only in developer CLI workflows, and
+   the changed semantics are exactly the class of drift the workbox probe
+   caught. Recommended: accept both, with both documented in the override
+   comment.
 
 ## Revision history
 
@@ -208,7 +223,19 @@ pnpm-workspace.yaml with drop condition)"; the PR #400 status comment's
   fresh builds — the workbox duplicate-entry drift found, characterized
   (same url/revision, runtime-deduped per workbox-precaching source), and
   disclosed; gate-coverage honesty added for the @expo/\* surfaces; drop
-  condition written; m1–m7 folded (line numbers corrected to main
+  condition written; m1–m5, m7 folded (line numbers corrected to main
   `27f8e5e9`, consumer named as filelist@1.0.6, Dependabot statement made
-  precise, rejected-alternative 2 re-led, status-line merge caveat,
-  #278 checklist change made concrete).
+  precise, rejected-alternative 2 re-led, #278 checklist change made
+  concrete). Opus r2 delta (effort low, $0.32, 1 turn): REQUEST CHANGES —
+  NEW-M1: the drop condition as written ("no lockfile importer") was
+  already satisfiable today because pnpm importers = workspace packages
+  and none declare glob/minimatch — a literal read would delete both
+  overrides at the first sweep; NEW-m-A: Status line still lacked the
+  merge caveat; NEW-m-B: duplicate cause asserted not shown, unprobed expo
+  surface disclosed but not posed as an acceptance risk.
+- **rev 3 (2026-11-16):** r2 folded: drop condition reworded to
+  resolved-graph test (`pnpm why`) with the transitive range-holders
+  named; Status line carries the merge caveat; drift attribution downgraded
+  to "attributed — only variable in the A/B, precise pattern unidentified";
+  the unprobed @expo/fingerprint + @expo/config anchored-ignore exposure is
+  now an explicit acceptance item in Open question 2.
