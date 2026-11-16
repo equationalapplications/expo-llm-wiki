@@ -13,7 +13,7 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 | 2026-11-16 | Fable r3 delta | BLOCKED: Claude API 5-h limit, resets 15:30 ET; retry scheduled | $0.0000 |
 | 2026-11-16 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 
-Lane spend so far: **$21.3941** (all step-0; implementation not started).
+Lane spend so far: **$24.4379** (all step-0; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
 | 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
 | 2026-11-16 | Fable r3 delta (resumed after rail reset) | REQUEST CHANGES — BLOCKER (harness canary not tokenizer-stable; postings surface unmeasured) + 3 MAJOR + 3 MINOR, all REAL; folded rev 5 + harness rework; re-measured: F/G/F2/G2 clean both surfaces, B′ NOT clean, pragma load-bearing | $2.5158 |
@@ -76,3 +76,4 @@ sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), no
 | 2026-11-16 | T3 Opus delta r11 | REQUEST CHANGES — 1 MAJOR (GC rule vs NULL-hash test case → exact two-clause rule) + 5 mechanical minors; folded spec rev 16 | $0.4301 |
 | 2026-11-16 | T3 Opus delta r12 | APPROVE WITH NITS — **T3 spec ladder CONVERGED at rev 17** (full + 7 deltas); nits folded (syncedIds superset contract, status) | $0.3984 |
 | 2026-11-16 | T4 Fable spec gate r1 | REQUEST CHANGES — BLOCKER-1 (INTENT rule-5 contradiction → v1 default = document-as-host-property, GC gated on rule-5 amendment + owner E) + MAJOR-1 (exact-pair predicate) + MAJOR-2 (tasks enumeration) + 8 minors; folded spec rev 18 / investigation rev 12 | $4.7428 |
+| 2026-11-16 | T4 Fable delta r2 | REQUEST CHANGES — 3 MAJOR ('compact' lock design hole; 5 unconditional GC references; fact-path tier whole-file contradiction under v1 default) + 5 minors; folded spec rev 19 | $3.0438 |

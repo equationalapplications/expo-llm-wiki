@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 18 — T4 Fable gate round 1 findings folded; T4 delta pending. INTENT
+**Status: Draft rev 19 — T4 delta-1 findings folded; T4 delta-2 pending. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -75,9 +75,10 @@ not at `forget()` time.** Between them the soft-delete window and journal residu
 
 ### 2. `compact()` — the erasure API
 
-Store-wide `wiki.compact()` (owner question A on scope; a **new public API** — nothing named
-`compact` exists in this tree). Composition, in order (T3 M7 — each step surfaces errors; a
-failed step fails the compact and reports where it stopped):
+Store-wide `wiki.compact()` (owner question A on scope; a **new public API** — no method or
+public API named `compact` exists in the tree; `types.ts:1186` has only a `compact?: boolean`
+format-context option, no collision — T4 m1). Composition, in order (T3 M7 — each step
+surfaces errors; a failed step fails the compact and reports where it stopped):
 
 1. **Per-entity prune** with `retainSoftDeletedFor: 0` **and `retainEventsFor: null`** — events
    are genuinely **kept** by compact (T3 delta-6 MAJOR-2: the engine default is
@@ -95,22 +96,32 @@ failed step fails the compact and reports where it stopped):
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
-   than throwing (T3 m2).   **Entity enumeration (T3 delta-10 m3, extended T4 MAJOR-2):** step 1 prunes every
-   distinct `entity_id` with soft-deleted rows past the hard-delete cutoff — the enumeration
-   is the **`UNION` of distinct `entity_id` from soft-deleted entries AND soft-deleted tasks**
-   past the cutoff (`runPrune` hard-deletes soft-deleted tasks too,
+   than throwing (T3 m2).   **Entity enumeration (T3 delta-10 m3, extended T4 MAJOR-2, helper
+   T4 m3):** step 1 prunes
+   every distinct `entity_id` with soft-deleted rows past the hard-delete cutoff — including
+   **soft-deleted tasks** (`runPrune` hard-deletes soft-deleted tasks too,
    `MaintenanceService.ts:387` → `TaskRepository.ts:294-303`, and `tasks.description` holds
    user text, `schema.ts:92`; a task-only `forget({ taskId })` can leave an entity with
-   soft-deleted tasks and zero soft-deleted entries). Test: task-only forget + compact → task
-   rows gone from the file. A
-   `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
+   soft-deleted tasks and zero soft-deleted entries). Reuse the existing distinct-entity walk
+   in `MetadataRepository.ts:177-184` (it already spans entries/tasks/events and deliberately
+   includes soft-deleted-only entities) with the hard-delete cutoff filter added, rather than
+   a new UNION query. Test: task-only forget + compact → task rows gone from the file.
+   A `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
    `MaintenanceService.ts:250` — T3 delta-11 m1; `:459` is the release call) — a concurrent
    operation on that entity — **skips that entity** with a surfaced diagnostic and does not
-   fail the compact; the report lists skipped entities. **Compact's own lock (T4 m7):**
-   compact takes `acquireLock('compact', entityId ?? '*')` (the store-wide pattern already
-   used at `MaintenanceService.ts:531`), conflicting with per-entity `'prune'`/`'store'`/
-   `'forget'` operations for its duration; per-entity prune locks inside step 1 still apply.
-   **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
+   fail the compact; the report lists skipped entities. **Compact's own lock (T4 m7,
+   concretized T4 delta MAJOR-1):** `'compact'` does **not** exist in `OperationType`
+   (`JobManager.ts:3-14`) or `WikiBusyOperation` (`types.ts:1209-1218`), and `acquireLock` is
+   a hand-written per-operation switch (`JobManager.ts:190-299`) — the `'*'` at
+   `MaintenanceService.ts:530-531` is two distinct operations (`'reembed'`/`'global_reembed'`),
+   each with its own branch. So: **add `'compact'` to both enums**; `acquireLock`/`releaseLock`
+   gain a `'compact'` case that the **`store`, `forget`, `ingest`, `import`, `librarian`,
+   `heal`, `reembed`** cases must check; **`prune` does NOT check it** — compact's step 1
+   calls `runPrune` through an internal entry point that bypasses the per-entity prune lock
+   (if `prune` checked the compact key, step 1 would throw `WikiBusyError` on every entity and
+   compact would "succeed" having deleted nothing). Tests: compact with N entities hard-deletes
+   in all N; a concurrent `storeSource` during compact throws
+   `WikiBusyError('compact', '*')`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -308,7 +319,10 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   rejected: the guard at `:852-853` can keep rows the SELECT already read, making it
   over-inclusive.
   **All prune paths write the ledger**, including the
-  `'legacy'`/no-ledger-gate branches (`MaintenanceService.ts:338-348`).
+  `'none'`/hookless branch — a store whose `setup()` never ran, so no ledger table exists
+  (`MaintenanceService.ts:338-348`; the removal gate there is `'hook'`, one of
+  `'hook' | 'none' | 'force'` from `VectorRemovalService.ts:45-49` — `'legacy'` is the
+  maintenance **mode** at `:408`, not a gate; T4 m2).
   **Gate on the GC ledger's own existence — nothing else (T3 delta-7 MAJOR-1, correcting T3
   delta-6 MAJOR-1):** the `gate === 'hook'` branch is **not** the only no-table path:
   `ledgerOn = !!vr && !!vrRepo && await vr.ledgerPresent()` (`:306`) is the **vector-removal**
@@ -380,9 +394,13 @@ already prunes with `retainSoftDeletedFor: 0` and `retainEventsFor: null`, and a
 prune with default options would delete events older than 30 days, contradicting the
 events-kept framing), the "guaranteed at compact-time, not forget-time"
 scoping **with the `pruneSupersededAfter` caveat** (facts soft-deleted by step 1 during this
-compact hard-delete at the *next* compact — T3 delta-10 m1), the host-connection pragma
+compact hard-delete at the *next* compact, and only for entities compact enumerated — T4 m5),
+the host-stored-document statement (**stored documents survive compact; the erasure path for
+them is `forget({ sourceRef })`** — T4 delta MAJOR-2; the GC census line applies only under
+E=GC), the host-connection pragma
 requirement, the copy census (events kept unless
-`includeEvents`; drain the outbox; source documents GC; manifest stays; exports bring data
+`includeEvents`; drain the outbox; host-stored documents survive compact unless
+`forget({ sourceRef })` or the E=GC path; manifest stays; exports bring data
 back), and the no-opt-out pragma statement.
 
 ## Files touched
@@ -424,29 +442,19 @@ back), and the no-opt-out pragma statement.
    verified via fts5vocab + pre-delete MATCH) — a mixed-case/hyphenated canary can only ever be
    found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
    surface.
-   - *Fact-path tier:* fixture pinned (T3 B1/M1 — `source_documents` is written only by
-     `storeSource` and import; `remember`/`ingestDocument` create no source rows and no
-     events): **`storeSource({ sourceRef: R, sourceHash, text containing the canary })`** into
-     a tempdir store with 300+ filler facts (multi-segment index), then create **exactly one**
-     canary fact carrying the same `sourceRef` (via **`ingestDocument` with a stub provider**
-     or `upsertGraph` — `remember`'s `RememberInput` carries no `sourceRef`/`sourceHash`,
-     `types.ts:1613-1628`, so it cannot build this fixture; T4 m1), and **assert the
-     `source_documents` row exists before the forget** (the check
-     must not be vacuous). Then `forget({ entryId })`,
+   - *Fact-path tier (restructured T4 delta MAJOR-3):* the canary lives **only in the fact** —
+     fixture: `ingestDocument` with a stub provider (`remember`'s `RememberInput` carries no
+     `sourceRef`/`sourceHash`, `types.ts:1613-1628`; and **no `storeSource`**, so nothing
+     host-stored holds the canary) into a tempdir store with 300+ filler facts (multi-segment
+     index). Then `forget({ entryId })`,
      `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` (T3 delta-8 m2 —
-     explicit options; the bare default would delete 30-day-old events),
-     `compact()` — assert the canary is absent from the entry row, all FTS surfaces (db file,
-     `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and that the compact-time
-     source GC removed the `source_documents`/`source_passages` rows (including
-     `source_passages_fts`). **Second case:** a document backing **two** facts —
-     after forgetting one, its `source_documents` row and passages must **survive** (GC must
-     not fire while a live fact references it). The explicit
-     `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` before
-     `compact()` is **intentional** (T3
-     delta-2 m4): it exercises the ledger path across separate prune and compact calls — the
-     exact shape of the documented host recipe, where the ledger must carry the keys.
-     `events.summary` and the
-     entity summary are documented carve-outs at this tier (owner question D).
+     explicit options; the bare default would delete 30-day-old events), `compact()` —
+     **assert whole-file absence**: canary absent from the entry row, all FTS surfaces (db
+     file, `-wal`, `-journal`, `-shm`, **and every `%_data` block**). Because no host-stored
+     document exists, whole-file absence is assertable at this tier. `events.summary` and the
+     entity summary are documented carve-outs (owner question D). Host-stored text has its
+     **own tier below** (T4 delta MAJOR-3); the E=GC ledger-exercise variant of this tier
+     (with `storeSource` + the same-ref fact, asserting GC removal) runs only under E=GC.
    - *Full-wipe tier:* **seed every derived copy explicitly and assert each exists before the
      wipe** (T3 M1 — none of them arise from ingestion alone): an event whose `summary`
      carries the canary (via `write()`), an unsent outbox row, and an entity summary containing
@@ -455,22 +463,26 @@ back), and the no-opt-out pragma statement.
      absent from the whole file. Whole-file absence claims are made only at this tier.
    Mirror scenario F and G (optimize and rebuild variants; K/K2 are the composed-sequence
    proof).
-2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
-   canary — **pins that `'rebuild'` alone is insufficient without the pragma** (the
-   "pragma is unconditional" wording holds only after owner question B is answered).
+2. **H-mirror test:** after `setup()` sets the pragma, flip it **`PRAGMA secure_delete=OFF` on
+   the same connection** (no engine hook needed — the pragma is per-connection), `'rebuild'`
+   alone leaves the canary — **pins that `'rebuild'` alone is insufficient without the pragma**
+   (the "pragma is unconditional" wording holds only after owner question B is answered).
 3. **compact() holds:** with an unconfirmed external removal, `compact()` hard-deletes nothing
    held and reports the holds via `PrunePartialFailureError` semantics. **Events: compact
    deletes none** (`retainEventsFor: null`) — assert the event count is unchanged after
    compact (T3 delta-8 MAJOR-1; the `event_retention_held` diagnostic is out of scope for
-   compact). Plus the
-   **ledger crash-injection test** (T3 delta-2 M3): a crash between the entry hard-delete and
+   compact). Note step 1's internal `syncEntries` **ignores `false` returns** (`:451` discards
+   the result) — step 6's surfaced `false` is the only failure observer, which is why step 6
+   exists (T4 m5). Plus the
+   **`source_gc_pending` (E=GC only)** (T3 delta-2 M3): a crash between the entry hard-delete and
    the `source_gc_pending` insert is impossible (same transaction) — inject a failure and
    assert neither the delete nor the ledger row landed.
 4. **Chain forget:** fixture lineage with fan-in (A→C←B: forgetting A reaches C, not B —
    documented); dry-run lists exactly the walked ids, `truncated` + cap notice on truncation;
    real run soft-deletes the chain (chain ids covered by sync/drain/backstop); erasure
    completes after compact.
-5. **Source GC:** document backing two facts, one forgotten — document stays; both forgotten +
+5. **Source GC (E=GC path only — under the v1 default these move to the "survives" cases
+   above):** document backing two facts, one forgotten — document stays; both forgotten +
    compact — document and passages gone (including `source_passages_fts`). **B1 regression
    test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged —
    and under the v1 default **every** stored document survives compact.
@@ -481,6 +493,12 @@ back), and the no-opt-out pragma statement.
    old `(R, H1)` key** (the T3 re-key case is deleted — re-keying in place is impossible
    under the duplicate-hash refusal). **Task-only case (T4 MAJOR-2):** forget tasks only +
    compact → task rows gone from the file.
+   **Source-document tier (T4 delta MAJOR-3 — scoped to owner question E):**
+   - *v1 default:* `storeSource` the canary text (no facts), `forget({ entryId })` + compact →
+     **the document survives** (host property); then `forget({ sourceRef: R })` + compact →
+     **whole-file clean** (rule-5 path).
+   - *E=GC:* the same fixture under the §5 blueprint → the GC removes document + passages +
+     registry row on the drained key.
 6. **Gate tests:** mock runtimes (refuses option / below the gate / format-5 read error) —
    the per-open gate warns and skips; no-FTS path stays green; pragma read-back surfaces
    refusal. Gate acceptance is tested against a mocked version **at and above** the pinned
