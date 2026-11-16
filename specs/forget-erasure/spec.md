@@ -1,7 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 3 — under review (T3/T4 ladder; owner tier selection)**  
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 7, converged)
+**Status: Draft rev 4 — under review (T3/T4 ladder; owner tier selection)**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 8, converged)
 
 ## Problem
 
@@ -151,15 +151,24 @@ back), and the no-opt-out pragma statement.
 
 ## Test plan
 
-1. **Canary forensic test (the acceptance criterion):** the canary is a **single lowercase
+1. **Canary forensic test (the acceptance criterion) — two tiers** (the copies have different
+   documented owners; see investigation §7/§8 Q5): the canary is a **single lowercase
    alphanumeric token** (byte-identical under the engine's `porter unicode61` tokenizer,
    verified via fts5vocab + pre-delete MATCH) — a mixed-case/hyphenated canary can only ever be
    found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
-   surface. Ingest through the public write path (`remember`/`ingestDocument`) into a tempdir
-   store with 300+ filler facts (multi-segment index), `forget({ entryId })`,
-   `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert the canary is absent from the
-   db file, `-wal`, `-journal`, `-shm`, **and from every `%_data` block** (the postings
-   surface). Mirror scenario F and G (optimize and rebuild variants).
+   surface.
+   - *Fact-path tier:* ingest through the public write path (`remember`/`ingestDocument`) into
+     a tempdir store with 300+ filler facts (multi-segment index), `forget({ entryId })`,
+     `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert the canary is absent from
+     the entry row, all FTS surfaces (db file, `-wal`, `-journal`, `-shm`, **and every
+     `%_data` block**), and — via the compact-time source GC — from
+     `source_documents`/`source_passages`. `events.summary` and the entity summary are
+     documented carve-outs at this tier (owner question D).
+   - *Full-wipe tier:* `clearAll({ includeEvents: true })` + outbox drain + `compact()` —
+     assert the canary is absent from the whole file. Whole-file absence claims are made only
+     at this tier.
+   Mirror scenario F and G (optimize and rebuild variants; K/K2 are the composed-sequence
+   proof).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
    canary — pins why the pragma is unconditional.
 3. **compact() holds:** with an unconfirmed external removal and an unread event, `compact()`
@@ -215,3 +224,8 @@ migration is safe on every current runtime. No format change occurs unless the g
   residue; (c) `secure_delete=FAST` default with `FULL` available.
 - **C.** Ship the gated immediate-erasure enhancement in v1 (recommended) or defer v18 entirely
   and keep compact-time only.
+- **D.** Events and entity-summary erasure scope (investigation §8 Q5): a single-fact
+  `forget({ entryId })` cannot promise whole-file erasure while `events.summary` holds fact
+  text and only `clearAll({ includeEvents: true })` deletes events. (a) documented host-step
+  carve-out (recommended — guide states the full-wipe steps); (b) engine-side scoped event
+  deletion on forget; (c) engine-side entity-summary rewrite.
