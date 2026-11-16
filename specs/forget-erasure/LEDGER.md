@@ -13,7 +13,28 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 | 2026-11-16 | Fable r3 delta | BLOCKED: Claude API 5-h limit, resets 15:30 ET; retry scheduled | $0.0000 |
 | 2026-11-16 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 
-Lane spend so far: **$7.7091** (all step-0; implementation not started).
+Lane spend so far: **$9.5188** (all step-0; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
 | 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
 | 2026-11-16 | Fable r3 delta (resumed after rail reset) | REQUEST CHANGES — BLOCKER (harness canary not tokenizer-stable; postings surface unmeasured) + 3 MAJOR + 3 MINOR, all REAL; folded rev 5 + harness rework; re-measured: F/G/F2/G2 clean both surfaces, B′ NOT clean, pragma load-bearing | $2.5158 |
+
+### Second independent canary run (Fable r4 MAJOR — recorded before spec cites §2)
+Fresh full re-run of `node specs/forget-erasure/canary-repro.cjs` by the controller,
+independent of the rev-5 run; output reproduced identically. Recorded 2026-11-16T16:02:06-05:00:
+```
+A  insert + checkpoint (baseline, unicode61)               db:CANARY PRESENT  postings:CANARY PRESENT  wal:clean  integ:ok  segpages:11  deleted-term:["TARGET"]  live-rows:300
+B  plain DELETE + checkpoint (option off)                  db:CANARY PRESENT  postings:CANARY PRESENT  wal:clean  integ:ok  segpages:12  deleted-term:[]  live-rows:300
+B' plain DELETE + VACUUM (pragma off, option off)          db:CANARY PRESENT  postings:CANARY PRESENT  wal:clean  integ:ok  segpages:12  deleted-term:[]  live-rows:300
+C1 FTS5 option only: delete + checkpoint                   db:CANARY PRESENT  postings:clean  wal:clean  integ:ok  segpages:11  deleted-term:[]  live-rows:300
+C2 FTS5 option only + VACUUM                               db:clean  postings:clean  wal:clean  integ:ok  segpages:11  deleted-term:[]  live-rows:300
+D  pragma ON + option ON: delete + checkpoint              db:clean  postings:clean  wal:clean  integ:ok  segpages:11  deleted-term:[]  live-rows:300
+E  pragma ON + option ON: delete + VACUUM (D's config)     db:clean  postings:clean  wal:clean  integ:ok  segpages:11  deleted-term:[]  live-rows:300
+F  pragma ON, option OFF: delete + 'optimize' (u61)        db:clean  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+G  pragma ON, option OFF: delete + 'rebuild' (u61)         db:clean  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+H  pragma OFF, option OFF: delete + 'rebuild' (u61)        db:CANARY PRESENT  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+F2 pragma ON, option OFF: delete + 'optimize' (porter)     db:clean  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+G2 pragma ON, option OFF: delete + 'rebuild' (porter)      db:clean  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+H2 pragma OFF, option OFF: delete + 'rebuild' (porter)     db:CANARY PRESENT  postings:clean  wal:clean  integ:ok  segpages:7  deleted-term:[]  live-rows:300
+sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), not hard-coded)
+```
+| 2026-11-16 | Fable r4 delta | APPROVE WITH NITS — 2nd independent canary run recorded above; 3 anchor/scope nits folded (rev 6). Investigation converged | $1.8097 |

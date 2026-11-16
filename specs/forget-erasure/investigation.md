@@ -1,6 +1,6 @@
 # Investigation — #401: forget must erase (FTS5 secure-delete, chain forget, compact())
 
-**Date:** 2026-11-16 · **Status:** Rev 5 (Opus r1 + Fable r1/r2 folded; Fable r3 folded — harness reworked for a tokenizer-stable canary, `%_data` postings surface now directly measured, porter scenarios added)
+**Date:** 2026-11-16 · **Status:** Rev 6 (Opus r1 + Fable r1/r2/r3 folded; Fable r4 APPROVE WITH NITS — anchor nits + ATTACH note folded; second independent canary run recorded in LEDGER)
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Repo baseline:** `27f8e5e9` (main after #400, v9.2.0)
 **Evidence tags:** [V] = controller-verified against this tree / live driver; [C] = child- or web-reported, not independently reproduced.
 **Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2 + Fable r3 BLOCKER rework): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the canary is a **single lowercase alphanumeric token** (`zxq7f3a9k`) — byte-identical under the unicode61 **and** porter unicode61 tokenizers — with two per-scenario harness assertions that it is a real, stable term (fts5vocab holds the exact token; pre-delete MATCH returns exactly the TARGET row); every scenario **byte-scans the db file, the `-wal` sidecar, and every `%_data` block separately**, so row-content erasure (`db`) and term-bytes erasure (`postings`) are distinct columns; the `deleted-term` MATCH probe is reported but is **not** byte evidence (FTS5 hides deleted rowids by design); `segpages` counts non-structure `%_data` rows (structure record = id 1, config = id 10; >1 = a non-trivial multi-page index); porter scenarios F2/G2/H2 reproduce F/G/H on the **engine's own tokenizer** (`porter unicode61`); the SQLite version line is `SELECT sqlite_version()` output, not a hard-coded string.
@@ -89,10 +89,12 @@ Notes [V]:
    `'merge'` targets retired tables (`services/search/Fts5IndexStrategy.ts:446`).
 2. **Deleted row content is not zeroed.** The engine never sets `PRAGMA secure_delete` — zero
    hits in `packages/core/src` and the deleting-data guide [V]. Hard deletes (`runPrune`,
-   `clearAll` — the `source_ref_index` hard delete at `services/MaintenanceService.ts:642-644`
-   and the source-store hard deletes at `:646-649`; the by-source `source_ref_index` delete at
-   `:715-716` is a **soft** delete, `softDeleteByEntityAndSourceRef`) leave content bytes in
-   freed b-tree pages (scenarios B, H).
+   `clearAll` — the `source_ref_index` hard delete via `sourceRefIndexRepo.deleteByEntityId`
+   behind the `sourceRefIndexPresent` guard (`services/MaintenanceService.ts:642-644` — the
+   pragma reasoning applies to whatever SQL that repo method issues, not to the call site
+   itself) and the source-store hard deletes at `:646-649`; the by-source `source_ref_index`
+   delete at `:715-716` is a **soft** delete, `softDeleteByEntityAndSourceRef`) leave content
+   bytes in freed b-tree pages (scenarios B, H).
 3. **Soft-delete retention window.** `forget()` soft-deletes (`EntryRepository.softDelete`,
    `repositories/EntryRepository.ts:561-576`); rows hard-delete only via `runPrune` after
    `retainSoftDeletedFor` (engine default 7 days, `services/MaintenanceService.ts:253`).
@@ -125,7 +127,7 @@ what `forget()` does today and what the spec must decide:
 | entity summary | `meta.value` under `entitySummaryMetaKey` (`MaintenanceService.ts:664`) | summarized fact content | deleted only on `clearAll` | same decision shape as events |
 | entity ontology manifest | `entity_manifests.manifest_json` (`db/schema.ts:144-149`; guide 221-224 — "node and edge types learned from the entity's facts") | fact-**derived** type names, not fact text | wipe leaves it (guide) | document as left (Fable r1 M1) |
 | `entries.source_ref` / `source_pointer`, `source_ref_index.source_ref` | entries table; source_ref_index | **no fact text, but identifying data** (filenames, URLs) | pointer index rows hard-delete on source wipes; entry rows soft-delete | spec decides/document (Fable r1 M1) |
-| graph edges | `db/schema.ts:112-116` | no fact text; but `edge_type` may hold **fact-derived type names** under an emergent ontology — same category as the manifest row (Fable r3) | deleted on `clearAll` | document as left, same decision shape as the manifest row |
+| graph edges | `db/schema.ts:112` (`edge_type` at `:117`) | no fact text; but `edge_type` may hold **fact-derived type names** under an emergent ontology — same category as the manifest row (Fable r3) | deleted on `clearAll` | document as left, same decision shape as the manifest row |
 | graph nodes | stored as entries (facts) | — | covered by entry deletion | no separate surface |
 | FTS `%_content` / `%_data` shadow tables (`entries_fts_*`, `source_passages_fts_*`) | FTS5 shadow tables | **full copies**: `%_content` stores the indexed title/body/tags text verbatim; `%_data` stores terms + postings (Fable r3) | scrubbed only by the §6 mechanism (or the option); measured in §2 | primary surface; covered by the compact-time mechanism |
 | `vector_removals` ledger | `db/schema.ts:177-185` | no — ids/timestamps only [V] | retained by design (durable-vector-removal spec) | no text to erase |
@@ -203,11 +205,12 @@ above, explicitly.
     app writes to the wiki tables itself", lines 157-166). **Connection-wide scope (Fable r3):**
     the pragma changes delete behavior for **every table on the connection, including the
     host's own tables** (their hard deletes also zero freed pages — a write-cost/behavior change
-    outside the engine's prefix). This sits in tension with INTENT.md:137-138 ("writes only to
-    tables under a prefix you choose and never touches other tables"), so the no-opt-out
-    recommendation (§8 Q2) is an owner decision, not a settled call; `secure_delete=FAST` is the
-    cheaper middle option (zeroes deleted content with a smaller write pattern) and belongs in
-    the same decision.
+    outside the engine's prefix), **and it applies to every database ATTACHed on that
+    connection**, so a host attaching its own file inherits the setting too (Fable r4). This
+    sits in tension with INTENT.md:137-138 ("writes only to tables under a prefix you choose
+    and never touches other tables"), so the no-opt-out recommendation (§8 Q2) is an owner
+    decision, not a settled call; `secure_delete=FAST` is the cheaper middle option (zeroes
+    deleted content with a smaller write pattern) and belongs in the same decision.
   - `compact()` composition, in order (Fable r2 m1): **per-entity prune** with
     `retainSoftDeletedFor: 0` **inheriting runPrune's safety holds** → FTS `'optimize'` or
     `'rebuild'` → `VACUUM` → `wal_checkpoint(TRUNCATE)` **after** the VACUUM (Fable r1 m2:
