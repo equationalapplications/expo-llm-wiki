@@ -44,6 +44,14 @@ export class ImportExportService {
       ids = Array.from(new Set(entityIds));
     } else {
       ids = await this.metadataRepo.getDistinctEntityIds();
+      // Spec §8: entities that exist only in the source store (no facts) must
+      // still be discovered, or a full backup silently drops their sources.
+      const prefix = this.storePrefix();
+      if (prefix !== undefined && (await this.storePresent(prefix))) {
+        const rows = await this.db.getAllAsync<{ entity_id: string }>(
+          `SELECT DISTINCT entity_id FROM ${prefix}source_documents`);
+        ids = Array.from(new Set([...ids, ...rows.map((r) => r.entity_id)])).sort();
+      }
     }
 
     const entities: Record<string, MemoryDumpEntity> = {};

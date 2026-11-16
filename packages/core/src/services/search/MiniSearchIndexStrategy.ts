@@ -233,7 +233,18 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     const allowed = new Set(options.entityIds);
     const raw = this.passageIndex.search(query, { filter: (r) => allowed.has(r.entity_id as string), combineWith: 'OR' });
     raw.sort((a, b) => (b.score - a.score) || a.id.localeCompare(b.id));
-    const hits = raw.slice(0, options.limit).map((r) => ({
+    // The index may hold rows deleted after it loaded; a hit counts only
+    // while its source_passages row exists (spec §5). Drop dead rows BEFORE
+    // slicing, so a deleted passage never consumes a limit slot a live one
+    // can fill (the FTS5 path's SQL join does the same). One indexed lookup
+    // per entity.
+    const live = new Set<string>();
+    for (const eid of options.entityIds) {
+      const rows = await this.passageSource.db.getAllAsync<{ id: string }>(
+        `SELECT id FROM ${this.passageSource.prefix}source_passages WHERE entity_id = ?`, [eid]);
+      for (const row of rows) live.add(row.id);
+    }
+    const hits = raw.filter((r) => live.has(r.id as string)).slice(0, options.limit).map((r) => ({
       id: r.id as string, entity_id: r.entity_id as string, document_id: r.document_id as string, score: r.score,
     }));
     return hydratePassageHits(this.passageSource.db, this.passageSource.prefix, hits);

@@ -147,4 +147,11 @@ describe('source store dump export/import (spec §8)', () => {
     await wiki.importDump({ generatedAt: 1, entities: { [E]: { facts: [], tasks: [], events: [] } } }, { merge: false });
     expect(await svc.listStoredSources(E)).toEqual([]);
   });
+
+  it('a full dump includes an entity that has only stored sources (spec §8)', async () => {
+    const { wiki, svc } = await setup();
+    await svc.storeSource('solo', { sourceRef: 'a.md', sourceHash: H('a'), text: 'only the store knows this entity' });
+    const dump = await wiki.exportDump();
+    expect(dump.entities.solo?.storedSources?.map((s) => s.sourceRef)).toEqual(['a.md']);
+  });
 });

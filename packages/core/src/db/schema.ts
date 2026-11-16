@@ -227,6 +227,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
   // makes either path safe.
   await createOkfV02IndexesIfColumnsExist(db, prefix);
   await createTemporalIndexesIfColumnsExist(db, prefix);
+  await createSourcePassageIndexesIfColumnsExist(db, prefix);
   await createResurrectTrigger(db, prefix);
 }
 
@@ -318,4 +319,22 @@ export async function createTemporalIndexesIfColumnsExist(db: SQLiteAdapter, pre
       `CREATE INDEX IF NOT EXISTS ${prefix}entries_temporal_idx ON ${prefix}entries(entity_id) WHERE valid_from IS NOT NULL OR valid_to IS NOT NULL;`,
     );
   }
+}
+
+/**
+ * Source-passage lookup indexes (spec source-store §3): per-document passage
+ * reads and per-entity wipes otherwise full-scan `source_passages`. Gated on
+ * column existence for the same reason as the temporal indexes: on a corrupt
+ * store (the v17 abort path plants a wrong-shaped table) unconditional DDL
+ * would fail in setupDatabase BEFORE the migration's precondition check can
+ * abort cleanly. Runs on every open, so fresh stores (which stamp CURRENT
+ * without running migrations) and migrated stores both get the indexes.
+ */
+export async function createSourcePassageIndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}source_passages)`);
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('document_id') || !names.has('entity_id')) return;
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS ${prefix}idx_source_passages_doc ON ${prefix}source_passages (document_id, seq);
+    CREATE INDEX IF NOT EXISTS ${prefix}idx_source_passages_entity ON ${prefix}source_passages (entity_id);`);
 }

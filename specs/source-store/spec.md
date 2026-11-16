@@ -396,7 +396,11 @@ under that entity, re-derives passages from the text, and re-computes
 `text_hash`; the import honors the §9 limits and refuses with the same
 diagnostics when a dump would exceed them. A `sourceRef` already stored
 under the entity is replaced by the dump's copy — the dump is the source of
-truth for that ref; other stored sources survive under merge semantics, and
+truth for that ref; §5's same-pair refusal (`source_store_hash_mismatch`) is
+a `storeSource` rule and does not gate import, so a dump copy whose text
+differs from what is stored still replaces, the re-computed `text_hash`
+becomes authoritative, and facts joined on the pair follow the new text.
+Other stored sources survive under merge semantics, and
 a `merge: false` import replaces the entity's whole store with the dump's.
 Import processes sources one by one: a source that breaks a limit or hits a
 duplicate hash refuses with its typed diagnostic, is skipped, and is listed
@@ -527,8 +531,11 @@ No dependency is added. `package.json` is untouched by this cycle.
 Rule 11: cheap targeted tests; no accuracy or cost claim is published.
 
 1. **No-model proof.** A spy on the model hook fails if it fires during
-   `storeSource`, `getStoredSource`, `listStoredSources`, or a `read()` with
-   the `sources` option.
+   `storeSource`, `getStoredSource`, or `listStoredSources`. For a `read()`
+   with the `sources` option, the spy must count no model calls beyond what
+   the same read without `sources` performs — the sources group adds none
+   (the fact-query embedding of a plain read is pre-existing, not a source
+   cost).
 2. **Migration.** Copy the `migration9.test.ts` pattern: fresh install stamps
    v17; an old database migrates by DDL; the migration is idempotent on a
    database with no stored sources; the abort-on-corrupt-precondition path

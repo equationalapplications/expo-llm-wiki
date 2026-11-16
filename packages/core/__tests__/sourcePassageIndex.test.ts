@@ -120,6 +120,27 @@ describe('source passage index', () => {
     expect(await mini.searchPassages('zebrafish', { entityIds: ['other'], limit: 10 })).toEqual([]);
   });
 
+  it('MiniSearch applies the limit to LIVE passages after dropping deleted ones', async () => {
+    const { db, svc } = await setup();
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'zebrafish habitat '.repeat(6000) });
+    const mini = new MiniSearchIndexStrategy();
+    await mini.reindexSourcePassages(db, P);
+    // Stale index: the top-ranked passage row is deleted before the post-commit reindex.
+    const top = (await mini.searchPassages('zebrafish', { entityIds: [E], limit: 10 }))[0]!;
+    expect(top.id).toBeTruthy();
+    await db.runAsync(`DELETE FROM ${P}source_passages WHERE id = ?`, [top.id]);
+    const after = await mini.searchPassages('zebrafish', { entityIds: [E], limit: 1 });
+    expect(after).toHaveLength(1);
+    expect(after[0]!.id).not.toBe(top.id);
+  });
+
+  it('the passages table has a document lookup index (no full scans per document)', async () => {
+    const { db } = await setup();
+    const idx = await db.getAllAsync<{ name: string; sql: string }>(
+      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = '${P}source_passages'`);
+    expect(idx.some((i) => (i.sql ?? '').includes('document_id'))).toBe(true);
+  });
+
   it('both strategies cover the same passages on one fixture', async () => {
     const { db, svc } = await setup();
     const strategy = await fts(db);

@@ -73,6 +73,20 @@ describe.each<Kind>(['fts5', 'minisearch'])('source store public wiring (%s)', (
     expect(afterListed.find((l) => l.sourceRef === 'doc.md')).toBeUndefined();
   });
 
+  it('forget with both selectors deletes only the exact pair (spec §5 pair semantics)', async () => {
+    const { wiki } = await setup(kind);
+    await wiki.storeSource(E, { sourceRef: 'a.md', sourceHash: hash('a'), text: 'quokka habitat notes' });
+    await wiki.storeSource(E, { sourceRef: 'b.md', sourceHash: hash('b'), text: 'wombat burrow notes' });
+    // No stored source matches the (a.md, hash-b) pair — nothing may be deleted.
+    await wiki.forget(E, { sourceRef: 'a.md', sourceHash: hash('b') });
+    expect((await wiki.getStoredSource(E, 'a.md'))?.text).toBe('quokka habitat notes');
+    expect((await wiki.getStoredSource(E, 'b.md'))?.text).toBe('wombat burrow notes');
+    // The exact pair still deletes its stored text.
+    await wiki.forget(E, { sourceRef: 'a.md', sourceHash: hash('a') });
+    expect(await wiki.getStoredSource(E, 'a.md')).toBeNull();
+    expect((await wiki.getStoredSource(E, 'b.md'))?.text).toBe('wombat burrow notes');
+  });
+
   it('forget({ clearAll }) leaves no passage queryable', async () => {
     const { wiki } = await setup(kind);
     await wiki.storeSource(E, { sourceRef: 'a.md', sourceHash: hash('a'), text: 'quokka habitat notes' });

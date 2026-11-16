@@ -688,7 +688,10 @@ export class MaintenanceService {
             // Hard-delete the source's stored text and passages in this same
             // transaction (spec source-store §5). Fact semantics are unchanged.
             const docs = `${this.prefix}source_documents`;
-            const sel = 'entity_id = ? AND ((? IS NOT NULL AND source_ref = ?) OR (? IS NOT NULL AND source_hash = ?))';
+            // Pair semantics (spec §5): both selectors are optional filters,
+            // ANDed — a (sourceRef, sourceHash) call must never delete a
+            // document that matches only one side.
+            const sel = 'entity_id = ? AND (? IS NULL OR source_ref = ?) AND (? IS NULL OR source_hash = ?)';
             const selArgs = [entityId, sourceRef, sourceRef, sourceHash, sourceHash];
             await tx.runAsync(
               `DELETE FROM ${this.prefix}source_passages WHERE entity_id = ? AND document_id IN (SELECT id FROM ${docs} WHERE ${sel})`,
