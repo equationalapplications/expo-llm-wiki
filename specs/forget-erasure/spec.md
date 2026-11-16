@@ -1,6 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 16 — under review (T3 delta-12 pending; delta-11's findings folded)**  
+**Status: Draft rev 17 — T3 CONVERGED (full pass + 7 delta rounds, all findings folded);
+T4 Fable gate pending.**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -137,15 +138,21 @@ failed step fails the compact and reports where it stopped):
    the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
    Note: step 1's `runPrune` already ran `syncEntries` (pre-VACUUM) — that pass is
    **redundant but harmless**; do not "deduplicate" by removing this post-VACUUM one (T3
-   delta-6 m2). **Id source (T3 delta-7 m1, named T3 delta-11 m5):** `runPrune` returns counts
+   delta-6 m2). **Id source (T3 delta-7 m1, named T3 delta-11 m5, contract T3 delta-12
+   MINOR-1):** `runPrune` returns counts
    only (`:457`), so it
    gains an output option **`opts.syncedIds?: string[]`** (the output-array pattern shared with
    `deletedKeys`) that receives the ids
-   it synced; compact passes those to step 6. **The output array is filled before
+   it synced; compact passes those to step 6. **Contract: `syncedIds` holds the ids
+   `runPrune` synced — a superset of the hard-deleted ids** (it may include
+   `pruneSupersededAfter`-soft-deleted ids seeded at `:288`, and on hookless/legacy gates
+   `deletable` is the requested list, so a row restored mid-run can appear). Step 6 treats it
+   as best-effort input (`syncEntries` throws out and re-reads each id; extra ids are
+   harmless); the test asserts **containment**, not exact equality. **The output array is filled before
    `PrunePartialFailureError` throws** (at the `syncedIds` assembly, `:393`/`:451-455`), so a
    held-back entity still contributes its deleted ids to step 6 — test: a hold and a
-   successful delete in the same compact, and step 6 receives exactly the deleted ids (T3
-   delta-8 m1).
+   successful delete in the same compact, and step 6 receives a superset of the deleted ids
+   (T3 delta-8 m1).
 7. FTS `'optimize'` on both FTS tables when they exist — **after** `syncEntries`, so the
    delete markers `syncEntries` introduces are merged away under the pragma (a `rebuild`
    escape hatch is exposed as `compact({ rebuild: true })` for stores recovering from
