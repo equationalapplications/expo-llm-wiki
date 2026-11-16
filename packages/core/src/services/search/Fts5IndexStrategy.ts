@@ -98,15 +98,19 @@ export class Fts5IndexStrategy implements IndexStrategy {
     if (!(await this.metadataRepo.tableExists(`${p}source_passages`))) return;
     await this.db.withTransactionAsync(async (tx) => {
       await tx.execAsync(passageFtsTablesDdl(p) + passageFtsTriggersDdl(p));
+      // Probes and the bootstrap insert run in the SAME transaction as the DDL
+      // (CodeRabbit follow-up): a store write committing after the DDL but
+      // before the probes would enqueue its document through the new trigger,
+      // and the non-empty ledger would then suppress the bootstrap forever —
+      // pre-index passages with no row would never enter passage search.
+      const mapped = await tx.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_map LIMIT 1`);
+      const queued = await tx.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_pending LIMIT 1`);
+      if (mapped === null && queued === null) {
+        await tx.runAsync(
+          `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
+           SELECT entity_id, id FROM ${p}source_documents`);
+      }
     });
-    // Passages stored before the index existed have no ledger row: enqueue them once.
-    const mapped = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_map LIMIT 1`);
-    const queued = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_pending LIMIT 1`);
-    if (mapped === null && queued === null) {
-      await this.db.runAsync(
-        `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
-         SELECT entity_id, id FROM ${p}source_documents`);
-    }
   }
 
   /**

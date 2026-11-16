@@ -412,9 +412,13 @@ export class WikiMemory {
    * host runs a plain `setup()` outside the lease.
    *
    * Keyword-index catch-up work is bounded by `config.setupBudgetMs`; anything
-   * left converges on later opens and no-arg `syncSearchIndex()` calls. Not
-   * bounded: an index reset (tokenizer change, re-attach after detach, a lost
-   * or inconsistent index), which runs as one unchunked transaction.
+   * left converges on later opens, and on no-arg `syncSearchIndex()` calls for
+   * the entries ledger. Passage-ledger leftover converges on later opens and on
+   * passage-store writes for the entity (`storeSource`, `forget`,
+   * `importDump`), which drain that entity's rows; no-arg calls do not touch
+   * the passage ledger. Not bounded: an index reset (tokenizer change, re-attach
+   * after detach, a lost or inconsistent index), which runs as one unchunked
+   * transaction.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
     const setupBudgetMs = this.setupBudgetMs();

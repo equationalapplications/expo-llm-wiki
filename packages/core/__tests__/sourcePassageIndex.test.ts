@@ -197,4 +197,56 @@ describe('source passage index', () => {
     await mini.reindexSourcePassages(db, P, E);
     expect(await mini.searchPassages('zebrafish', { entityIds: [E], limit: 10 })).toEqual([]);
   });
+
+  it('a store write committing in the init gap does not suppress the pre-index bootstrap', async () => {
+    const { db, svc } = await setup();
+    // Rewind to a pre-index database: drop the passage FTS objects, then store
+    // a source — its passages get no ledger row (the enqueue trigger is gone).
+    await db.runAsync(`DROP TRIGGER IF EXISTS ${P}source_passages_fts_ai`);
+    await db.runAsync(`DROP TRIGGER IF EXISTS ${P}source_passages_fts_ad`);
+    await db.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await db.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts_map`);
+    await db.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts_pending`);
+    await svc.storeSource(E, { sourceRef: 'old.md', sourceHash: H1, text: 'prehistoric mammoth '.repeat(6000) });
+    await svc.storeSource(E, { sourceRef: 'b.md', sourceHash: H2, text: 'pterosaur wing bones '.repeat(6000) });
+
+    // A concurrent storeSource transaction commits inside the init gap: the
+    // DDL transaction has created the objects (triggers live), then its
+    // passage row enqueues through the AFTER INSERT trigger before the
+    // bootstrap probes run. Wrapped so the injection commits in the same
+    // transaction as whichever callback creates the pending table.
+    const orig = db.withTransactionAsync.bind(db);
+    let injected = false;
+    (db as unknown as { withTransactionAsync: unknown }).withTransactionAsync = async (
+      fn: (tx: SQLiteAdapter) => Promise<void>,
+    ): Promise<void> => {
+      await orig(async (tx) => {
+        await fn(tx);
+        if (!injected) {
+          const pendingExists = await tx.getFirstAsync<{ x: number }>(
+            `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = '${P}source_passages_fts_pending'`);
+          if (pendingExists) {
+            injected = true;
+            // Only doc B's row enqueues; doc A never gets a pending row.
+            await tx.runAsync(
+              `INSERT INTO ${P}source_passages (id, entity_id, document_id, seq, start_offset, end_offset)
+               SELECT 'inject1', ?, d.id, 0, 0, 10 FROM ${P}source_documents d
+               WHERE d.source_ref = 'b.md' LIMIT 1`, [E]);
+          }
+        }
+      });
+    };
+
+    const strategy = new Fts5IndexStrategy(db, P, new MetadataRepository(db, P));
+    await strategy.init({ entriesExisted: true });
+    await strategy.drainPassages();
+
+    // The pre-index mammoth passages (doc A) must be searchable: the bootstrap
+    // ran despite the interleaved write. Doc B is reachable either way — the
+    // interleaved row's drain re-slices that whole document.
+    expect(await strategy.searchPassages('pterosaur', { entityIds: [E], limit: 10 })).not.toHaveLength(0);
+    const mammoth = await strategy.searchPassages('mammoth', { entityIds: [E], limit: 10 });
+    expect(mammoth.length).toBeGreaterThan(0);
+    expect(await count(db, 'source_passages_fts_pending')).toBe(0);
+  });
 });
