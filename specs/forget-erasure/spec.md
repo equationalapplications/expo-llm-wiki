@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 13 — under review (T3 delta-8 pending; delta-7's findings folded)**  
+**Status: Draft rev 14 — under review (T3 delta-9 pending; delta-8's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -93,13 +93,11 @@ failed step fails the compact and reports where it stopped):
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
-   than throwing (T3 m2). **Scope (T3 delta-2 M2):** that error covers **external-removal
-   holds only** (hook/timeout/unconfirmed removal, `MaintenanceService.ts:397-401`);
-   **event-retention holds do not throw** — they surface solely as the
-   `event_retention_held` diagnostic (`:436-439`; the hold branches span `:395-403` — T3
-   delta-3 m2), so compact reports them via its result
-   (a held-event count per entity, from `countHeldBack`) and the diagnostic, not via the
-   error channel. Step 1 runs prune with **`vacuum: false`** — the per-entity VACUUM must not
+   than throwing (T3 m2). **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** that error
+   covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
+   holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
+   runs (see above) — they apply only to standalone `runPrune`.
+   Step 1 runs prune with **`vacuum: false`** — the per-entity VACUUM must not
    run N times; the wrapped store-wide VACUUM happens once at step 5 (T3 delta-2 m2). Known
    edge (T3 delta-7 m2, documented): with `pruneSupersededAfter` set, step 1 soft-deletes
    expired history stamped at/after this run's cutoff, so those rows hard-delete at the
@@ -367,7 +365,8 @@ back), and the no-opt-out pragma statement.
    Mirror scenario F and G (optimize and rebuild variants; K/K2 are the composed-sequence
    proof).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
-   canary — pins why the pragma is unconditional.
+   canary — **pins that `'rebuild'` alone is insufficient without the pragma** (the
+   "pragma is unconditional" wording holds only after owner question B is answered).
 3. **compact() holds:** with an unconfirmed external removal, `compact()` hard-deletes nothing
    held and reports the holds via `PrunePartialFailureError` semantics. **Events: compact
    deletes none** (`retainEventsFor: null`) — assert the event count is unchanged after
