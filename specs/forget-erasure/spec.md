@@ -1,6 +1,9 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 8 — under review (T3 delta-3 pending)**  
+**Status: Draft rev 9 — under review (T3 delta-4 pending). INTENT alignment: the storage-side
+extension of the INTENT.md:468 precedent is covered by charter rule 8's deletion promise;
+the INTENT.md status-line update happens in the implementation PR per house rule (already in
+Files touched).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -88,10 +91,11 @@ failed step fails the compact and reports where it stopped):
    than throwing (T3 m2). **Scope (T3 delta-2 M2):** that error covers **external-removal
    holds only** (hook/timeout/unconfirmed removal, `MaintenanceService.ts:397-401`);
    **event-retention holds do not throw** — they surface solely as the
-   `event_retention_held` diagnostic (`:436-439`), so compact reports them via its result
+   `event_retention_held` diagnostic (`:436-439`; the hold branches span `:395-403` — T3
+   delta-3 m2), so compact reports them via its result
    (a held-event count per entity, from `countHeldBack`) and the diagnostic, not via the
    error channel. Step 1 runs prune with **`vacuum: false`** — the per-entity VACUUM must not
-   run N times; the wrapped store-wide VACUUM happens once at step 6 (T3 delta-2 m2).
+   run N times; the wrapped store-wide VACUUM happens once at step 5 (T3 delta-2 m2).
 2. **Source-store GC** (§5) — drains the durable `source_gc_pending` ledger (§5), never
    collect-by-absence.
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
@@ -106,9 +110,7 @@ failed step fails the compact and reports where it stopped):
    Required **whenever retired tables exist, even if `entries_fts` itself is missing** (a
    forced reset on a runtime where FTS later became unavailable still leaves verbatim text in
    the retired shadows — T3 delta m1).
-5. FTS `'optimize'` on both FTS tables when they exist (a `rebuild` escape hatch is exposed as
-   `compact({ rebuild: true })` for stores recovering from corruption).
-6. **Wrapped VACUUM** — the watermark-safe sequence `resetNormalizeWatermarks` →
+5. **Wrapped VACUUM** — the watermark-safe sequence `resetNormalizeWatermarks` →
    `metadataRepo.vacuum()` → `restartRebuildAfterVacuum` (`MaintenanceService.ts:443-449`:
    VACUUM may renumber rowids; a watermark must never survive it; the restarted rebuild must
    snapshot the renumbered rowids). **Layering (T3 delta M2):** the wrapper lives in a
@@ -118,15 +120,21 @@ failed step fails the compact and reports where it stopped):
    `resetNormalizeWatermarks` from `db/sourceRefNormalize`, and both take `metadataRepo` as an
    argument). `vacuum()` itself gains **only** the post-VACUUM `wal_checkpoint(TRUNCATE)`.
    Compact must not call `metadataRepo.vacuum()` bare.
-7. `wal_checkpoint(TRUNCATE)` — **after** the VACUUM (`MetadataRepository.vacuum()` today
-   checkpoints only before; the post-VACUUM checkpoint is what clears the rebuilt file's
-   passage through the WAL). **`syncEntries` placement:** compact calls `syncEntries` for the
-   entities it pruned **after** the VACUUM, mirroring `runPrune` (`MaintenanceService.ts:451`
-   calls it after the wrapper) so the FTS index is rebuilt against the renumbered rowids (T3
-   delta M2).
+6. **`syncEntries` for the entities compact pruned** — **immediately after the VACUUM**
+   (mirroring `runPrune`, `MaintenanceService.ts:451`) so the FTS index is rebuilt against
+   the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
+7. FTS `'optimize'` on both FTS tables when they exist — **after** `syncEntries`, so the
+   delete markers `syncEntries` introduces are merged away under the pragma (a `rebuild`
+   escape hatch is exposed as `compact({ rebuild: true })` for stores recovering from
+   corruption).
+8. `wal_checkpoint(TRUNCATE)` — **last** (`MetadataRepository.vacuum()` today checkpoints
+   only before; the post-VACUUM, post-sync checkpoint is what clears everything — including
+   any frames `syncEntries` wrote — through the WAL, so no delete-marker term bytes reappear
+   in `%_data` or `-wal` after compact returns; T3 delta-3 m1).
 
-A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips steps 3-5
-for FTS surfaces that don't exist and remains correct: there is nothing to drain or optimize,
+A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips the FTS
+steps (3, 4, 7) for surfaces that don't exist — but step 4 still runs for any retired tables
+left behind — and remains correct: there is nothing to drain or optimize,
 and the other steps still erase. VACUUM and checkpoint are whole-file operations — they
 rewrite the host's own tables too, and VACUUM fails while the host holds a transaction on the
 shared connection (guide 110-113); compact's locking contract states this (today locks are
@@ -206,8 +214,13 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   dropped v18). **The ledger insert commits in the same transaction as the entry
   hard-deletes** (T3 delta-2 M3: a crash between delete and insert would lose the key forever
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
-  required). `runPrune` returns counts today (`MaintenanceService.ts:249`, `:457`), so the
-  ledger is the only durable channel.
+  required). **Key source inside the transaction (T3 delta-3 M2):** `getPrunableMetadata`
+  returns only `{id, entity_id}` (`EntryRepository.ts:639-650`) and `bulkDeletePruned` only
+  `deletedIds` (`:842-848`), so `bulkDeletePruned` gains key return — a `RETURNING` clause or
+  an in-transaction SELECT per chunk **before** each chunk's delete (keys looked up after the
+  delete are gone; keys read before the transaction are over-inclusive but the live re-check
+  makes that harmless). **All prune paths write the ledger**, including the
+  `'legacy'`/no-ledger-gate branches (`MaintenanceService.ts:338-348`).
 - **Compact's GC step drains the ledger**: for each pending key, **in the same transaction as
   the deletes**, re-check that no live entry carries the key (a concurrent `remember` between
   steps can make a key live again — T3 delta m2), and if clear, hard-delete the key's
@@ -216,7 +229,8 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   **always survives compact()** (its keys never enter the ledger). One document backing N
   facts is untouched while any live fact references it.
 - Hosts that need per-document certainty use `sourceRef`/`sourceHash` selectors (hard-deleting
-  at forget time, `MaintenanceService.ts:696-701`).
+  the stored document at forget time — the facts themselves still soft-delete,
+  `MaintenanceService.ts:696-700`/`:709`; T3 delta-3 m4).
 
 **Owner question E (T3 B1):** should forgetting the last fact referencing a stored document
 delete the host's stored text at all (the GC above), or is `forget({ sourceRef })` the
@@ -242,16 +256,16 @@ back), and the no-opt-out pragma statement.
   `PRAGMA secure_delete=ON` + read-back in `setup()` (T3 delta-2 m1: one file named).
 - `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains **only** the
   post-VACUUM `wal_checkpoint(TRUNCATE)`; the watermark wrapper stays in
-  `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 6 governs).
+  `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 5 governs).
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
   lift + `chainEntryIds`/`truncated`); `compact()` (7-step composition per §2, incl.
   source-store GC ledger drain and `_wrappedVacuum()`); hold catching/reporting (external
   holds via the error channel, event holds via result + diagnostic).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
 - `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
-  detection) + dry-run chain listing helper.
-- `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains the
-  watermark-reset/rebuild-restart wrapper + post-VACUUM checkpoint.
+  detection) + dry-run chain listing helper; `bulkDeletePruned` returns the
+  `(entity_id, source_ref, source_hash)` keys of the rows it deleted (for the GC ledger —
+  T3 delta-3 M2).
 - `packages/core/src/services/SearchService.ts` — passage drain surfaced (no swallow) in the
   compact path.
 - `apps/docs/src/content/docs/guides/deleting-data.md` — erasure section.
@@ -274,8 +288,9 @@ back), and the no-opt-out pragma statement.
      provider), and **assert the `source_documents` row exists before the forget** (the check
      must not be vacuous). Then `forget({ entryId })`, `runPrune({ retainSoftDeletedFor: 0 })`,
      `compact()` — assert the canary is absent from the entry row, all FTS surfaces (db file,
-     `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and — via the compact-time
-     `source_documents`/`source_passages`. **Second case:** a document backing **two** facts —
+     `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and that the compact-time
+     source GC removed the `source_documents`/`source_passages` rows (including
+     `source_passages_fts`). **Second case:** a document backing **two** facts —
      after forgetting one, its `source_documents` row and passages must **survive** (GC must
      not fire while a live fact references it). The explicit
      `runPrune({ retainSoftDeletedFor: 0 })` before `compact()` is **intentional** (T3
