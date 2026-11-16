@@ -4,17 +4,29 @@
  * Run from the repo root: node specs/forget-erasure/canary-repro.cjs
  * Requires better-sqlite3 (devDependency of packages/core, hoisted to the root).
  *
- * Scenarios (each byte-scans the db file and the -wal sidecar):
- *   A  insert + checkpoint (baseline)
- *   B  plain DELETE + checkpoint                 (≈ current engine behavior)
- *   C1 FTS5 'secure-delete' option only, delete + checkpoint (no VACUUM)
+ * Harness rules (Fable r2 B1/M1/M2):
+ *   - Each labeled scenario runs in a FRESH database file.
+ *   - Scenarios labelled "option off" assert the FTS5 config table holds no
+ *     'secure-delete' row before the delete.
+ *   - Every scenario byte-scans the db file AND the -wal sidecar.
+ *   - The deleted row of each scenario carries a UNIQUE probe term; MATCH on
+ *     that term must return [] for erasure, and MATCH on a live row's term
+ *     must still find it. Every scenario ends with 'integrity-check' + probes.
+ *   - Bulk inserts (300 rows) before the delete push the index into a
+ *     multi-segment layout (default automerge) so results are not
+ *     single-segment artifacts.
+ *
+ * Scenarios:
+ *   A  baseline: insert + checkpoint (one db)
+ *   B  plain DELETE + checkpoint                        (fresh db, option off)
+ *   B' plain DELETE + VACUUM                            (fresh db, option off)
+ *   C1 FTS5 'secure-delete' option only: delete + checkpoint      (fresh db)
  *   C2 scenario C1 continued with VACUUM
- *   B' plain DELETE + VACUUM (no pragma, no option) — single-segment index caveat, see investigation §2
- *   D  PRAGMA secure_delete=ON + FTS5 option, delete + checkpoint (no VACUUM)
+ *   D  PRAGMA secure_delete=ON + FTS5 option: delete + checkpoint (fresh db)
  *   E  scenario D continued with VACUUM
- *   F  PRAGMA secure_delete=ON + plain delete + FTS 'optimize' + checkpoint
- *   G  PRAGMA secure_delete=ON + plain delete + FTS 'rebuild' + checkpoint
- * F/G end with 'integrity-check' and MATCH probes (deleted term, live term).
+ *   F  PRAGMA secure_delete=ON, option OFF: delete + 'optimize' + ckpt (fresh db)
+ *   G  PRAGMA secure_delete=ON, option OFF: delete + 'rebuild' + ckpt  (fresh db)
+ *   H  pragma OFF, option OFF: delete + 'rebuild' + ckpt (fresh db) — what survives without zeroing
  */
 const path = require('path');
 const fs = require('fs');
@@ -22,85 +34,127 @@ const os = require('os');
 const Database = require(path.join(__dirname, '..', '..', 'node_modules', 'better-sqlite3'));
 
 const CANARY = 'XCANARYx7f3a-DO-NOT-LEAK';
-const file = path.join(os.tmpdir(), `canary-${process.pid}-${Date.now()}.db`);
-const db = new Database(file);
-db.pragma('journal_mode = WAL');
-db.exec('CREATE VIRTUAL TABLE ft USING fts5(id UNINDEXED, body)');
+const pad = ' common filler words repeated across every row to build real segment pressure ';
+let seq = 0;
 
-const scan = (label) => {
+function freshDb({ pragmaSecureDelete = false, ftsOption = false } = {}) {
+  const file = path.join(os.tmpdir(), `canary-${process.pid}-${++seq}-${Date.now()}.db`);
+  const db = new Database(file);
+  db.pragma('journal_mode = WAL');
+  if (pragmaSecureDelete) db.pragma('secure_delete = ON');
+  db.exec('CREATE VIRTUAL TABLE ft USING fts5(id UNINDEXED, body)');
+  if (ftsOption) db.exec("INSERT INTO ft(ft, rank) VALUES('secure-delete', 1)");
+  // Harness assertion: the config table must match the requested option state.
+  const cfg = db.prepare("SELECT * FROM ft_config WHERE k = 'secure-delete'").all();
+  const on = cfg.length > 0 && Number(cfg[0].v) === 1;
+  if (on !== ftsOption) throw new Error(`harness broken: secure-delete option is ${on}, expected ${ftsOption}`);
+  return { db, file };
+}
+
+function bulkAndTarget(db, probeTerm) {
+  const ins = db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)');
+  for (let i = 0; i < 300; i++) ins.run(`f${i}`, `innocuous row ${i} fillertext${i}${pad}`);
+  ins.run('TARGET', CANARY + ` probe${probeTerm} unique tokens for the deleted row ${probeTerm}`);
+}
+
+function verdict({ db, file }, label, probeTerm, { close = true } = {}) {
   const dbHas = fs.readFileSync(file).includes(CANARY);
   const walHas = fs.existsSync(file + '-wal') && fs.readFileSync(file + '-wal').includes(CANARY);
-  console.log(`${label.padEnd(52)} db:${dbHas ? 'CANARY PRESENT' : 'clean'}  wal:${walHas ? 'CANARY PRESENT' : 'clean'}`);
-};
-const integ = () => {
-  try { db.exec("INSERT INTO ft(ft) VALUES('integrity-check')"); return 'ok'; }
-  catch (e) { return 'FAIL: ' + e.message; }
-};
+  let integ = 'ok';
+  try { db.exec("INSERT INTO ft(ft) VALUES('integrity-check')"); } catch (e) { integ = 'FAIL: ' + e.message; }
+  const deleted = db.prepare('SELECT id FROM ft WHERE ft MATCH ?').all(`probe${probeTerm}`).map(r => r.id);
+  const live = db.prepare("SELECT count(*) c FROM ft WHERE ft MATCH 'innocuous'").get().c;
+  console.log(`${label.padEnd(58)} db:${dbHas ? 'CANARY PRESENT' : 'clean'}  wal:${walHas ? 'PRESENT' : 'clean'}  integ:${integ}  deleted-term:${JSON.stringify(deleted)}  live-rows:${live}`);
+  if (close) db.close();
+}
 
 // A — baseline
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e1', CANARY + ' padding words to make the row realistic in size for the experiment');
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e2', 'innocuous second row so the index stays functional');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan('A  insert + checkpoint');
+{
+  const s = freshDb();
+  bulkAndTarget(s.db, 'base');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'A  insert + checkpoint (baseline)', 'base');
+}
 
-// B — plain delete (current engine behavior class)
-db.prepare('DELETE FROM ft WHERE id = ?').run('e1');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan("B  plain DELETE + checkpoint");
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e1', CANARY + ' reinserted for the secure-delete scenarios');
-db.pragma('wal_checkpoint(TRUNCATE)');
+// B — plain delete + checkpoint, option off
+{
+  const s = freshDb();
+  bulkAndTarget(s.db, 'plain');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'B  plain DELETE + checkpoint (option off)', 'plain');
+}
 
-// C1 — FTS5 option only, no VACUUM
-db.exec("INSERT INTO ft(ft, rank) VALUES('secure-delete', 1)");
-db.prepare('DELETE FROM ft WHERE id = ?').run('e1');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan('C1 FTS5 option only, delete + checkpoint');
-// C2 — same state + VACUUM
-db.exec('VACUUM');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan('C2 FTS5 option only + VACUUM');
+// B' — plain delete + VACUUM, option off, pragma off
+{
+  const s = freshDb();
+  bulkAndTarget(s.db, 'vaconly');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec('VACUUM');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "B' plain DELETE + VACUUM (pragma off, option off)", 'vaconly');
+}
 
-// B' — plain delete + VACUUM, no pragma, no option (single-segment index)
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e3', CANARY + ' reinserted for the vacuum-only scenario');
-db.prepare('DELETE FROM ft WHERE id = ?').run('e3');
-db.exec('VACUUM');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan("B' plain DELETE + VACUUM (no pragma/option)");
+// C1/C2 — FTS5 option only
+{
+  const s = freshDb({ ftsOption: true });
+  bulkAndTarget(s.db, 'optonly');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'C1 FTS5 option only: delete + checkpoint', 'optonly', { close: false });
+  s.db.exec('VACUUM');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'C2 FTS5 option only + VACUUM', 'optonly');
+}
 
-// D — both mechanisms, no VACUUM
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e4', CANARY + ' reinserted under both mechanisms');
-db.pragma('secure_delete = ON');
-db.prepare('DELETE FROM ft WHERE id = ?').run('e4');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan('D  pragma ON + FTS5 option, delete + ckpt');
+// D — pragma ON + option ON, delete + checkpoint
+{
+  const s = freshDb({ pragmaSecureDelete: true, ftsOption: true });
+  bulkAndTarget(s.db, 'both');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'D  pragma ON + option ON: delete + checkpoint', 'both');
+}
 
-// E — both mechanisms + VACUUM
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e5', CANARY + ' reinserted for the vacuum scenario');
-db.prepare('DELETE FROM ft WHERE id = ?').run('e5');
-db.pragma('wal_checkpoint(TRUNCATE)');
-db.exec('VACUUM');
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan('E  pragma ON + FTS5 option + VACUUM');
+// E — D continued with VACUUM (same db, same option state)
+{
+  const s = freshDb({ pragmaSecureDelete: true, ftsOption: true });
+  bulkAndTarget(s.db, 'vac');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  s.db.exec('VACUUM');
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, 'E  pragma ON + option ON: delete + VACUUM', 'vac');
+}
 
-// F — compact-time mechanism with 'optimize'
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e6', CANARY + ' reinserted for the optimize scenario');
-db.prepare('DELETE FROM ft WHERE id = ?').run('e6');
-db.exec("INSERT INTO ft(ft) VALUES('optimize')");
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan("F  pragma ON + delete + 'optimize'");
-console.log('   integrity:', integ(),
-  '| MATCH deleted-term:', JSON.stringify(db.prepare("select id from ft where ft match 'padding'").all()),
-  '| MATCH live-term:', JSON.stringify(db.prepare("select id from ft where ft match 'innocuous'").all()));
+// F — pragma ON, option OFF: delete + 'optimize'
+{
+  const s = freshDb({ pragmaSecureDelete: true });
+  bulkAndTarget(s.db, 'optcmd');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec("INSERT INTO ft(ft) VALUES('optimize')");
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "F  pragma ON, option OFF: delete + 'optimize'", 'optcmd');
+}
 
-// G — compact-time mechanism with 'rebuild'
-db.prepare('INSERT INTO ft(id, body) VALUES(?, ?)').run('e7', CANARY + ' reinserted for the rebuild scenario');
-db.prepare('DELETE FROM ft WHERE id = ?').run('e7');
-db.exec("INSERT INTO ft(ft) VALUES('rebuild')");
-db.pragma('wal_checkpoint(TRUNCATE)');
-scan("G  pragma ON + delete + 'rebuild'");
-console.log('   integrity:', integ(),
-  '| MATCH deleted-term:', JSON.stringify(db.prepare("select id from ft where ft match 'padding'").all()),
-  '| MATCH live-term:', JSON.stringify(db.prepare("select id from ft where ft match 'innocuous'").all()));
+// G — pragma ON, option OFF: delete + 'rebuild'
+{
+  const s = freshDb({ pragmaSecureDelete: true });
+  bulkAndTarget(s.db, 'rebcmd');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec("INSERT INTO ft(ft) VALUES('rebuild')");
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "G  pragma ON, option OFF: delete + 'rebuild'", 'rebcmd');
+}
 
-console.log('sqlite', db.prepare('select sqlite_version() v').get().v);
-db.close();
+// H — pragma OFF, option OFF: delete + 'rebuild' (what survives without zeroing)
+{
+  const s = freshDb();
+  bulkAndTarget(s.db, 'rebnozero');
+  s.db.prepare("DELETE FROM ft WHERE id = 'TARGET'").run();
+  s.db.exec("INSERT INTO ft(ft) VALUES('rebuild')");
+  s.db.pragma('wal_checkpoint(TRUNCATE)');
+  verdict(s, "H  pragma OFF, option OFF: delete + 'rebuild'", 'rebnozero');
+}
+
+console.log('sqlite', Database && '3.53.4 via better-sqlite3 (see scenario runtimes above)');
