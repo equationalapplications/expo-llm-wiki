@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 12 — under review (T3 delta-7 pending; delta-6's findings folded)**  
+**Status: Draft rev 13 — under review (T3 delta-8 pending; delta-7's findings folded)**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 11, converged)
 
 ## Problem
@@ -83,10 +83,14 @@ failed step fails the compact and reports where it stopped):
    than 30 days — the opposite of this spec's "events kept unless an `includeEvents`-shaped
    opt-in" framing; compact passes `retainEventsFor: null` explicitly, and the opt-in for
    event deletion is the `clearAll({ includeEvents: true })` full-wipe path, owner question D).
+   **Consequence (T3 delta-8 MAJOR-1):** with `null`, the entire event-retention block is
+   skipped (`if (retainEventsFor !== null)`, `MaintenanceService.ts:406` — including
+   `countHeldBack` and the `event_retention_held` diagnostic at `:435-439`), so compact has
+   **no event holds to report** — events are simply never deleted. Holds reporting in compact
+   covers **external-removal holds only**. (The `'legacy'`-mode watermark caveat below applies
+   to **standalone `runPrune`** calls, not to compact under the null pin.)
    Inheriting `runPrune`'s safety
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
-   Under the `'legacy'` retention mode events delete by age without a watermark guard, so the
-   keep-librarian-unread guarantee holds under ops/deferred modes only; documented.
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
    than throwing (T3 m2). **Scope (T3 delta-2 M2):** that error covers **external-removal
@@ -129,9 +133,13 @@ failed step fails the compact and reports where it stopped):
    the renumbered rowids; a no-op for ids already absent from the index (T3 delta-3 m1).
    Note: step 1's `runPrune` already ran `syncEntries` (pre-VACUUM) — that pass is
    **redundant but harmless**; do not "deduplicate" by removing this post-VACUUM one (T3
-   delta-6 m2). **Id source (T3 delta-7 m1):** `runPrune` returns counts only (`:457`), so it
+   delta-6 m2).   **Id source (T3 delta-7 m1):** `runPrune` returns counts only (`:457`), so it
    gains an output channel (the same output-array pattern as `deletedKeys`) returning the ids
-   it synced; compact passes those to step 6.
+   it synced; compact passes those to step 6. **The output array is filled before
+   `PrunePartialFailureError` throws** (at the `syncedIds` assembly, `:393`/`:451-455`), so a
+   held-back entity still contributes its deleted ids to step 6 — test: a hold and a
+   successful delete in the same compact, and step 6 receives exactly the deleted ids (T3
+   delta-8 m1).
 7. FTS `'optimize'` on both FTS tables when they exist — **after** `syncEntries`, so the
    delete markers `syncEntries` introduces are merged away under the pragma (a `rebuild`
    escape hatch is exposed as `compact({ rebuild: true })` for stores recovering from
@@ -225,7 +233,8 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   — exactly the collect-by-absence gap the ledger exists to close; crash-injection test
   required — failure injected **after `bulkDeletePruned` returns, before the ledger insert**,
   asserting the staged outbox rows (`EntryRepository.ts:868-874`) roll back too; T3 delta-4
-  m4). **Key source inside the transaction (T3 delta-3 M2, corrected T3 delta-7 MAJOR-2):**
+  m4). **Key source inside the transaction (T3 delta-3 M2, corrected T3 delta-7 MAJOR-2,
+  nullability T3 delta-8 MAJOR-2):**
   `bulkDeletePruned` already runs
   `DELETE … RETURNING id` (`EntryRepository.ts:862-865`) and already collects deleted ids
   through its `{ deletedIds: string[] }` output option (`:365`). **`deletedIds` stays
@@ -233,8 +242,9 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   `deleteForFacts` (`:383-384`) and `syncedIds` (`:393`), all id-shaped; overloading it with
   key objects would break set membership and the vector-ledger cleanup. Instead: widen the
   statement to **`RETURNING id, source_ref, source_hash`** and add a **separate output option
-  `deletedKeys?: { id: string; source_ref: string; source_hash: string }[]`** that receives the
-  key tuples; the return value stays a row count. The in-transaction SELECT alternative is
+  `deletedKeys?: { id: string; source_ref: string | null; source_hash: string | null }[]`**
+  (both columns are nullable on `entries`, `schema.ts:13-14`) that receives the key tuples;
+  the return value stays a row count. The in-transaction SELECT alternative is
   rejected: the guard at `:852-853` can keep rows the SELECT already read, making it
   over-inclusive.
   **All prune paths write the ledger**, including the
@@ -264,8 +274,13 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   (a document can be re-keyed to a new ref). Therefore: a document is a GC **candidate** if it
   matches the deleted fact's key on `(entity_id, source_ref)` **or** `(entity_id,
   source_hash)`; it is **live** if any live entry matches it on **either** column, with NULL
-  hashes ignored (a NULL-hash fact key matches on ref alone). Required test cases: a NULL-hash
-  fact key still GC-matches; a re-keyed document (`R_old`→`R_new`, same hash) is matched by
+  hashes ignored (a NULL-hash fact key matches on ref alone). **NULL symmetry (T3 delta-8
+  MAJOR-2):** a NULL column never matches on either side (`source_ref = ?` bound to NULL
+  matches nothing — that is the rule, not luck; an `IS`-based match that treats every
+  NULL-ref fact as live would permanently block GC); a key with **both** columns NULL is
+  **not written to the ledger** (nothing to match). Required test cases: a NULL-hash
+  fact key still GC-matches; a NULL-ref fact key with a hash GC-matches on hash alone; a
+  re-keyed document (`R_old`→`R_new`, same hash) is matched by
   the old fact's hash; a live fact sharing the ref but carrying a **different** hash keeps the
   document live. A `storeSource`-only document with zero facts therefore
   **always survives compact()** (its keys never enter the ledger). One document backing N
@@ -302,7 +317,7 @@ back), and the no-opt-out pragma statement.
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
   lift + `chainEntryIds`/`truncated`); `compact()` (8-step composition per §2, incl.
   source-store GC ledger drain and `_wrappedVacuum()`); hold catching/reporting (external
-  holds via the error channel, event holds via result + diagnostic).
+  holds via the error channel; compact keeps all events, so no event-hold channel).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
 - `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
   detection) + dry-run chain listing helper; `bulkDeletePruned` widens `RETURNING` to
@@ -328,14 +343,17 @@ back), and the no-opt-out pragma statement.
      a tempdir store with 300+ filler facts (multi-segment index), then create **exactly one**
      canary fact carrying the same `sourceRef` (via `remember`/`ingestDocument` with a stub
      provider), and **assert the `source_documents` row exists before the forget** (the check
-     must not be vacuous). Then `forget({ entryId })`, `runPrune({ retainSoftDeletedFor: 0 })`,
+     must not be vacuous). Then `forget({ entryId })`,
+     `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` (T3 delta-8 m2 —
+     explicit options; the bare default would delete 30-day-old events),
      `compact()` — assert the canary is absent from the entry row, all FTS surfaces (db file,
      `-wal`, `-journal`, `-shm`, **and every `%_data` block**), and that the compact-time
      source GC removed the `source_documents`/`source_passages` rows (including
      `source_passages_fts`). **Second case:** a document backing **two** facts —
      after forgetting one, its `source_documents` row and passages must **survive** (GC must
      not fire while a live fact references it). The explicit
-     `runPrune({ retainSoftDeletedFor: 0 })` before `compact()` is **intentional** (T3
+     `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` before
+     `compact()` is **intentional** (T3
      delta-2 m4): it exercises the ledger path across separate prune and compact calls — the
      exact shape of the documented host recipe, where the ledger must carry the keys.
      `events.summary` and the
@@ -351,9 +369,10 @@ back), and the no-opt-out pragma statement.
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
    canary — pins why the pragma is unconditional.
 3. **compact() holds:** with an unconfirmed external removal, `compact()` hard-deletes nothing
-   held and reports the holds via `PrunePartialFailureError` semantics; with a held-back
-   unread event, compact **reports the held-event count in its result** and the
-   `event_retention_held` diagnostic fires (no throw — T3 delta-2 M2). Plus the
+   held and reports the holds via `PrunePartialFailureError` semantics. **Events: compact
+   deletes none** (`retainEventsFor: null`) — assert the event count is unchanged after
+   compact (T3 delta-8 MAJOR-1; the `event_retention_held` diagnostic is out of scope for
+   compact). Plus the
    **ledger crash-injection test** (T3 delta-2 M3): a crash between the entry hard-delete and
    the `source_gc_pending` insert is impossible (same transaction) — inject a failure and
    assert neither the delete nor the ledger row landed.

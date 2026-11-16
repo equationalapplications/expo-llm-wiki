@@ -13,7 +13,7 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 | 2026-11-16 | Fable r3 delta | BLOCKED: Claude API 5-h limit, resets 15:30 ET; retry scheduled | $0.0000 |
 | 2026-11-16 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 
-Lane spend so far: **$14.5989** (all step-0; implementation not started).
+Lane spend so far: **$15.0596** (all step-0; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
 | 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
 | 2026-11-16 | Fable r3 delta (resumed after rail reset) | REQUEST CHANGES — BLOCKER (harness canary not tokenizer-stable; postings surface unmeasured) + 3 MAJOR + 3 MINOR, all REAL; folded rev 5 + harness rework; re-measured: F/G/F2/G2 clean both surfaces, B′ NOT clean, pragma load-bearing | $2.5158 |
@@ -70,3 +70,4 @@ sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), no
 | 2026-11-16 | T3 Opus delta r5 | REQUEST CHANGES — 1 MAJOR (GC key matching vs two-unique-index model, verified) + 5 minors (RETURNING pinned, 8-step, status, crash-injection point, packet expanded); folded spec rev 10 | $0.5122 |
 | 2026-11-16 | T3 Opus delta r6 | REQUEST CHANGES — 2 MAJOR (no-setup branch would break prune; retainEventsFor null pin) + 3 minors, verified + folded spec rev 11 | $0.4142 |
 | 2026-11-16 | T3 Opus delta r7 | REQUEST CHANGES — 2 MAJOR (GC gate tied to wrong condition — ledgerOn is vector-removal; deletedIds type change would break id flows) + 3 minors, verified + folded spec rev 12 | $0.4338 |
+| 2026-11-16 | T3 Opus delta r8 | REQUEST CHANGES — 2 MAJOR (event-hold reporting impossible under null pin, verified :406/:435-439; source_ref nullability) + 3 minors; folded spec rev 13 | $0.4607 |
