@@ -1,6 +1,6 @@
 # Investigation — #401: forget must erase (FTS5 secure-delete, chain forget, compact())
 
-**Date:** 2026-11-16 · **Status:** Rev 8 (Opus r1 + Fable r1-r4 + haiku verify/verify2 folded — source-GC step specified in §6, two-tier acceptance test, §8 Q5 events/summary scope, census anchor fixes)
+**Date:** 2026-11-16 · **Status:** Rev 9 (Opus r1 + Fable r1-r4 + haiku verify/verify2/verify3 folded — §7 fixture pinned non-vacuous + two-fact GC survival case + hookless full-wipe precondition; §6 dead clause removed)
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Repo baseline:** `27f8e5e9` (main after #400, v9.2.0)
 **Evidence tags:** [V] = controller-verified against this tree / live driver; [C] = child- or web-reported, not independently reproduced.
 **Repro:** `specs/forget-erasure/canary-repro.cjs` — committed, runnable from the repo root; §2 table is its output verbatim. Harness (Fable r2 B1/M1/M2 + Fable r3 BLOCKER rework): every scenario runs in a **fresh database file**; "option off" scenarios **assert `ft_config` holds no `secure-delete` row** before the delete; the canary is a **single lowercase alphanumeric token** (`zxq7f3a9k`) — byte-identical under the unicode61 **and** porter unicode61 tokenizers — with two per-scenario harness assertions that it is a real, stable term (fts5vocab holds the exact token; pre-delete MATCH returns exactly the TARGET row); every scenario **byte-scans the db file, the `-wal` sidecar, and every `%_data` block separately**, so row-content erasure (`db`) and term-bytes erasure (`postings`) are distinct columns; the `deleted-term` MATCH probe is reported but is **not** byte evidence (FTS5 hides deleted rowids by design); `segpages` counts non-structure `%_data` rows (structure record = id 1, config = id 10; >1 = a non-trivial multi-page index); porter scenarios F2/G2/H2 reproduce F/G/H on the **engine's own tokenizer** (`porter unicode61`); the SQLite version line is `SELECT sqlite_version()` output, not a hard-coded string.
@@ -237,8 +237,10 @@ above, explicitly.
   - **Source-store GC:** `compact()` also hard-deletes `source_documents` — and their
     `source_passages`, and their FTS rows via the index strategy — when **no live entry
     references them** anymore (every entry carrying that `source_ref`/`source_hash` was
-    soft-deleted and pruned in this compact run, or the document was forgotten via
-    `sourceRef`/`sourceHash` selectors). Documents backing any live fact are untouched: one
+    soft-deleted and pruned in this compact run; documents forgotten via
+    `sourceRef`/`sourceHash` selectors are already hard-deleted at forget time,
+    `MaintenanceService.ts:696-701`, so the GC never sees them). Documents backing any live
+    fact are untouched: one
     document backs N facts, and erasing it on a single-fact forget would destroy the other
     facts' passages and `source_pointer` targets (§3.5). This closes the entryId path the
     census flags; without it the §7 full-wipe tier cannot pass (haiku verify2 MAJOR 1).
@@ -270,13 +272,21 @@ plus the documented host steps (outbox drain) — plus `compact()`, the canary i
 database file **and** the journal files. Fact-path absence (single-fact forget) is scoped to
 the fact's own copies — the two tiers are pinned because the copies have different documented
 owners (haiku verify2 MAJOR 2; §8 Q5). Pinned shape:
-- **Two tiers.** (1) *Fact-path tier*: single-fact `forget({ entryId })` +
-  `runPrune({ retainSoftDeletedFor: 0 })` + `compact()`: canary absent from the entry row, all
-  FTS surfaces (db file + `%_data` blocks + WAL/journal) and — once the source-store GC fires
-  (§6) — from `source_documents`/`source_passages`. `events.summary` and the entity summary are
+- **Two tiers.** (1) *Fact-path tier*: fixture pinned (haiku verify3 — the source-GC check must
+  not be vacuous): ingest via **`ingestDocument`** (not `remember`, which creates no
+  `source_documents` row) a document that backs **exactly one** fact, and assert the
+  `source_documents` row **exists before** the forget. Then single-fact
+  `forget({ entryId })` + `runPrune({ retainSoftDeletedFor: 0 })` + `compact()`: canary absent
+  from the entry row, all FTS surfaces (db file + `%_data` blocks + WAL/journal) and — via the
+  source-store GC — from `source_documents`/`source_passages`. **Second case:** a document
+  backing **two** facts: after forgetting one, its `source_documents` row and passages must
+  **survive** (GC must not fire while a live fact references it). `events.summary` and the
+  entity summary are
   **documented carve-outs** at this tier (they still hold the text until the full-wipe steps —
   §8 Q5). (2) *Full-wipe tier*: `clearAll({ includeEvents: true })` + outbox drain +
-  `compact()`: canary absent from the whole file (db + `-wal`/`-journal`/`-shm`). Whole-file
+  `compact()`, **run hookless** (no vector-removal hook, or a removal-confirmed stub — an
+  unconfirmed/failing hook legitimately holds rows back via runPrune's holds): canary absent
+  from the whole file (db + `-wal`/`-journal`/`-shm`). Whole-file
   absence claims are made only at the full-wipe tier.
 - **The canary is a single lowercase alphanumeric token** (byte-identical under the engine's
   `porter unicode61` tokenizer), verified in-tree via fts5vocab and a pre-delete MATCH, with

@@ -1,7 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 4 — under review (T3/T4 ladder; owner tier selection)**  
-**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 8, converged)
+**Status: Draft rev 5 — under review (T3/T4 ladder; owner tier selection)**  
+**Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 9, converged)
 
 ## Problem
 
@@ -157,16 +157,20 @@ back), and the no-opt-out pragma statement.
    verified via fts5vocab + pre-delete MATCH) — a mixed-case/hyphenated canary can only ever be
    found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
    surface.
-   - *Fact-path tier:* ingest through the public write path (`remember`/`ingestDocument`) into
-     a tempdir store with 300+ filler facts (multi-segment index), `forget({ entryId })`,
+   - *Fact-path tier:* fixture pinned (not vacuous): ingest via **`ingestDocument`** (not
+     `remember`, which creates no `source_documents` row) a document backing **exactly one**
+     fact into a tempdir store with 300+ filler facts (multi-segment index), and assert the
+     `source_documents` row **exists before** the forget. Then `forget({ entryId })`,
      `runPrune({ retainSoftDeletedFor: 0 })`, `compact()` — assert the canary is absent from
      the entry row, all FTS surfaces (db file, `-wal`, `-journal`, `-shm`, **and every
      `%_data` block**), and — via the compact-time source GC — from
-     `source_documents`/`source_passages`. `events.summary` and the entity summary are
+     `source_documents`/`source_passages`. **Second case:** a document backing **two** facts —
+     after forgetting one, its `source_documents` row and passages must **survive** (GC must
+     not fire while a live fact references it). `events.summary` and the entity summary are
      documented carve-outs at this tier (owner question D).
-   - *Full-wipe tier:* `clearAll({ includeEvents: true })` + outbox drain + `compact()` —
-     assert the canary is absent from the whole file. Whole-file absence claims are made only
-     at this tier.
+   - *Full-wipe tier:* `clearAll({ includeEvents: true })` + outbox drain + `compact()`,
+     **run hookless** (no vector-removal hook, or a removal-confirmed stub) — assert the canary
+     is absent from the whole file. Whole-file absence claims are made only at this tier.
    Mirror scenario F and G (optimize and rebuild variants; K/K2 are the composed-sequence
    proof).
 2. **H-mirror test:** with the pragma unset via a test hook, `'rebuild'` alone leaves the
