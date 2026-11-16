@@ -119,6 +119,17 @@ describe('migration v17: add_source_store', () => {
     expect(await version(db)).toBe('16');
   });
 
+  it('abort path: source_documents with the index columns but no entity_id aborts too', async () => {
+    const { db, wiki } = await setupThenRollBack('16');
+    // Has source_ref AND source_hash but lacks entity_id: the index-column gate
+    // must not pass it through, or the UNIQUE index DDL fails with a raw
+    // `no such column` before migration 17's repair message.
+    await db.runAsync(`DROP TABLE ${DOCS}`);
+    await db.runAsync(`CREATE TABLE ${DOCS} (id TEXT PRIMARY KEY, source_ref TEXT, source_hash TEXT, text TEXT)`);
+    await expect(wiki.setup()).rejects.toThrow(/^Migration v17 \(add_source_store\) failed: .*expected \[/);
+    expect(await version(db)).toBe('16');
+  });
+
   it('additivity: no pre-existing table gained a source-store column', async () => {
     const db = openTestDatabase();
     await new WikiMemory(db, stubOptions).setup();

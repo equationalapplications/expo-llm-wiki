@@ -350,7 +350,7 @@ export async function createSourcePassageIndexesIfColumnsExist(db: SQLiteAdapter
 export async function createSourceDocumentIndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
   const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}source_documents)`);
   const names = new Set(cols.map((c) => c.name));
-  if (!names.has('source_ref') || !names.has('source_hash')) return;
+  if (!names.has('entity_id') || !names.has('source_ref') || !names.has('source_hash')) return;
   await db.execAsync(`
     CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_ref ON ${prefix}source_documents (entity_id, source_ref);
     CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_documents_hash ON ${prefix}source_documents (entity_id, source_hash);`);
