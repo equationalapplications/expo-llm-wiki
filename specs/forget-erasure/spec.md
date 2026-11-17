@@ -779,11 +779,3 @@ guard** — an import whose dump carries a `deleted_at` tombstone for a live ref
 tombstone (forget wins over re-ingest). The engine makes GDPR compliance possible for its
 hosts; it does not perform it for them.
 
-## Non-goals## Non-goals
-
-- Erasing events or outbox rows on single-fact `forget()` (documented host steps).
-- Erasing export files (outside the store; documented).
-- Removing the entity manifest (fact-derived types, documented).
-- Vector/external-index erasure (shipped: durable-vector-removal, PR #372; this lane is the
-  store-file side only).
-- Performance tuning of secure deletes (measure first, per the issue's acceptance).
