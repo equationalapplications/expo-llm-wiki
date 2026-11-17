@@ -230,6 +230,15 @@ No `astro.config.mjs` change: both new pages sit in autogenerate directories
 
 ## Sequencing and merge order
 
+**Owner-ruled 2026-11-17 (Discord msg 1572312605224075315):** after the Tier-1.5
+pre-check cycle converges on this lane, this branch merges INTO `specs/forget-erasure`
+(PR #404) so #404 is reviewed as a whole (code + INTENT + JSDoc + docs together). Until
+then PR #406 stays open as the docs half's staging branch; implementation commits land
+here and sync-merge into `specs/forget-erasure` at checkpoints (this lane never commits
+in the sibling lane's worktree). The default "merge after #404" ordering below is
+SUPERSEDED by the owner ruling; the erase()-forward-documentation concern is moot under
+whole-PR review (docs and the API ship in one PR).
+
 This PR is file-disjoint from #404 (ruling 2) and is built on `origin/main` (not stacked).
 The erase()/expire() vocabulary documents an API that ships with #404. Two orderings:
 
