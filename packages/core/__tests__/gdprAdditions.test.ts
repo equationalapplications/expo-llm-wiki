@@ -96,6 +96,33 @@ describe('GDPR additions (spec §8)', () => {
     expect(row!.deleted_at).toBe(50);
   });
 
+  it('AC10: a dump [tombstone, live] pair embeds only the final accepted row — the rejected live text never reaches llmProvider.embed', async () => {
+    const embeddedBodies: string[] = [];
+    const { raw, wiki } = await make({ llmProvider: { generateText: async () => '{}', embed: async (t: string) => { embeddedBodies.push(t); return [1, 0, 0]; } } });
+    await ins(raw, 'seed', null); // non-empty store so exportDump includes e1
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    const mk = (over: Record<string, unknown>) => ({
+      id: 'f1', entity_id: 'e1', title: 't', body: 'b', tags: [], confidence: 'certain',
+      source_type: 'user_stated', source_ref: null, source_hash: null, created_at: 1,
+      updated_at: 1, last_accessed_at: 1, access_count: 0, deleted_at: null, ...over,
+    });
+    // Tombstone accepted first, live row second — the live row is rejected by the
+    // tombstone guard, and its text must never be sent to the embed provider.
+    dump.entities.e1.facts = [
+      mk({ deleted_at: 50, updated_at: 100 }),
+      mk({ title: 'rejected live title', body: 'rejected live body', updated_at: 200, deleted_at: null }),
+    ];
+    const before = embeddedBodies.length;
+    await wiki.importDump(dump, { merge: true });
+    const row = await raw.getFirstAsync<{ deleted_at: number | null }>(`SELECT deleted_at FROM ${P}entries WHERE id = 'f1'`);
+    expect(row!.deleted_at).toBe(50);
+    // Pre-fix, the embed loop gated on upsertedFactIds + the CURRENT row's
+    // !deleted_at, so the rejected live row was embedded — with the tombstone's
+    // clipped text (the rejected row never sets the clip map). Post-fix, f1's
+    // final accepted row is a tombstone, so NO embed call happens for it at all.
+    expect(embeddedBodies.slice(before)).toEqual([]);
+  });
+
   it('AC7: replace mode still re-imports live task rows the wipe just tombstoned', async () => {
     const { raw, wiki } = await make();
     await raw.runAsync(

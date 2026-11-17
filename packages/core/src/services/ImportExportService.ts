@@ -253,6 +253,11 @@ export class ImportExportService {
     const skippedSources: ImportDumpResult['skippedSources'] = [];
     const refusalDiagnostics: Parameters<typeof emitDiagnostic>[1][] = [];
     const upsertedFactIds = new Set<string>();
+    // Ids whose FINAL accepted row is live — the embed loop's eligibility set.
+    // `upsertedFactIds` alone is not enough: a dump can carry [tombstone, live]
+    // for one id, and the rejected live row must not have its text sent to
+    // llmProvider.embed just because an earlier row for the id was accepted.
+    const liveEmbedFactIds = new Set<string>();
     const upsertedDeletedFactIds = new Set<string>();
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
     const preservedBlobDims = new Set<number>();
@@ -518,7 +523,12 @@ export class ImportExportService {
         // [tombstone, live] for a wiped id must not resurrect via the exemption.
         wipedByThisImport.delete(fact.id);
         upsertedFactIds.add(fact.id);
-        if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
+        if (fact.deleted_at) {
+          upsertedDeletedFactIds.add(fact.id);
+          liveEmbedFactIds.delete(fact.id);
+        } else {
+          liveEmbedFactIds.add(fact.id);
+        }
       }
 
       const taskIds = bundle.tasks.map((task) => task.id);
@@ -702,7 +712,7 @@ export class ImportExportService {
     for (const fact of bundle.facts) {
       if (
         !fact.deleted_at &&
-        upsertedFactIds.has(fact.id) &&
+        liveEmbedFactIds.has(fact.id) &&
         !factsWithPreservedBlob.has(fact.id)
       ) {
         const clipped = clippedTextByFactId.get(fact.id);
