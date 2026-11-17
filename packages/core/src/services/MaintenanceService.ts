@@ -632,7 +632,7 @@ export class MaintenanceService {
       const left = (await this.searchService.retiredTables()).filter((n) => !report.retiredUndroppable.includes(n));
       if (left.length > 0) {
         report.failedStep = 'retired_reclaim';
-        emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } } as any);
+        emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } });
         throw new EraseStepError('erase_retired_remaining', `erase stopped after step 6: retired FTS tables remain (${left.join(', ')})`, report);
       }
       ok('retired_reclaim_rerun');

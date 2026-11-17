@@ -887,6 +887,7 @@ export type WikiDiagnosticCode =
   | 'erase_secure_delete_off'
   | 'erase_entity_skipped'
   | 'erase_retired_vtab_undroppable'
+  | 'erase_retired_remaining'
   | 'erase_registry_sweep_skipped'
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
@@ -953,6 +954,8 @@ export interface WikiDiagnosticDetail {
   guidanceLength?: number;
   /** guidance_too_long only: which configured value was refused. */
   guidanceSource?: 'per_entity' | 'default';
+  /** `erase_retired_remaining` only: retired FTS table names still present after reclamation. */
+  tables?: string[];
 }
 
 export interface WikiDiagnostic {
