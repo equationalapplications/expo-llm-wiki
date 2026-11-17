@@ -310,7 +310,7 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    with an unverified report whenever either FTS ledger still holds rows — queued deletes mean
    undrained text, which cannot be claimed erased. A runtime that never had FTS5 at all
    detaches with the ledgers dropped (nothing to drain). A module-less runtime that earlier ran
-   FTS5 keeps the live `entries_fts`/`source_passages_fts` content tables, whose stored text
+   FTS5 keeps the orphaned `entries_fts`/`source_passages_fts` content tables, whose stored text
    erase does not reach today — known limitation, tracked in issue #407.
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
@@ -398,8 +398,9 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    asserts erase surfaces the incomplete-checkpoint diagnostic instead of returning
    success.
 
-A store with no FTS tables (hosts whose FTS5 availability probe fails on every open, so
-`createIndexStrategy.ts` falls back to `UnavailableIndexStrategy` (`createIndexStrategy.ts:123`);
+A store with no FTS tables (a store whose FTS5 init fails on every open falls back to
+`UnavailableIndexStrategy` (`createIndexStrategy.ts:123`); a host without the fts5/json1
+module detaches to MiniSearch (`createIndexStrategy.ts:109`));
 there is no `enableFTS` option in the tree, T4 delta-6 m2) skips the FTS
 steps (3, 4, 7) for surfaces that don't exist — but step 4 still runs for any retired tables
 left behind, and step 3's ledger guard fails the erase (unverified) whenever either FTS ledger
