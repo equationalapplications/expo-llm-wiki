@@ -420,7 +420,9 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    per-entity prune apply **no `deleted_at` cutoff** (`softDeletedCutoff` override,
    `Number.MAX_SAFE_INTEGER`), so future-dated tombstones are hard-deleted by step 1 itself;
    the gate is the backstop for anything that still slips through. Test: seed an entry and a
-   task with `deleted_at = now + 24h`, run `erase()`, assert `verified: true`, both rows
+   task with a far-future `deleted_at` (the acceptance test uses `now + 86_400_000_000` ms —
+   roughly 1000 days out, future under any realistic clock), run `erase()`, assert
+   `verified: true`, both rows
    gone, and a whole-file canary scan clean (eraseAcceptance future-dated test; RED on the
    pre-fix code, which returned `verified: true` over surviving text).
 

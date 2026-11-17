@@ -68,6 +68,23 @@ describe('findNonLiveIdsByEntityIds', () => {
   });
 });
 
+describe('bulkDeletePruned', () => {
+  it('stamps outbox DELETE payloads with the row\'s real deleted_at, not the sweep cutoff', async () => {
+    await insert('old', 'e1', { deleted_at: 400 });
+    await insert('newer', 'e1', { deleted_at: 900 });
+    const deletedIds: string[] = [];
+    await db.withTransactionAsync(async (tx) => {
+      await repo.bulkDeletePruned('e1', 1000, ['old', 'newer'], tx, { deletedIds });
+    });
+    expect(deletedIds.sort()).toEqual(['newer', 'old']);
+    const rows = await db.getAllAsync<any>(`SELECT payload FROM llm_wiki_outbox WHERE operation='DELETE'`);
+    expect(rows.length).toBe(2);
+    const stamps = rows.map((r) => (JSON.parse(r.payload) as { deleted_at: number }).deleted_at).sort((a, b) => a - b);
+    // A max cutoff (erase's softDeletedCutoff) must never leak into the payload.
+    expect(stamps).toEqual([400, 900]);
+  });
+});
+
 describe('findSupersessionChainIds', () => {
   it('walks both directions and excludes the start id', async () => {
     await insert('v1', 'e1', { superseded_by: 'v2' });
