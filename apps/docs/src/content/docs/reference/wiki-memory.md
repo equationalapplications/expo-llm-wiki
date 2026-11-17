@@ -32,7 +32,7 @@ In Expo, `createWiki` takes an `expo-sqlite` database instead of an adapter.
 | `upsertGraph(entityId, { sourceRef, sourceHash, nodes, edges }, tx)` | `Promise<{ nodesWritten, edgesWritten, superseded }>` | [GraphRAG](/expo-llm-wiki/guides/graphrag/#seed-a-graph-without-an-llm) |
 | `remember(entityId, { title, body, tags?, confidence?, source_type?, okf_type?, valid_from? })` | `Promise<WikiFact>` | [Direct fact writes](#remember) |
 | `supersede(entityId, oldId, { title, body, … }, { validFrom? }?)` | `Promise<{ newId }>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
-| `importDump(dump, { merge? }?)` | `Promise<void>` | `merge` defaults to `false` (replace the entity). [OKF](/expo-llm-wiki/guides/okf/) |
+| `importDump(dump, { merge? }?)` | `Promise<ImportDumpResult>` | `merge` defaults to `false` (replace the entity). Returns `skippedSources`, the stored sources the import refused. [OKF](/expo-llm-wiki/guides/okf/) |
 
 ### remember
 
@@ -84,7 +84,10 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `hasChanged(entityId, sourceRef, sourceHash)` | `Promise<boolean>` |
 | `hasChanged(entityId, [{ sourceRef, sourceHash }])` | `Promise<{ sourceRef, changed, duplicateOf? }[]>` |
 | `pendingSources(entityId, [{ sourceRef, sourceHash }])` | `Promise<{ sourceRef, status: 'new' \| 'changed' \| 'partial' \| 'current' }[]>` |
-| `listSourceRefs(entityId)` | `Promise<{ sourceRef, sourceHash, factCount, lastIngestedAt }[]>` |
+| `listSourceRefs(entityId)` | `Promise<{ sourceRef, sourceHash: string \| null, factCount, lastIngestedAt, stored?: { charCount, staleHash? } \| null }[]>` |
+| `storeSource(entityId, { sourceRef, sourceHash, text })` | `Promise<StoreSourceResult>` — refusals return `{ stored: false, diagnostics }`; a busy lock throws. Added in 9.2.0. [Source text store](/expo-llm-wiki/guides/source-store/) |
+| `getStoredSource(entityId, sourceRef)` | `Promise<StoredSource \| null>` — the text exactly as handed |
+| `listStoredSources(entityId)` | `Promise<StoredSourceSummary[]>` |
 
 | `findSourceRefsByHash(entityId, sourceHash)` | `Promise<string[]>` |
 | `listEntityIds({ prefix? }?)` | `Promise<string[]>` |
@@ -92,6 +95,11 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 `listSourceRefs()` returns one row per live `sourceRef`: soft-deleted rows and rows with a null
 `sourceRef` are excluded. `sourceHash` and `lastIngestedAt` come from the most recently updated
 live row for that `sourceRef`, and `factCount` counts the live rows.
+
+`stored` compares the source text store with the ref's live facts, in three states: text stored
+with a matching hash (`{ charCount }`), text stored under a stale hash
+(`{ charCount, staleHash: true }`), or nothing stored (`null`). Added in 9.2.0. See
+[Source text store](/expo-llm-wiki/guides/source-store/).
 
 ## Maintenance
 
@@ -113,7 +121,7 @@ live row for that `sourceRef`, and `factCount` counts the live rows.
 
 | Method | Returns |
 |---|---|
-| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>` |
+| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>`. A `sourceRef`/`sourceHash` forget also hard-deletes the matching stored text and passages in the same transaction; `clearAll` deletes the entity's whole store. |
 
 ## Ontology
 

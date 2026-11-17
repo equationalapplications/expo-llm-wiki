@@ -60,6 +60,22 @@ const wiki = createWiki(db, {
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet. To delete them on request, see [Wipe an entity completely](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely) |
 | `event_created_at_clamped` | `importDump` re-dated future-dated events just after the current time, or after the librarian position if later (`detail.count`) |
 | `event_created_at_restamped` | `importDump` re-dated events that would have sorted behind the librarian position or had an unusable `created_at`, or cleared an unusable `occurred_at` (`detail.count`, `detail.reason`) |
+| `source_store_source_too_large` | A source document exceeded the per-document size cap and was not stored |
+| `source_store_budget_exceeded` | Storing a source document would exceed the store UTF-16 code-unit budget and it was not stored |
+| `source_store_hash_mismatch` | A source document text did not match its recorded hash and was not stored |
+| `source_store_duplicate_hash` | A source document duplicated the hash of one already stored and was not stored |
+| `source_store_text_not_storable` | A source document text could not be stored as given |
+| `erase_secure_delete_off` (`error`) | secure_delete could not be confirmed ON on the connection; erasure is unverified and the erase was stopped. See [Deleting data](/expo-llm-wiki/guides/deleting-data/#the-pragma-requirement) |
+| `erase_entity_skipped` (`warn`) | Erase skipped an entity because another operation held its prune lock |
+| `erase_registry_sweep_skipped` (`info`) | Erase skipped the source_ref_index tombstone sweep because the table does not exist (pre-v9 store) |
+| `erase_retired_vtab_undroppable` (`warn`) | A retired FTS table could not be dropped on a runtime without FTS5; its shadow tables were emptied and the name stays listed until an FTS5-capable open drops it |
+| `erase_retired_remaining` (`error`) | Erase stopped: retired FTS tables still exist after reclamation; the erase is incomplete |
+
+The five `source_store_*` codes are all `warn`. `storeSource` refusals carry them in the returned
+`{ stored: false, diagnostics }` and fire them on the hook with `operation: 'sourceStore'`;
+`importDump` fires them with `operation: 'importDump'` for stored sources it skipped — check
+`skippedSources` on the [import result](/expo-llm-wiki/guides/source-store/#delete-and-dump).
+See [Source text store](/expo-llm-wiki/guides/source-store/).
 
 ## A practical router
 

@@ -39,6 +39,11 @@ deterministic check (no LLM involved) verifies the quotes:
 - All quotes found → the fact is stored `stable` with trust tier `machine-confirmed`.
 - Quotes missing or not found → the fact is stored as a **draft** rather than rejected.
 
+To keep the quoted text itself, store the source with `storeSource()` (added in 9.2.0). The
+[source text store](/expo-llm-wiki/guides/source-store/) holds the verbatim document, and
+`read(…, { sources })` returns passage windows with offsets, so a quote can be shown next to its
+fact.
+
 :::caution[Grounding is not a prompt-injection defense]
 Grounding proves a fact quotes its source. It doesn't prove the source is honest. Injected text
 in a document can be quoted like any other text. See

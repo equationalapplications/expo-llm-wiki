@@ -101,14 +101,18 @@ Acceptance:
 - AC3: definitions faithful to the EA glossary source text (diff-checked against the vault
   glossary during the ladder).
 
-### T8 — Verification + ladder + whole-PR review on #404
+### T8 — Verification + handoff to the #404 lane (scope amendment, owner ruling 2026-11-17 msg 1572316502831407295; superseded same day by lane consolidation, owner msg 1572320813875597334 — the docs session was stopped and the #404 controller absorbed this lane; single controller owns both PRs)
 - `astro build` green (+2 pages); test-plan checks 1–5 of the spec; scrub guard
   (added-lines-only grep, r1-m1 shape).
-- Tier-4 Fable review → fold (adjudicated) → Opus delta → fold.
-- Merge-order per the owner ruling (msg 1572312605224075315): after THIS lane's T1.5
-  pre-check converges, the branch merges into `specs/forget-erasure` (PR #404) and the
-  whole PR (code + INTENT + JSDoc + docs) goes through #404's ladder and merge gate. No
-  "wait for #404" stance exists anymore — this branch FEEDS #404.
+- **CONSOLIDATED (owner, msg 1572320813875597334): the docs session was stopped; the
+  #404 controller owns BOTH lanes.** The T1–T4 draft verification, T3/T4 completion,
+  T5/T6/T7 acceptance, and the build gate were executed by the #404 controller's
+  verifier subagent; the controller commits and checkpoint-merges. The whole-PR review
+  ladder (Fable → Opus), ready-flip, and merge gate run on #404 under the same
+  controller.
+- Verification receipts: `.superpowers/sdd/forget-erasure/docs-verify-report.md` on the
+  forget-erasure worktree (per-file verdicts, publish-time diagnostics SHA
+  `c8af61e8`, build exit 0 re-confirmed by the controller).
 
 ## Execution order
 

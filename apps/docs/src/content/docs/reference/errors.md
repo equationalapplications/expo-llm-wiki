@@ -39,6 +39,10 @@ try {
 
 Errors you throw from your own callbacks pass through with their type unchanged.
 
+`storeSource()` mostly doesn't throw: size, budget, hash and duplicate refusals come back as
+`{ stored: false, diagnostics }` (see [Source text store](/expo-llm-wiki/guides/source-store/)).
+Only invalid arguments and a busy lock (`WikiBusyError`) throw.
+
 ## Migration v9 fails on existing duplicates
 
 Schema migrations run in `setup()`. They're additive and safe to re-run. Migration v9

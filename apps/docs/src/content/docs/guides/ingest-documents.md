@@ -117,6 +117,11 @@ const { chunks, truncated } = chunkText(source, DEFAULT_MAX_CHUNK_LENGTH, DEFAUL
 - `safeSlice(value, start, end?)` works like `String.prototype.slice`, but clamps out-of-range
   indices, swaps a reversed range, and never splits a surrogate pair.
 
+If you don't want to keep the document around to re-chunk it, store its text with `storeSource()`
+(added in 9.2.0) and read passages back with `read(…, { sources })`. Each passage carries
+`startOffset`/`endOffset` UTF-16 offsets into the stored text. See
+[Source text store](/expo-llm-wiki/guides/source-store/#read-passages-with-read).
+
 ## Duplicate content under another name
 
 If the same content (the same hash) is already stored under a *different* `sourceRef`, the third
