@@ -78,7 +78,12 @@ the acceptance test below): core pragma + plain delete + FTS `'optimize'`
 opens connections; INTENT.md:137, guide §157). **Owner ruling B (2026-11-17): `secure_delete=FULL`, always on, no opt-out, on every
 release.** The pragma is read back after setting and surfaced: if the
 runtime refuses it, `setup()` warns — and the erase-time step-0 read-back (§2) turns a
-refusal that slipped past setup into an honest erase failure, not a false success. The
+refusal that slipped past setup into an honest erase failure, not a false success. Errata
+(implementation probe, 2026-11-17): SQLite has no `FULL` pragma value — the literal
+`PRAGMA secure_delete=FULL` is a silent no-op (reads back 0). Ruling B's "FULL" means the
+full-zeroing level, which is pragma value `ON` (reads back `1`); `FAST` (`2`, partial) is
+rejected. The implementation and every read-back check in this spec use `ON`/`1` — writing
+the literal `FULL` anywhere would silently disable erasure (T1 probe on SQLite 3.53.4). The
 pragma is connection-wide and ATTACH-wide: it changes delete behavior and write cost for the
 host's own tables (INTENT.md:137-138 tension); the owner accepted that cost — without the
 pragma even `'rebuild'` leaves text in freed pages (scenario H), and `FULL` is the level the
