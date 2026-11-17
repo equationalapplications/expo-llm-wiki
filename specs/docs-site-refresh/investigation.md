@@ -105,8 +105,8 @@ recipes/markdown-knowledge-base.md (silent, not stale).
 - `astro build` in apps/docs: SUCCESS, 53 pages in 10.36 s (+pagefind ~0.3 s); tree stays
   clean (dist/ gitignored).
 - Sidebar: six autogen sections; new guide → `guides/source-store.md` with a
-  `sidebar.order` between existing guides (deleting-data and ingest-documents sit low,
-  diagnostics is 12); glossary → `reference/glossary.md`, order after types/errors.
+  `sidebar.order` between existing guides (deleting-data sits low, order 16;
+  ingest-documents is 3); glossary → `reference/glossary.md`, order after types/errors.
   Reference ordering uses `sidebar.order`; Guides/Concepts are pure autogenerate.
 - Internal links use `/expo-llm-wiki/<section>/<page>/` (base + trailingSlash).
 

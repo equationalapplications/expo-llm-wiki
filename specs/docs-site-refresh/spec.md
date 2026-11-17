@@ -232,22 +232,17 @@ No `astro.config.mjs` change: both new pages sit in autogenerate directories
 
 ## Sequencing and merge order
 
-**Owner-ruled 2026-11-17 (Discord msg 1572312605224075315):** after the Tier-1.5
-pre-check cycle converges on this lane, this branch merges INTO `specs/forget-erasure`
-(PR #404) so #404 is reviewed as a whole (code + INTENT + JSDoc + docs together). Until
-then PR #406 stays open as the docs half's staging branch; implementation commits land
-here and sync-merge into `specs/forget-erasure` at checkpoints (this lane never commits
-in the sibling lane's worktree). The default "merge after #404" ordering below is
-SUPERSEDED by the owner ruling; the erase()-forward-documentation concern is moot under
-whole-PR review (docs and the API ship in one PR).
+**Owner-ruled 2026-11-17 (Discord msg 1572312605224075315) — this is THE merge order:**
+after the Tier-1.5 pre-check cycle converges on this lane (done — see LEDGER), this
+branch merges INTO `specs/forget-erasure` (PR #404) so #404 is reviewed as a whole
+(code + INTENT + JSDoc + docs together). Until then PR #406 stays open as the docs
+half's staging branch; implementation commits land here and sync-merge into
+`specs/forget-erasure` at checkpoints (this lane never commits in the sibling lane's
+worktree).
 
-This PR is file-disjoint from #404 (ruling 2) and is built on `origin/main` (not stacked).
-The erase()/expire() vocabulary documents an API that ships with #404 — under the
-whole-PR review that concern is moot (docs and the API ship in one PR).
-
-**(SUPERSEDED — kept for the record only)** earlier options "merge after #404" and
-"merge first with ship-next-release markers" are both dead; the owner ruling above
-replaces them.
+(Dropped options, for the record: "merge after #404 lands" and "merge first with
+ship-next-release markers" — both superseded by the ruling; they carried the now-moot
+concern that erase() docs would go live before the API.)
 
 ## Test plan
 
