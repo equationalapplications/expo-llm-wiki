@@ -1,9 +1,9 @@
 # Docs site refresh — v9.2.0 alignment, erasure-guide handoff, and the Glossary page
 
-**Status: rev 3 — spec AND plan APPROVED by owner (Kurt, msgs 1572310398869311610 +
-1572312605224075315, 2026-11-17). Tier-1.5 pre-check cycle converged on this lane;
-next: merge this branch into `specs/forget-erasure` (PR #404) per the owner's
-sequencing ruling, then implement T1–T8.**
+**Status: implemented — T1–T8 landed on `specs/forget-erasure` (PR #404, checkpoint merge
+`0a05d7be`, T1–T7 fold `492ff1f4`); the whole-PR review runs on #404 per the owner's
+sequencing ruling. Rev 3 spec AND plan APPROVED by owner (Kurt, msgs 1572310398869311610 +
+1572312605224075315, 2026-11-17). Tier-1.5 pre-check cycle converged on this lane.**
 **Issue:** none filed (lane opened by owner directive, Discord msg 1572305016348483625) ·
 **Handoff (content obligations):** vault `records/handoffs/2026-11-17-handoff-expo-llm-wiki-docs-lane-content-inherit.md`
 (owner ruling 2: #404 ships code + INTENT + JSDoc only; all `apps/docs` edits move to this docs lane) ·
@@ -122,8 +122,10 @@ plan T9 on branch `specs/forget-erasure`:
   zeroing = `ON` (reads back `1`).
 - Ruling D sentences: events follow the host's `retainEventsFor` — each host publishes its
   own value.
-- A "handling an erasure request" recipe naming `forget({ eventId })` (#386) as the
-  prerequisite path for retained quotes.
+- A "handling an erasure request" recipe for retained quotes. The shipped API has no
+  per-event forget selector — `forget({ eventId })` is future work (#386) — so the recipe
+  uses the available path: `clearAll({ includeEvents: true })` for the whole entity, with the
+  broader-scope caveat stated (it takes the entity's facts with it).
 
 ### 4. Inherited obligation 2: `guides/diagnostics.md` erase rows
 
@@ -158,14 +160,16 @@ v1.0) plus the memory-model rulings. Three groups:
 **The memory lifecycle and verbs** (owner-ratified 2026-11-17; erase/expire ship with the
 forget-erasure release and are marked as such):
 - **Memory fact states** — live / superseded / forgotten / gone. **Erased** is not a fifth
-  state: it is the engine's verified claim that the bytes are unrecoverable, delivered in
-  an `erase()` report.
+  state: it is the engine's verified claim that the erase pipeline ran to completion —
+  deleted content in the database file overwritten with zeros, the WAL truncated after a
+  verified checkpoint, each step's outcome checked — delivered in an `erase()` report.
 - **Forget** — removes a fact from recall immediately (soft-delete). "Gone from recall now,
   gone from disk at erase" — an instruction, not destruction.
 - **Prune (`runPrune`)** — applies the host's retention windows: superseded ages into
   forgotten, forgotten ages into gone, on the host's schedule.
-- **Erase** — takes every forgotten fact in scope past gone: bytes unrecoverable, verified
-  by reading the database file back, with an erasure report. Always-on; no opt-out.
+- **Erase** — takes every forgotten fact in scope past gone: deleted content in the database
+  file is overwritten with zeros and the WAL is truncated after a verified checkpoint, with
+  an erasure report naming each step's outcome. Always-on; no opt-out.
   *(Ships with the forget-erasure release.)*
 - **Expire** — ends a fact's validity without a replacement (an archive, not a deletion);
   the fact becomes superseded. *(Planned, unreleased.)*

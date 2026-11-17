@@ -187,11 +187,16 @@ new migration — none, ever**, rulings C+E).
 - `exportDump` gains `includeForgotten` (default `false` — exports exclude forgotten rows unless
   the caller asks for a backup dump).
 - `getRetentionPolicy()` — reads the host's declared retention back.
-- **Tombstone-wins import guard**: an import whose dump carries a `deleted_at` tombstone for a
-  live ref keeps the tombstone (forget wins over re-ingest).
+- **Tombstone-wins import guard**: an import whose dump carries a `deleted_at` tombstone keeps
+  the tombstone (forget wins over re-ingest). Scope is both kinds of row: a live dump **fact**
+  whose id is locally tombstoned is skipped, and so is a live dump **task**; a dump tombstone
+  for either kind of row applies even when the merge recency check would skip the row. Rows the
+  replace-import wipe itself just tombstoned are exempt (they are this import's own doing, not
+  forgets).
 Acceptance:
 - AC1: `exportDump()` excludes forgotten rows by default; `includeForgotten: true` includes them.
-- AC2: import with tombstone for a live ref → ref stays tombstoned (forget wins).
+- AC2: import with tombstone for a live ref → ref stays tombstoned (forget wins), for facts and
+  tasks alike; replace-import wipes are exempt.
 - AC3: `getRetentionPolicy()` returns the configured retention declaration.
 
 ### T9 — Docs, JSDoc policy, INTENT status lines (spec §6, Release, ruling D)

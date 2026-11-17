@@ -806,7 +806,8 @@ holds, and whether erasure is verified; it never claims success it cannot show �
 13); **`exportDump` `includeForgotten`** flag, default `false` — exports exclude forgotten
 rows unless the caller asks for a backup dump; **`getRetentionPolicy()`** — retention is the
 host's declaration and the engine reads it back on request; and the **tombstone-wins import
-guard** — an import whose dump carries a `deleted_at` tombstone for a live ref keeps the
-tombstone (forget wins over re-ingest). The engine makes GDPR compliance possible for its
+guard** — an import whose dump carries a `deleted_at` tombstone keeps the
+tombstone (forget wins over re-ingest; the guard covers live fact rows and live task rows
+alike, exempting rows the replace-import wipe itself tombstoned). The engine makes GDPR compliance possible for its
 hosts; it does not perform it for them.
 
