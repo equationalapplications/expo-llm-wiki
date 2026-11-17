@@ -340,9 +340,10 @@ text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
 visible. Today forget, prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
-canary-reproducible), and the retention windows are the host's
-declaration, not yet a readable API surface. `erase()` is specced, not
-built; `expire()` is ratified and needs a spec home before it is built.
+canary-reproducible), which is why `erase()` exists and verifies the
+file before it claims erasure. The retention windows are the host's
+declaration, readable back through `getRetentionPolicy()`. `expire()`
+is ratified and needs a spec home before it is built.
 
 ### 13. Erasure is verifiable, portability is clean
 
