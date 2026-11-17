@@ -99,10 +99,14 @@ Acceptance:
 - AC3: definitions faithful to the EA glossary source text (diff-checked against the vault
   glossary during the ladder).
 
-### T8 — Verification + ladder + ready
-- `astro build` green (+2 pages); test-plan checks 1–5 of the spec; scrub guard grep.
-- Tier-4 Fable review → fold (adjudicated) → Opus delta → fold → **Kurt ready/merge gate**.
-- Merge order per spec Sequencing (default: after #404 lands — owner confirms at gate).
+### T8 — Verification + ladder + whole-PR review on #404
+- `astro build` green (+2 pages); test-plan checks 1–5 of the spec; scrub guard
+  (added-lines-only grep, r1-m1 shape).
+- Tier-4 Fable review → fold (adjudicated) → Opus delta → fold.
+- Merge-order per the owner ruling (msg 1572312605224075315): after THIS lane's T1.5
+  pre-check converges, the branch merges into `specs/forget-erasure` (PR #404) and the
+  whole PR (code + INTENT + JSDoc + docs) goes through #404's ladder and merge gate. No
+  "wait for #404" stance exists anymore — this branch FEEDS #404.
 
 ## Execution order
 

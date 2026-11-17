@@ -1,7 +1,9 @@
 # Docs site refresh — v9.2.0 alignment, erasure-guide handoff, and the Glossary page
 
-**Status: rev 2 — spec APPROVED by owner (Kurt, Discord msg 1572310398869311610,
-2026-11-17). Implementation gated on plan approval (plan.md written, caps announced).**
+**Status: rev 3 — spec AND plan APPROVED by owner (Kurt, msgs 1572310398869311610 +
+1572312605224075315, 2026-11-17). Tier-1.5 pre-check cycle converged on this lane;
+next: merge this branch into `specs/forget-erasure` (PR #404) per the owner's
+sequencing ruling, then implement T1–T8.**
 **Issue:** none filed (lane opened by owner directive, Discord msg 1572305016348483625) ·
 **Handoff (content obligations):** vault `records/handoffs/2026-11-17-handoff-expo-llm-wiki-docs-lane-content-inherit.md`
 (owner ruling 2: #404 ships code + INTENT + JSDoc only; all `apps/docs` edits move to this docs lane) ·
@@ -242,13 +244,10 @@ whole-PR review (docs and the API ship in one PR).
 This PR is file-disjoint from #404 (ruling 2) and is built on `origin/main` (not stacked).
 The erase()/expire() vocabulary documents an API that ships with #404. Two orderings:
 
-- **(a) Recommended — hold the merge:** PR goes ready now; merges after #404 lands. No
-  stale-docs window, no forward-dating markers needed in the deleting-data guide. The
-  handoff's "do not wait on it" is honored: the docs work is not blocked, only the merge.
-- (b) Merge first with explicit "ships in the next release" markers on the erase recipe —
-  kept only if the owner wants the glossary live sooner.
-
-Owner decides at the merge gate; default is (a).
+- **(SUPERSEDED by the owner ruling above — kept for the record only)** earlier
+  options "merge after #404" and "merge first with ship-next-release markers" are
+  both dead; the whole-PR review on #404 resolves the erase()-forward-documentation
+  concern (docs and the API ship in one PR).
 
 ## Test plan
 
@@ -259,7 +258,8 @@ Owner decides at the merge gate; default is (a).
 3. **Obligation checklist:** deleting-data.md contains every §6 sentence in the handoff
    list; the recipe has no standalone-prune step; `grep -i "secure_delete=FULL"` over the
    tree returns nothing.
-4. **Scrub guard:** `git diff main -- apps/docs | grep -i synapsetree` returns nothing.
+4. **Scrub guard (added lines only):** `git diff main -U0 -- apps/docs | grep '^+' |
+   grep -iE 'synapsetree'` returns nothing.
 5. **Link hygiene:** new internal links follow the `/expo-llm-wiki/<section>/<page>/`
    base-path pattern with `trailingSlash: 'always'`.
 6. **Review ladder** (spec-bearing PR): Tier-4 Fable review → Opus delta review, findings
@@ -267,8 +267,9 @@ Owner decides at the merge gate; default is (a).
 
 ## Release
 
-Docs-only. No package version bump (site is not npm-published). Merge order per the
-Sequencing section (default: after #404).
+Docs-only content riding PR #404 after the branch merge (owner-ruled sequencing — see
+Sequencing above): no package version bump from THIS lane; the site is not
+npm-published. Review happens on #404 as a whole.
 
 ## Non-goals
 

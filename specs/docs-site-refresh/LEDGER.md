@@ -17,3 +17,15 @@ Memory) added by owner, 2026-11-17.
 | 2026-11-17 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 | 2026-11-17 | **SPEC APPROVED** (Kurt, Discord msg 1572310398869311610); spec status → rev 2; plan.md written with announced caps (Fable r1 ≤$6, delta ≤$4/round, ladder ≤$18, lane ≤$20) | `plan.md` | — |
 | 2026-11-17 | **PLAN APPROVED + SEQUENCING RULED** (Kurt, Discord msg 1572312605224075315): run Tier-1.5 convergence cycle HERE NOW as a pre-check; after it converges, merge `specs/docs-site-refresh` into `specs/forget-erasure` (PR #404) so #404 is reviewed as a whole. Implementation then proceeds on this branch with checkpoint sync-merges into #404 (single-writer per branch per worktree; no direct commits to the sibling lane's checkout). PR #406 becomes the staging branch for the docs half of #404. | LEDGER, plan Sequencing | — |
+| 2026-11-17 | T1.5 r1 sonnet-high range review 27f8e5e9..f15f1246: **APPROVE WITH NITS** ($0.1334). 2 MAJOR + 3 MINOR: M1 stale status line, M2 contradictory merge-order text — both REAL, folded; m1 scrub-grep shape REAL (adopted `-U0 \| grep '^+'`); m2 machine-local paths in LEDGER DECLINED (house convention, sibling LEDGER identical shape); m3 T1–T8 checkboxes REAL, added. r1 independently re-verified spec's v9.2.0 facts against `git show v9.2.0` — all match. Dispositions: scratch `docs-lane-t15/sonnet-r1-dispositions.md` | spec rev 3 + plan T8/Release fixes | $0.1334 |
+
+## T1–T8 checklist (tick only after the task's verification passes)
+
+- [ ] T1 — `guides/source-store.md` (AC1 identifiers vs v9.2.0; AC2 frontmatter/links; AC3 feature-intro notes)
+- [ ] T2 — reference fixes (wiki-memory / types / configuration / errors)
+- [ ] T3 — guides fixes (diagnostics source_store rows / okf dump / ingest offsets)
+- [ ] T4 — concepts fixes (how-it-works four surfaces / trust-and-provenance)
+- [ ] T5 — deleting-data.md inherited obligation 1 (handoff bullets; no FULL pragma; no standalone-prune step)
+- [ ] T6 — erase diagnostic rows (publish-time re-read of `specs/forget-erasure` diagnostics.ts recorded)
+- [ ] T7 — reference/glossary.md (owner term set; adaptation rules; faithful-to-glossary diff check)
+- [ ] T8 — build green + test-plan checks 1–5 + Fable → Opus delta ladder → #404 whole-PR review
