@@ -77,18 +77,23 @@ export class TaskRepository extends BaseRepository {
   async findExistingMetadataByIds(
     ids: readonly string[],
     tx?: SQLiteAdapter,
-  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }>> {
     const executor = this.getExecutor(tx);
-    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    const rows: Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }> = [];
     const chunkSize = 500;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       const chunkRows = await executor.getAllAsync<any>(
-        `SELECT id, entity_id, updated_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+        `SELECT id, entity_id, updated_at, deleted_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
         chunk,
       );
-      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+      rows.push(...chunkRows.map((row) => ({
+        id: row.id,
+        entity_id: row.entity_id,
+        updated_at: Number(row.updated_at),
+        deleted_at: row.deleted_at == null ? null : Number(row.deleted_at),
+      })));
     }
     return rows;
   }

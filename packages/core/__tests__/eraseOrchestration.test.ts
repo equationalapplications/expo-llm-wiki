@@ -72,7 +72,7 @@ describe('erase() orchestration + report (spec §2/§8)', () => {
     const names = report.steps.map((s) => s.step);
     expect(names).toEqual([
       'secure_delete', 'prune', 'registry_sweep', 'passage_drain', 'retired_reclaim',
-      'vacuum', 'index_sync', 'retired_reclaim_rerun', 'optimize', 'checkpoint',
+      'vacuum', 'index_sync', 'retired_reclaim_rerun', 'optimize', 'checkpoint', 'tombstone_gate',
     ]);
     expect(report.steps.every((s) => s.outcome === 'ok')).toBe(true);
     expect(report.retiredUndroppable).toEqual([]);

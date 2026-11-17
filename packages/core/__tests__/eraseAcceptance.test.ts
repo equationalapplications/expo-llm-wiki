@@ -109,6 +109,29 @@ describe('canary byte-identity (setup)', () => {
 });
 
 describe('fact-path tier (spec Test plan #1)', () => {
+  it('a future-dated deleted_at (imports never clamp) is still erased — no verified:true over surviving text', async () => {
+    const h = await make();
+    const future = Date.now() + 86_400_000_000;
+    await h.raw.runAsync(
+      `INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, 1, 1, ?)`,
+      ['future-tomb-entry', E, 'future entry', `${CANARY} future tombstone entry body`, 'ref-future', future],
+    );
+    await h.raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at, deleted_at) VALUES (?, ?, ?, 'pending', 0, 1, 1, ?)`,
+      ['future-tomb-task', E, `${CANARY} future tombstone task body`, future],
+    );
+    await h.raw.execAsync('PRAGMA wal_checkpoint(TRUNCATE)');
+    await expectPresent(h);
+    const report = await h.wiki.erase();
+    expect(report.verified).toBe(true);
+    const entry = await h.raw.getFirstAsync(`SELECT id FROM ${P}entries WHERE id = 'future-tomb-entry'`);
+    const task = await h.raw.getFirstAsync(`SELECT id FROM ${P}tasks WHERE id = 'future-tomb-task'`);
+    expect(entry).toBeFalsy();
+    expect(task).toBeFalsy();
+    await expectClean(h);
+    await h.raw.closeAsync();
+  }, 60_000);
+
   it('documented recipe: forget({ entryId }) → erase() — whole-file absence', async () => {
     const h = await factFixture();
     await h.wiki.forget(E, { entryId: h.entryId });

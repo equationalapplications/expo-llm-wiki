@@ -74,13 +74,25 @@ describe('findSupersessionChainIds', () => {
     await insert('v2', 'e1', { superseded_by: 'v3' });
     await insert('v3', 'e1');
     await insert('x', 'e2', { superseded_by: 'v2' }); // other entity: ignored
-    expect(await repo.findSupersessionChainIds('e1', 'v2', 50)).toEqual({ predecessors: ['v1'], successors: ['v3'] });
+    expect(await repo.findSupersessionChainIds('e1', 'v2', 50)).toEqual({
+      predecessors: [{ id: 'v1', depth: 1 }],
+      successors: [{ id: 'v3', depth: 1 }],
+    });
   });
   it('stops at maxDepth', async () => {
     await insert('a', 'e1', { superseded_by: 'b' });
     await insert('b', 'e1', { superseded_by: 'c' });
     await insert('c', 'e1');
-    expect((await repo.findSupersessionChainIds('e1', 'a', 1)).successors).toEqual(['b']);
+    expect((await repo.findSupersessionChainIds('e1', 'a', 1)).successors).toEqual([{ id: 'b', depth: 1 }]);
+  });
+  it('caps by depth, not row count: a wide fan-in node is not truncated', async () => {
+    // 5 direct predecessors (all depth 1) of `w`, maxDepth 2: every row is at
+    // or under the cap, so none is dropped and `truncated` stays false.
+    for (const p of ['p1', 'p2', 'p3', 'p4', 'p5']) await insert(p, 'e1', { superseded_by: 'w' });
+    await insert('w', 'e1');
+    const walk = await repo.findSupersessionChainWalk('e1', 'w', 2);
+    expect(walk.truncated).toBe(false);
+    expect(walk.ids.sort()).toEqual(['p1', 'p2', 'p3', 'p4', 'p5'].sort());
   });
 });
 

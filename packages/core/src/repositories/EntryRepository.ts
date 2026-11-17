@@ -1102,10 +1102,13 @@ export class EntryRepository extends BaseRepository {
     tx?: SQLiteAdapter,
   ): Promise<{ ids: string[]; truncated: boolean }> {
     const { predecessors, successors } = await this.findSupersessionChainIds(entityId, factId, maxDepth + 1, tx);
-    const truncated = predecessors.length > maxDepth || successors.length > maxDepth;
+    // Cap by row DEPTH, not row count: a node with more than `maxDepth` direct
+    // predecessors (all depth 1) is a wide fan-in, not a chain longer than the
+    // cap — counting rows would set `truncated` and drop reachable rows.
+    const truncated = predecessors.some((r) => r.depth > maxDepth) || successors.some((r) => r.depth > maxDepth);
     // predecessors are ordered farthest-first, so the nearest are at the end.
-    const pred = predecessors.length > maxDepth ? predecessors.slice(predecessors.length - maxDepth) : predecessors;
-    const succ = successors.slice(0, maxDepth);
+    const pred = predecessors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
+    const succ = successors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
     return { ids: Array.from(new Set([...succ, ...pred])), truncated };
   }
 
@@ -1114,9 +1117,9 @@ export class EntryRepository extends BaseRepository {
     factId: string,
     maxDepth: number,
     tx?: SQLiteAdapter,
-  ): Promise<{ predecessors: string[]; successors: string[] }> {
+  ): Promise<{ predecessors: Array<{ id: string; depth: number }>; successors: Array<{ id: string; depth: number }> }> {
     const executor = this.getExecutor(tx);
-    const successors = await executor.getAllAsync<{ id: string }>(
+    const successors = await executor.getAllAsync<{ id: string; depth: number }>(
       `WITH RECURSIVE fwd(id, depth) AS (
          SELECT superseded_by, 1 FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND superseded_by IS NOT NULL
          UNION
@@ -1124,10 +1127,10 @@ export class EntryRepository extends BaseRepository {
          JOIN ${this.prefix}entries e ON e.id = fwd.id AND e.entity_id = ?
          WHERE e.superseded_by IS NOT NULL AND fwd.depth < ?
        )
-       SELECT id FROM fwd ORDER BY depth ASC`,
+       SELECT id, depth FROM fwd ORDER BY depth ASC`,
       [factId, entityId, entityId, maxDepth],
     );
-    const predecessors = await executor.getAllAsync<{ id: string }>(
+    const predecessors = await executor.getAllAsync<{ id: string; depth: number }>(
       `WITH RECURSIVE bwd(id, depth) AS (
          SELECT id, 1 FROM ${this.prefix}entries WHERE entity_id = ? AND superseded_by = ?
          UNION
@@ -1135,10 +1138,10 @@ export class EntryRepository extends BaseRepository {
          JOIN ${this.prefix}entries e ON e.entity_id = ? AND e.superseded_by = bwd.id
          WHERE bwd.depth < ?
        )
-       SELECT id FROM bwd ORDER BY depth DESC`,
+       SELECT id, depth FROM bwd ORDER BY depth DESC`,
       [entityId, factId, entityId, maxDepth],
     );
-    const drop = (ids: Array<{ id: string }>) => ids.map((r) => r.id).filter((id) => id !== factId);
+    const drop = (rows: Array<{ id: string; depth: number }>) => rows.filter((r) => r.id !== factId);
     return { predecessors: drop(predecessors), successors: drop(successors) };
   }
 

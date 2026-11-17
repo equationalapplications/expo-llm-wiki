@@ -38,7 +38,7 @@ export class TemporalService {
     // would leave `oldId` with no current successor.
     if (repl.superseded_by != null) throw new WikiSupersedeError('already_superseded');
     const { predecessors } = await this.entryRepo.findSupersessionChainIds(entityId, oldId, HISTORY_MAX_DEPTH, tx);
-    if (predecessors.includes(newId)) throw new WikiSupersedeError('cycle');
+    if (predecessors.some((r) => r.id === newId)) throw new WikiSupersedeError('cycle');
 
     await this.entryRepo.setTemporal(oldId, entityId, { valid_to: t, superseded_by: newId, superseded_at: now }, tx);
     if (repl.valid_from == null) {
@@ -108,7 +108,7 @@ export class TemporalService {
     const start = await this.entryRepo.findTemporalRow(factId);
     if (!start || start.entity_id !== entityId || start.deleted_at != null) return [];
     const { predecessors, successors } = await this.entryRepo.findSupersessionChainIds(entityId, factId, HISTORY_MAX_DEPTH);
-    const facts = await this.entryRepo.findByIds([...predecessors, factId, ...successors], [entityId]);
+    const facts = await this.entryRepo.findByIds([...predecessors.map((r) => r.id), factId, ...successors.map((r) => r.id)], [entityId]);
     return facts.sort((a, b) =>
       (a.valid_from ?? a.created_at) - (b.valid_from ?? b.created_at)
       || a.created_at - b.created_at

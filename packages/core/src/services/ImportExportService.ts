@@ -257,6 +257,7 @@ export class ImportExportService {
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
     const preservedBlobDims = new Set<number>();
     const softDeletedFactIds: string[] = [];
+    const softDeletedTaskIds: string[] = [];
     const clippedTextByFactId = new Map<string, { title: string; body: string }>();
     let clampedEvents = 0;
     let tombstoneSkipped = 0;
@@ -273,6 +274,7 @@ export class ImportExportService {
         );
         softDeletedFactIds.push(...deletedLiveFactIds);
         await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+        softDeletedTaskIds.push(...(await this.taskRepo.findAllByEntityId(entityId, tx)).map((t) => t.id));
         await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
         await this.edgeRepo.bulkDeleteByEntityId(entityId, tx);
         await this.metadataRepo.deleteCheckpoint(entityId, tx);
@@ -285,6 +287,7 @@ export class ImportExportService {
       }
 
       const wipedByThisImport = new Set(softDeletedFactIds);
+      const wipedTasksByThisImport = new Set(softDeletedTaskIds);
       const factIds = bundle.facts.map((fact) => fact.id);
       const existingFactsById = new Map<
         string,
@@ -507,6 +510,7 @@ export class ImportExportService {
           id: fact.id,
           entity_id: entityId,
           updated_at: safeUpdatedAt,
+          deleted_at: fact.deleted_at ?? null,
         });
         upsertedFactIds.add(fact.id);
         if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
@@ -515,7 +519,7 @@ export class ImportExportService {
       const taskIds = bundle.tasks.map((task) => task.id);
       const existingTasksById = new Map<
         string,
-        { id: string; entity_id: string; updated_at: number }
+        { id: string; entity_id: string; updated_at: number; deleted_at?: number | null }
       >();
       const existingTasks = await this.taskRepo.findExistingMetadataByIds(
         taskIds,
@@ -542,7 +546,20 @@ export class ImportExportService {
             );
             continue;
           }
-          if (merge && safeUpdatedAt <= existing.updated_at) continue;
+          // Spec §8 tombstone-wins for tasks: mirrors the fact branch above.
+          // A local tombstone is never resurrected by a live dump task, and a
+          // dump tombstone applies even when the merge recency check would
+          // otherwise skip the row. (Rows the replace-import wipe above just
+          // tombstoned are not forgets.)
+          if (
+            existing.deleted_at != null &&
+            task.deleted_at == null &&
+            !wipedTasksByThisImport.has(task.id)
+          ) {
+            tombstoneSkipped++;
+            continue;
+          }
+          if (merge && safeUpdatedAt <= existing.updated_at && task.deleted_at == null) continue;
         }
 
         await this.taskRepo.upsertForImport(
@@ -578,6 +595,7 @@ export class ImportExportService {
           id: task.id,
           entity_id: entityId,
           updated_at: safeUpdatedAt,
+          deleted_at: task.deleted_at ?? null,
         });
       }
 

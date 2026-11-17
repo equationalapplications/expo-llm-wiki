@@ -50,4 +50,66 @@ describe('GDPR additions (spec §8)', () => {
     const o = await make({ config: { pruneRetainSoftDeletedFor: 1, pruneEventsAfter: 2, pruneSupersededAfter: 3 } });
     expect(o.wiki.getRetentionPolicy()).toEqual({ retainSoftDeletedFor: 1, retainEventsFor: 2, pruneSupersededAfter: 3 });
   });
+
+  it('AC4: a dump carrying tombstone then live rows for the same id does not resurrect the tombstone', async () => {
+    const { raw, wiki } = await make();
+    await ins(raw, 'a', null);
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    const live = dump.entities.e1.facts.find((f: any) => f.id === 'a')!;
+    // Tombstone row processed first, live row second — same id within ONE dump.
+    dump.entities.e1.facts = [{ ...live, deleted_at: 50, updated_at: 100 }, { ...live, updated_at: 200 }];
+    await wiki.importDump(dump, { merge: true });
+    const row = await raw.getFirstAsync<{ deleted_at: number | null }>(`SELECT deleted_at FROM ${P}entries WHERE id = 'a'`);
+    expect(row!.deleted_at).toBe(50);
+  });
+
+  it('AC5: a local task tombstone beats a live dump task (forget wins for tasks)', async () => {
+    const { raw, wiki } = await make();
+    await raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at, deleted_at) VALUES (?, 'e1', 'local task', 'pending', 0, 1, 1, 9)`,
+      ['t1'],
+    );
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    dump.entities.e1.tasks = [{
+      id: 't1', entity_id: 'e1', description: 're-ingested task', status: 'pending', priority: 0,
+      created_at: 1, updated_at: 200, resolved_at: null, deleted_at: null,
+    }];
+    await wiki.importDump(dump, { merge: true });
+    const row = await raw.getFirstAsync<{ deleted_at: number | null; description: string }>(`SELECT deleted_at, description FROM ${P}tasks WHERE id = 't1'`);
+    expect(row!.deleted_at).toBe(9);
+    expect(row!.description).toBe('local task');
+  });
+
+  it('AC6: a dump task tombstone bypasses the merge recency check', async () => {
+    const { raw, wiki } = await make();
+    await raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at) VALUES (?, 'e1', 'live local task', 'pending', 0, 1, 500)`,
+      ['t1'],
+    );
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    dump.entities.e1.tasks = [{
+      id: 't1', entity_id: 'e1', description: 'live local task', status: 'pending', priority: 0,
+      created_at: 1, updated_at: 100, resolved_at: null, deleted_at: 50,
+    }];
+    await wiki.importDump(dump, { merge: true });
+    const row = await raw.getFirstAsync<{ deleted_at: number | null }>(`SELECT deleted_at FROM ${P}tasks WHERE id = 't1'`);
+    expect(row!.deleted_at).toBe(50);
+  });
+
+  it('AC7: replace mode still re-imports live task rows the wipe just tombstoned', async () => {
+    const { raw, wiki } = await make();
+    await raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at) VALUES (?, 'e1', 'pre-wipe task', 'pending', 0, 1, 1)`,
+      ['t1'],
+    );
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    dump.entities.e1.tasks = [{
+      id: 't1', entity_id: 'e1', description: 'replacement task', status: 'pending', priority: 0,
+      created_at: 1, updated_at: 300, resolved_at: null, deleted_at: null,
+    }];
+    await wiki.importDump(dump); // no merge: wipe first, then import
+    const row = await raw.getFirstAsync<{ deleted_at: number | null; description: string }>(`SELECT deleted_at, description FROM ${P}tasks WHERE id = 't1'`);
+    expect(row!.deleted_at).toBeNull();
+    expect(row!.description).toBe('replacement task');
+  });
 });

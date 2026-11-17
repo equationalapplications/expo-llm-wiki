@@ -129,9 +129,19 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     const order: string[] = [];
     const strat = search(t.wiki).indexStrategy;
     vi.spyOn(strat, 'drainPassagesStrict').mockImplementation(async () => { order.push('drain'); throw new Error('boom'); });
-    const pending = search(t.wiki).syncChain.then(() => order.push('chain'));
+    const svc = search(t.wiki) as any;
+    // Queue an explicitly blocked predecessor so the chain is genuinely held:
+    // the drain must wait for prior sync work, not merely follow the chain tail.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    svc.syncChain = svc.syncChain.then(() => gate);
+    const pending = svc.syncChain.then(() => order.push('chain'));
     const report = newReport();
-    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_passage_drain_failed' });
+    const attempt = maint(t.wiki)._eraseDrainPassages(report);
+    await new Promise<void>((r) => setImmediate(r));
+    expect(order).toEqual([]); // blocked predecessor holds the chain: no drain yet
+    release();
+    await expect(attempt).rejects.toMatchObject({ code: 'erase_passage_drain_failed' });
     await pending;
     expect(order).toEqual(['chain', 'drain']);
     expect(report.failedStep).toBe('passage_drain');

@@ -240,7 +240,7 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | null;
+  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | null;
   /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */
   runtime: string;
   /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds. */
@@ -301,7 +301,7 @@ export class MaintenanceService {
    */
   private async _runPrune(
     entityId: string,
-    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[] } | undefined,
+    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[]; softDeletedCutoff?: number } | undefined,
     owner: 'host' | 'erase',
   ): Promise<{ entries: number; tasks: number; events: number }> {
     this.jobManager.acquireLock('prune', entityId, undefined, owner);
@@ -354,7 +354,10 @@ export class MaintenanceService {
       }
 
       if (retainSoftDeletedFor !== null) {
-        const cutoff = now - retainSoftDeletedFor * 86400000;
+        // softDeletedCutoff: erase's override — a max cutoff hard-deletes every
+        // soft-deleted row, including rows tombstoned with a future deleted_at
+        // (imported as supplied, never clamped), which a `now` cutoff would leave behind.
+        const cutoff = options?.softDeletedCutoff ?? now - retainSoftDeletedFor * 86400000;
         const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
 
         const prunableIds = entriesToDelete.map((r) => r.id);
@@ -510,7 +513,8 @@ export class MaintenanceService {
 
       // Output param (erase step 6): filled before anything below can throw.
       // Contract: a superset of the hard-deleted ids, consumed by containment.
-      if (options?.syncedIds) options.syncedIds.push(...syncedIds);
+      // A loop, not push(...ids): a spread of ~120k ids overflows the stack.
+      if (options?.syncedIds) for (const id of syncedIds) options.syncedIds.push(id);
       await this.searchService.syncEntries(entityId, syncedIds);
       if (prunePartial && vacuumCheckpointErr) {
         // Both failures are real: surface the checkpoint one as a diagnostic rather than dropping it.
@@ -565,13 +569,19 @@ export class MaintenanceService {
       // the shared connection after setup(); verify on the connection in use.
       const readPragma = async () =>
         (await this.db.getFirstAsync<{ secure_delete: number }>('PRAGMA secure_delete'))?.secure_delete ?? null;
-      let pragma = await readPragma();
-      if (pragma !== 1) {
-        await this.db.execAsync('PRAGMA secure_delete=ON');
+      let pragma: number | null;
+      try {
         pragma = await readPragma();
+        if (pragma !== 1) {
+          await this.db.execAsync('PRAGMA secure_delete=ON');
+          pragma = await readPragma();
+        }
+        report.secureDelete = pragma;
+        report.sqliteVersion = (await this.db.getFirstAsync<{ v: string }>('SELECT sqlite_version() AS v'))?.v ?? '';
+      } catch (err) {
+        report.failedStep = 'secure_delete';
+        throw new EraseStepError('erase_secure_delete_read_failed', 'erase stopped at step 0: secure_delete pragma read failed; erasure is unverified', report, err);
       }
-      report.secureDelete = pragma;
-      report.sqliteVersion = (await this.db.getFirstAsync<{ v: string }>('SELECT sqlite_version() AS v'))?.v ?? '';
       if (pragma !== 1) {
         emitDiagnostic(this.options, { code: 'erase_secure_delete_off', operation: 'erase', trigger: 'call', entityId: '' });
         report.failedStep = 'secure_delete';
@@ -580,13 +590,21 @@ export class MaintenanceService {
       ok('secure_delete');
 
       // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
-      report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Date.now() });
+      // No cutoff: rows tombstoned with a future deleted_at (imports never clamp)
+      // must still be walked and hard-deleted, or erase reports verified while
+      // their text survives in the database file.
+      try {
+        report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Number.MAX_SAFE_INTEGER });
+      } catch (err) {
+        report.failedStep = 'prune';
+        throw new EraseStepError('erase_prune_failed', 'erase stopped at step 1: the entity walk failed; erasure is unverified', report, err);
+      }
       const syncedByEntity = new Map<string, string[]>();
       for (const entityId of report.entities) {
         const syncedIds: string[] = [];
         syncedByEntity.set(entityId, syncedIds);
         try {
-          await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds }, 'erase');
+          await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds, softDeletedCutoff: Number.MAX_SAFE_INTEGER }, 'erase');
         } catch (err) {
           if (err instanceof PrunePartialFailureError) {
             report.holds.push({ entityId, deleted: err.deleted, deletedTasks: err.deletedTasks, failedAt: err.failedAt, remaining: err.remaining });
@@ -598,7 +616,8 @@ export class MaintenanceService {
             throw new EraseStepError('erase_prune_failed', `erase stopped at step 1 (entity ${entityId})`, report, err);
           }
         }
-        report.syncedIds.push(...syncedIds);
+        // A loop, not push(...ids): a spread of ~120k ids overflows the stack.
+        for (const id of syncedIds) report.syncedIds.push(id);
       }
 
       ok('prune', report.holds.length > 0 || report.skipped.length > 0 ? 'partial' : 'ok');
@@ -667,9 +686,15 @@ export class MaintenanceService {
       // Step 4 re-run (cheap when empty); nothing may stay retired except the module-less, emptied tables.
       await this._eraseReclaimRetired(report);
       // P1: sqlite_master is the truth (Fts5IndexStrategy delists a name even when its DROP failed).
-      const present = await this.db.getAllAsync<{ name: string }>(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%entries_fts_retired_%'`,
-      );
+      let present: Array<{ name: string }>;
+      try {
+        present = await this.db.getAllAsync<{ name: string }>(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%entries_fts_retired_%'`,
+        );
+      } catch (err) {
+        report.failedStep = 'retired_reclaim';
+        throw new EraseStepError('erase_retired_remaining', 'erase stopped after step 6: the retired-table read failed; erasure is unverified', report, err);
+      }
       const left = present.map((r) => r.name).filter((n) => isRetiredTableName(this.prefix, n) && !report.retiredUndroppable.includes(n));
       if (left.length > 0) {
         report.failedStep = 'retired_reclaim';
@@ -691,6 +716,34 @@ export class MaintenanceService {
       }
 
       ok('checkpoint');
+
+      // Step 9 (final tombstone gate): verified:true means every soft-deleted
+      // row's text is gone from the file. A row that escaped steps 0-8 (for
+      // example a future-dated deleted_at an earlier cutoff missed) would
+      // otherwise hide behind a verified:true report. Runs only when the
+      // report would be honest: rows held for an unconfirmed hook or belonging
+      // to a skipped entity already account for surviving tombstones and
+      // already force verified:false.
+      if (report.skipped.length === 0 && report.holds.length === 0) {
+        let remainingTombstones: number;
+        try {
+          const row = await this.db.getFirstAsync<{ n: number }>(
+            `SELECT (SELECT COUNT(*) FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL)
+                + (SELECT COUNT(*) FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL) AS n`,
+          );
+          remainingTombstones = row?.n ?? 0;
+        } catch (err) {
+          report.failedStep = 'tombstone_gate';
+          throw new EraseStepError('erase_tombstone_gate_failed', 'erase stopped at step 9: could not count remaining tombstones; erasure is unverified', report, err);
+        }
+        if (remainingTombstones > 0) {
+          emitDiagnostic(this.options, { code: 'erase_tombstones_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { count: remainingTombstones } });
+          report.failedStep = 'tombstone_gate';
+          throw new EraseStepError('erase_tombstones_remaining', `erase stopped at step 9: ${remainingTombstones} soft-deleted row(s) remain; erasure is unverified`, report);
+        }
+        ok('tombstone_gate');
+      }
+
       // Skipped entities were not erased: honest report, never a verified success.
       report.verified = report.skipped.length === 0 && report.holds.length === 0;
       return report;
