@@ -421,6 +421,21 @@ export class WikiMemory {
    * transaction.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
+    // Always-on erasure substrate (forget-erasure spec §1, ruling B): no opt-out, no option.
+    // secure_delete is connection-wide and ATTACH-wide: it covers every database on this
+    // connection. Hosts whose own code writes wiki tables through a different connection
+    // (or re-opens the file) must set `PRAGMA secure_delete=FULL` there too.
+    // A refusal only warns; the honest failure belongs to erase's step 0, not setup.
+    // "FULL" is the spec's name for full zeroing; SQLite spells it `ON` (1) — `FULL` is not a
+    // SQLite value (reads back 0 on 3.53.4) and `FAST` (2) only zeroes partially.
+    await this.db.execAsync('PRAGMA secure_delete=ON');
+    const secureDelete = await this.db.getFirstAsync<{ secure_delete: number }>('PRAGMA secure_delete');
+    if (!secureDelete || Number(secureDelete.secure_delete) !== 1) {
+      console.warn(
+        '[WikiMemory] PRAGMA secure_delete=ON (full zeroing) was not honored by this SQLite runtime; ' +
+        'deleted content may remain recoverable in the database file until erase() verifies it.',
+      );
+    }
     const setupBudgetMs = this.setupBudgetMs();
     // One deadline per open (spec #280 Change 3): captured here, never re-budgeted per turn.
     const openDeadline = monotonicNow() + setupBudgetMs;
