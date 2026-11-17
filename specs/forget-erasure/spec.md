@@ -1,8 +1,8 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 25 — T4 delta-7 findings folded (3 MAJOR + 4 minors; majors trajectory
-2→2→2→1→3 — wider review context keeps surfacing design gaps). Pending owner questions +
-convergence decision. INTENT
+**Status: Draft rev 26 — T4 delta-8 (final owner-ruled round) findings folded: 1 MAJOR
+(step 0 runtime secure_delete verification) + 6 minors. Trajectory 2→2→2→1→3→1; hard stop
+reached — owner spec stop follows. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -86,6 +86,20 @@ public API named `compact` exists in the tree; `types.ts:1186` has only a `compa
 format-context option, no collision — T4 m1). Composition, in order (T3 M7 — each step
 surfaces errors; a failed step fails the compact and reports where it stopped):
 
+0. **Runtime pragma verification (T4 delta-8 MAJOR-1)** — read `PRAGMA secure_delete` on
+   the connection compact is about to use; if it is not `1`, re-assert it and read back, or
+   fail the compact with a `compact_secure_delete_off` diagnostic marking erasure
+   **unverified**. Rationale: the pragma is load-bearing (scenario H: without it even
+   `'rebuild'` leaves text in freed pages) and setup()-time set-and-read-back does not
+   survive a host flipping it OFF on the shared connection afterward — the spec's own
+   H-mirror test demonstrates exactly that flip — nor does the setup-time pragma cover an
+   adapter that multiplexes more than one underlying connection (it may have landed on a
+   different handle; the single-connection adapter assumption is stated beside
+   INTENT.md:137). Without step 0, every step can succeed, both checkpoints can report
+   complete, and the report claims erasure while the canary sits in freed pages and
+   `%_data` — the false success the T3 M7 contract forbids. Test: flip the pragma OFF
+   after setup, call `compact()`, assert the step-0 failure instead of success.
+
 1. **Per-entity prune** with `retainSoftDeletedFor: 0` **and `retainEventsFor: null`** — events
    are genuinely **kept** by compact (T3 delta-6 MAJOR-2: the engine default is
    `pruneEventsAfter ?? 30` (`MaintenanceService.ts:254`), which silently deletes events older
@@ -121,7 +135,10 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    (`JobManager.ts:3-14`) or `WikiBusyOperation` (`types.ts:1209-1218`), and `acquireLock` is
    a hand-written per-operation switch (`JobManager.ts:190-299`) — the `'*'` at
    `MaintenanceService.ts:530-531` is two distinct operations (`'reembed'`/`'global_reembed'`),
-   each with its own branch. So: **add `'compact'` to both enums**; `acquireLock`/`releaseLock`
+   each with its own branch. So: **add `'compact'` to both enums** (the `WikiBusyOperation` union widening is a
+   **prerequisite of this section**, not just a release note — the universal pre-check's
+   `WikiBusyError('compact', '*')` does not type-check without it; cross-ref from the
+   Release section, T4 delta-8 m6); `acquireLock`/`releaseLock`
    gain a `'compact'` case — and, **instead of per-arm compact checks (T4 delta-4 MAJOR-1: the
    rev-21 per-arm enumeration missed `global_reembed`, `JobManager.ts:236-247`, and any future
    arm), ONE universal pre-check beside the `global_import` pre-check
@@ -142,13 +159,19 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    (`WriteService.ts:149-150`), has `acquireLock('librarian')` throw at `:172`, and rolls
    the checkpoint back in a **second, unlocked** transaction (`:189-192`) — extra unfenced
    transactions in exactly the window step 5's VACUUM is most exposed; the heal branch at
-   `:194` behaves the same. Test: `write()` during compact neither advances nor rolls back
+   `:194` behaves the same. The mirror uses the **simpler form**
+   `operation !== 'compact' && this.activeMaintenanceJobs.has(this._compactKey())` —
+   `isBlocked(operation, entityId)` (`JobManager.ts:332`) carries no `owner` parameter, and
+   it is consulted only for `librarian`/`heal` from `write()`, so the compact-owned-prune
+   exemption cannot arise there (T4 delta-8 m2). Test: `write()` during compact neither advances nor rolls back
    the memory checkpoint. The `'compact'` arm self-checks first (a second
    concurrent `compact()` throws `WikiBusyError('compact', '*')` — mirroring the self-key
-   check that opens `global_reembed`'s arm, `JobManager.ts:237`; T4 delta-4 m2) and mirrors
-   the `global_import` pre-check so compact refuses to start during a global import (the
-   pairing is bidirectional: a global import refuses during compact via the universal
-   pre-check). The `WikiBusyError` construction (`JobManager.ts:295-298`) passes `'*'` only
+   check that opens `global_reembed`'s arm, `JobManager.ts:237`; T4 delta-4 m2) and
+   **inherits** — not mirrors — the `global_import` pre-check so compact refuses to start
+   during a global import: the existing pre-check (`JobManager.ts:193`) fires for every
+   operation **except** `global_import`, including `compact`, so no new code is needed
+   there (T4 delta-8 m5; the pairing is bidirectional: a global import refuses during
+   compact via the universal pre-check). The `WikiBusyError` construction (`JobManager.ts:295-298`) passes `'*'` only
    for the two global ops — add `'compact'` there so `WikiBusyError('compact', '*')` actually
    carries `'*'`. **Compact's acquisition rule (T4 delta-3 MAJOR-2):** compact starts with
    `acquireLock('compact', '*')`, and the `'compact'` arm mirrors `global_reembed`'s
@@ -175,7 +198,12 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    inline librarian at `:172`), and the setup-time external-deletion drain runs unlocked
    short transactions on the shared connection for up to 10 s (guide 108-113). These paths
    are **not fenced**: a write transaction open between compact's steps 4 and 5 makes step
-   5's VACUUM throw "cannot VACUUM from within a transaction". That failure is a **reported,
+   5's VACUUM throw "cannot VACUUM from within a transaction". **Already-queued
+   `syncChain` work (T4 delta-8 m4):** step 3's passage drain chains on `this.syncChain`
+   (`SearchService.ts:349-357` — every rebuild queued on that chain runs unlocked), so
+   compact **awaits the full chain**, draining a rebuild queued before compact started
+   before step 5; any **new** chain entries created mid-compact by unfenced writes fall
+   under the same reported, retryable step-5 failure. That failure is a **reported,
    retryable step failure** under the T3 M7 semantics: compact has pruned but **not erased**,
    the report says exactly that (bytes may remain in freed pages/`%_data`), and the host
    re-runs compact — it is never a false success. (§5's concurrent-`remember` caveat is the
@@ -217,7 +245,12 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    delta-7 MAJOR-1; owner question G):**
    compact hard-deletes **all** `source_ref_index` tombstones in one store-wide statement —
    `DELETE FROM source_ref_index WHERE deleted_at IS NOT NULL` — **not** per enumerated
-   entity: step 1 enumerates only entities holding soft-deleted entries/tasks/events past
+   entity, and **only after a `sourceRefIndexPresent(tx)` probe** (mirroring `clearAll`'s
+   guard, `MaintenanceService.ts:640-643`): a pre-v9 store lacks the table, and under a
+   `refuse`/`auto` migration gate it can reach runtime — without the probe, step 1b throws
+   "no such table" and fails every compact on that store (T4 delta-8 m1; skip with a
+   diagnostic when absent). Per-entity scoping would be wrong:
+   step 1 enumerates only entities holding soft-deleted entries/tasks/events past
    the cutoff, so an entity whose facts a prior 7-day `runPrune` already hard-deleted (the
    forget → sweep path; every re-ingest also tombstones its prior row,
    `IngestionService.ts:749`) is never enumerated, and per-entity scoping would leave that
@@ -262,14 +295,22 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    host whose FTS5 availability probe failed, `Fts5IndexStrategy` is never instantiated and
    `DROP TABLE` on a virtual table without its module throws `no such module: fts5` — both
    recorded in the code (`Fts5IndexStrategy.ts:109-113`, `createIndexStrategy.ts:54-58`;
-   `delistRetired(name, true)` at `:453-455` issues the bare `DROP`). So on that runtime
+   `delistRetired(name, true)` at `:454-457` issues the bare `DROP` at `:456`; T4 delta-8
+   m5). So on that runtime
    step 4 **cannot use `DROP`** and **cannot live in `Fts5IndexStrategy`** (see Files
    touched): compact runs a **module-independent fallback** — `DELETE FROM` each retired
    table's plain shadow tables (`<name>_content`, `<name>_data`, `<name>_idx`,
-   `<name>_docsize`) under the `secure_delete` pragma (the row content is the erasure
+   `<name>_docsize`, `<name>_config` — it holds no text but is listed for completeness,
+   T4 delta-8 m3) under the `secure_delete` pragma (the row content is the erasure
    target; the virtual-table shell is inert), **keep the retired name listed**, and surface
    a `compact_retired_vtab_undroppable` diagnostic; a later FTS5-capable open's step 4
-   completes the `DROP`. Skipping the fallback is the exact false-success the T3 M7
+   completes the `DROP`. **Hollowed-shell expectation (T4 delta-8 m3):** after the
+   `_data` delete the retired table's structure record is gone, so the ordinary open
+   path's read (`SELECT rowid FROM ${name} LIMIT 1`, `Fts5IndexStrategy.ts:437`) raises
+   `SQLITE_CORRUPT_VTAB` — that is **designed**, not accidental: `reclaimRetired`'s
+   corruption-class catch (`:421-428`) is the exit that performs the `DROP`. State it so an
+   implementer does not "fix" the corruption error, and compact's own step 4 must `DROP`
+   without reading first. Skipping the fallback is the exact false-success the T3 M7
    contract forbids — compact would "succeed" while the retired shadows keep verbatim fact
    text that VACUUM copies intact. Test: no-FTS runtime with an `entries_fts_retired_N`
    present → shadow tables empty, name still listed, diagnostic surfaced. **Re-run after
