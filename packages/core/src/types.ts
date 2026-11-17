@@ -1402,6 +1402,14 @@ export class WikiTransactionError extends Error {
 /** Selectors for {@link WikiMemory.forget}. `clearAll` excludes the other selectors. */
 export interface ForgetParams {
   entryId?: string;
+  /**
+   * With `entryId` only: also forget the entry's supersession chain (every
+   * predecessor and successor reached by walking `superseded_by` links, capped
+   * at 100 per direction). The walk is NOT the connected component: with
+   * fan-in A→C←B, forgetting A reaches C but not B. The forward walk deletes
+   * the live current fact. Does not compose with other selectors.
+   */
+  includeChain?: boolean;
   taskId?: string;
   sourceRef?: string;
   sourceHash?: string;
@@ -1419,6 +1427,12 @@ export interface ForgetParams {
 export interface ForgetResult {
   deleted: { entries: number; tasks: number; events?: number };
   metadataReset?: boolean;
+  /** With `includeChain`: the chain ids forgotten alongside `entryId` (excludes `entryId`). */
+  chainEntryIds?: string[];
+  /** With `includeChain`: true when the walk hit the depth cap and the chain was cut short. */
+  truncated?: boolean;
+  /** Present with `truncated`: the depth-cap notice. */
+  notice?: string;
 }
 
 /**

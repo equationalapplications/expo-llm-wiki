@@ -5,6 +5,9 @@ import { validateClassifierAnswer, classifierStateForFact, type ClassifierReject
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
+import { HISTORY_MAX_DEPTH } from './TemporalService';
+
+const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
@@ -894,6 +897,9 @@ export class MaintenanceService {
     if (params.includeEvents && !params.clearAll) {
       throw new Error('forget() includeEvents requires clearAll: true');
     }
+    if (params.includeChain && (params.entryId === undefined || params.clearAll || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
+      throw new Error('forget() includeChain composes only with entryId');
+    }
 
     // Dry-run: read-only, no lock, no outbox events, no embedding hooks.
     if (opts?.dryRun === true) {
@@ -907,6 +913,8 @@ export class MaintenanceService {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      let chainIds: string[] = [];
+      let chainTruncated = false;
       const deletedEntryIds: string[] = [];
       // A store whose setup() never ran has no ledger table (#316 recovery).
       const ledgerOn = !!this.vectorRemoval && !!this.vectorRemovalRepo && await this.vectorRemoval.ledgerPresent();
@@ -966,6 +974,12 @@ export class MaintenanceService {
           if (params.entryId) {
             const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
             if (entryId) deletedEntryIds.push(entryId);
+            if (entryId && params.includeChain) {
+              const walk = await this.entryRepo.findSupersessionChainWalk(entityId, entryId, HISTORY_MAX_DEPTH, tx);
+              chainIds = walk.ids.filter((id) => id !== entryId);
+              chainTruncated = walk.truncated;
+              for (const id of chainIds) deletedEntryIds.push(id);
+            }
           }
 
           if ((sourceRef || sourceHash) && await this.sourceStorePresent(tx)) {
@@ -1008,6 +1022,9 @@ export class MaintenanceService {
           ]);
 
           if (entryResult) deletedEntries++;
+          for (const id of chainIds) {
+            if ((await this.entryRepo.softDelete(id, entityId, tx)).changes > 0) deletedEntries++;
+          }
           if (taskResult) deletedTasks++;
           deletedEntries += refResult;
         }
@@ -1076,7 +1093,17 @@ export class MaintenanceService {
         }
       }
 
-      if (!params.clearAll) return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      if (!params.clearAll) {
+        const base: ForgetResult = { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+        if (params.includeChain) {
+          base.chainEntryIds = chainIds;
+          if (chainTruncated) {
+            base.truncated = true;
+            base.notice = CHAIN_TRUNCATED_NOTICE;
+          }
+        }
+        return base;
+      }
       return params.includeEvents
         ? { deleted: { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents }, metadataReset: true }
         : { deleted: { entries: deletedEntries, tasks: deletedTasks }, metadataReset: true };
@@ -1156,8 +1183,20 @@ export class MaintenanceService {
     // forget() before dispatching here. forgetDryRun is private and unreachable
     // for callers that violate that contract, so it does not re-validate.
 
+    if (params.entryId !== undefined && params.includeChain && params.taskId === undefined) {
+      const id = await this.entryRepo.findIdById(params.entryId, entityId);
+      if (!id) return { deleted: { entries: 0, tasks: 0 }, chainEntryIds: [] };
+      const walk = await this.entryRepo.findSupersessionChainWalk(entityId, id, HISTORY_MAX_DEPTH);
+      const chainEntryIds = walk.ids.filter((c) => c !== id);
+      const out: ForgetResult = { deleted: { entries: 1 + chainEntryIds.length, tasks: 0 }, chainEntryIds };
+      if (walk.truncated) {
+        out.truncated = true;
+        out.notice = CHAIN_TRUNCATED_NOTICE;
+      }
+      return out;
+    }
     if (params.entryId !== undefined || params.taskId !== undefined) {
-      throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors; use sourceRef/sourceHash or clearAll');
+      throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors (entryId is accepted only with includeChain); use sourceRef/sourceHash or clearAll');
     }
 
     if (params.clearAll) {

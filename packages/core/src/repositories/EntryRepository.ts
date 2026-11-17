@@ -1082,6 +1082,26 @@ export class EntryRepository extends BaseRepository {
     return new Set(rows.map((r) => r.id));
   }
 
+  /**
+   * Depth-aware supersession walk for chain forget (spec forget-erasure §3).
+   * Probes `maxDepth + 1` levels so a chain longer than the cap is detectable;
+   * the returned ids are capped to `maxDepth` per direction (nearest first).
+   * No `deleted_at` filter: soft-deleted links still carry the chain.
+   */
+  async findSupersessionChainWalk(
+    entityId: string,
+    factId: string,
+    maxDepth: number,
+    tx?: SQLiteAdapter,
+  ): Promise<{ ids: string[]; truncated: boolean }> {
+    const { predecessors, successors } = await this.findSupersessionChainIds(entityId, factId, maxDepth + 1, tx);
+    const truncated = predecessors.length > maxDepth || successors.length > maxDepth;
+    // predecessors are ordered farthest-first, so the nearest are at the end.
+    const pred = predecessors.length > maxDepth ? predecessors.slice(predecessors.length - maxDepth) : predecessors;
+    const succ = successors.slice(0, maxDepth);
+    return { ids: Array.from(new Set([...succ, ...pred])), truncated };
+  }
+
   async findSupersessionChainIds(
     entityId: string,
     factId: string,
