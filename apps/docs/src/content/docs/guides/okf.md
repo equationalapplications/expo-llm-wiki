@@ -124,6 +124,11 @@ writes it back from the dump's `edges`.
   and a malformed map is dropped at parse time: `parseOkfBundle` reports it in
   `dropped_pointer_values` instead of failing — check that field on hosts you import into.
   The `source_pointer_invalid` diagnostic fires only on the JSON dump-import path.
+- Stored source text (added in 9.2.0): `exportDump()` embeds each entity's stored sources as
+  `storedSources` (text, hashes, and the passage offsets). `importDump()` re-cuts the passages
+  from the text, so the dumped offsets are fidelity information only, and returns
+  `{ skippedSources: [{ sourceRef, code }] }` listing sources the import refused. Check it the same
+  way you check `dropped_pointer_values`. See [Source text store](/expo-llm-wiki/guides/source-store/#delete-and-dump).
 
 ## OKF across the ecosystem
 
