@@ -247,7 +247,20 @@ export class MaintenanceService {
   private edgeRepo: EdgeRepository;
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
-    this.jobManager.acquireLock('prune', entityId);
+    return this._runPrune(entityId, options, 'host');
+  }
+
+  /**
+   * Shared prune body. `owner: 'erase'` lets erase()'s own per-entity prune
+   * through the universal erase fence in JobManager; the public `runPrune`
+   * always passes `'host'`.
+   */
+  private async _runPrune(
+    entityId: string,
+    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean } | undefined,
+    owner: 'host' | 'erase',
+  ): Promise<{ entries: number; tasks: number; events: number }> {
+    this.jobManager.acquireLock('prune', entityId, undefined, owner);
 
     try {
       const retainSoftDeletedFor = options?.retainSoftDeletedFor !== undefined ? options.retainSoftDeletedFor : (this.options.config?.pruneRetainSoftDeletedFor ?? 7);

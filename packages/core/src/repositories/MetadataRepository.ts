@@ -182,9 +182,26 @@ export class MetadataRepository extends BaseRepository {
    * soft-deleted, so the host's maintenance sweep can visit such
    * "decommissioned-scope" namespaces and reap the soft-deleted rows. Sorting
    * is `entity_id COLLATE BINARY` for stable, locale-independent ordering.
+   *
+   * With `opts.softDeletedAtOrBefore` the walk is narrowed to entities holding
+   * at least one soft-deleted entry or task with `deleted_at` at or before
+   * that cutoff (erase's hard-delete walk, forget-erasure spec §2). Without
+   * the option the host-facing semantics above are unchanged.
    */
-  async getDistinctEntityIds(tx?: SQLiteAdapter): Promise<string[]> {
+  async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number }): Promise<string[]> {
     const executor = this.getExecutor(tx);
+    if (opts?.softDeletedAtOrBefore !== undefined) {
+      const cutoff = opts.softDeletedAtOrBefore;
+      const rows = await executor.getAllAsync<{ entity_id: string }>(
+        `SELECT DISTINCT entity_id FROM (
+           SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+           UNION
+           SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+         ) ORDER BY entity_id COLLATE BINARY`,
+        [cutoff, cutoff],
+      );
+      return rows.map(r => r.entity_id);
+    }
     const rows = await executor.getAllAsync<{ entity_id: string }>(
       `SELECT DISTINCT entity_id FROM (
          SELECT entity_id FROM ${this.prefix}entries

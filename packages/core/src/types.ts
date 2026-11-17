@@ -1205,6 +1205,10 @@ export interface EntityStatus {
  * and `'forget'` were added in v3.0. `'ontologyBackfill'` was added afterward.
  * Exhaustive `switch` / narrowing on this type must be updated (or given a
  * `default` arm) to compile without errors.
+ *
+ * `'erase'` was added by a MINOR release (forget-erasure spec §2, ruling F).
+ * Exhaustive switches over this type must add a `default` arm; widening this
+ * union rides the MINOR by policy and does not recur as a breaking change.
  */
 export type WikiBusyOperation =
   | 'ingest'
@@ -1215,7 +1219,8 @@ export type WikiBusyOperation =
   | 'import'
   | 'forget'
   | 'ontologyBackfill'
-  | 'store';
+  | 'store'
+  | 'erase';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.
