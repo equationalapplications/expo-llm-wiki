@@ -85,6 +85,29 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(t.diagnostics.some((d) => d.code === 'erase_retired_vtab_undroppable')).toBe(true);
   });
 
+  it('F1: a minisearch-strategy store still empties listed retired shadow tables and flags them', async () => {
+    const raw = openTestDatabase();
+    const diagnostics: WikiDiagnostic[] = [];
+    const wiki = new WikiMemory(raw, {
+      llmProvider: llm, config: { indexStrategy: 'minisearch' },
+      onDiagnostic: (d: WikiDiagnostic) => { diagnostics.push(d); },
+    } as WikiOptions);
+    await wiki.setup();
+    const meta = new MetadataRepository(raw, P);
+    const name = `${P}entries_fts_retired_1`;
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      await raw.execAsync(`CREATE TABLE ${name}${sfx} (k INTEGER, v TEXT); INSERT INTO ${name}${sfx} VALUES (1, 'canary');`);
+    }
+    await meta.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify([name]));
+    const report = await maint(wiki).erase();
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      expect((await raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${name}${sfx}`))!.n, sfx + JSON.stringify(report)).toBe(0);
+    }
+    expect(JSON.parse((await meta.getMeta(FTS5_RETIRED_TABLES_KEY)) ?? '[]')).toEqual([name]);
+    expect(report.retiredUndroppable).toEqual([name]);
+    expect(diagnostics.some((d) => d.code === 'erase_retired_vtab_undroppable')).toBe(true);
+  });
+
   it('a non-module reclaim failure is a failed step, not a fallback', async () => {
     const t = await make();
     vi.spyOn(search(t.wiki), 'reclaimRetiredSurfaced').mockRejectedValue(new Error('disk I/O error'));

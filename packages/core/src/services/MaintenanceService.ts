@@ -30,6 +30,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
+import { FTS5_RETIRED_TABLES_KEY, isRetiredTableName } from './search/fts5Sql';
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
@@ -496,8 +497,15 @@ export class MaintenanceService {
         }
       }
 
+      let vacuumCheckpointErr: CheckpointIncompleteError | undefined;
       if (vacuum) {
-        await this._wrappedVacuum();
+        try {
+          await this._wrappedVacuum();
+        } catch (err) {
+          // Deferred: the sync hand-off and partial-failure reporting below must still happen.
+          if (!(err instanceof CheckpointIncompleteError)) throw err;
+          vacuumCheckpointErr = err;
+        }
       }
 
       // Output param (erase step 6): filled before anything below can throw.
@@ -509,6 +517,7 @@ export class MaintenanceService {
           deletedEntries, prunePartial.failedAt, prunePartial.remaining, prunePartial.cause, deletedTasks, deletedEvents,
         );
       }
+      if (vacuumCheckpointErr) throw vacuumCheckpointErr;
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.jobManager.releaseLock('prune', entityId);
@@ -519,9 +528,17 @@ export class MaintenanceService {
   private async _wrappedVacuum(): Promise<void> {
     // VACUUM may renumber rowids; a watermark must never survive it.
     await resetNormalizeWatermarks(this.metadataRepo);
-    await this.metadataRepo.vacuum();
+    let checkpointErr: unknown;
+    try {
+      await this.metadataRepo.vacuum();
+    } catch (err) {
+      // VACUUM already renumbered rowids when the post-VACUUM checkpoint was incomplete: the restart must still run.
+      if (!(err instanceof CheckpointIncompleteError)) throw err;
+      checkpointErr = err;
+    }
     // After it, so the restarted FTS rebuild snapshots the renumbered rowids (spec #280 7(k)).
     await restartRebuildAfterVacuum(this.db, this.prefix, this.metadataRepo);
+    if (checkpointErr) throw checkpointErr;
   }
 
   /**
@@ -630,19 +647,8 @@ export class MaintenanceService {
       }
       ok('index_sync');
 
-      // Step 4 re-run (cheap when empty); nothing may stay retired except the module-less, emptied tables.
-      await this._eraseReclaimRetired(report);
-      const left = (await this.searchService.retiredTables()).filter((n) => !report.retiredUndroppable.includes(n));
-      if (left.length > 0) {
-        report.failedStep = 'retired_reclaim';
-        emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } });
-        throw new EraseStepError('erase_retired_remaining', `erase stopped after step 6: retired FTS tables remain (${left.join(', ')})`, report);
-      }
-      ok('retired_reclaim_rerun');
-
-      // Step 7: optimize; `rebuild` is the escape hatch (resetAndRearm).
-      await this._eraseOptimize(report);
-      ok('optimize');
+      // Step 7 rebuild escape hatch REPLACES optimize (a corrupt index would fail optimize) and runs
+      // before the step-4 re-run, so the entries_fts_retired_N it creates is reclaimed there.
       if (rebuild) {
         try {
           await this.searchService.rebuildSurfaced();
@@ -651,6 +657,22 @@ export class MaintenanceService {
           throw new EraseStepError('erase_rebuild_failed', 'erase stopped at step 7: FTS rebuild failed', report, err);
         }
         ok('rebuild');
+      }
+
+      // Step 4 re-run (cheap when empty); nothing may stay retired except the module-less, emptied tables.
+      await this._eraseReclaimRetired(report);
+      const left = (await this._retiredList()).filter((n) => !report.retiredUndroppable.includes(n));
+      if (left.length > 0) {
+        report.failedStep = 'retired_reclaim';
+        emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } });
+        throw new EraseStepError('erase_retired_remaining', `erase stopped after step 6: retired FTS tables remain (${left.join(', ')})`, report);
+      }
+      ok('retired_reclaim_rerun');
+
+      // Step 7: optimize (skipped entirely when `rebuild` ran above).
+      if (!rebuild) {
+        await this._eraseOptimize(report);
+        ok('optimize');
       }
 
       // Step 8: final checkpoint, verified.
@@ -663,7 +685,7 @@ export class MaintenanceService {
 
       ok('checkpoint');
       // Skipped entities were not erased: honest report, never a verified success.
-      report.verified = report.skipped.length === 0;
+      report.verified = report.skipped.length === 0 && report.holds.length === 0;
       return report;
     } catch (err) {
       if (err instanceof EraseStepError && err.report === report && report.failedStep) {
@@ -681,6 +703,7 @@ export class MaintenanceService {
   /** Step 3: chained, surfaced passage drain (no deadline). */
   async _eraseDrainPassages(report: EraseReport): Promise<void> {
     try {
+      await this.searchService.drainEntriesLedgerSurfaced();
       await this.searchService.drainPassagesSurfaced();
     } catch (err) {
       report.failedStep = 'passage_drain';
@@ -695,17 +718,20 @@ export class MaintenanceService {
    * stays listed; a later FTS5-capable open's step 4 completes the DROP.
    */
   async _eraseReclaimRetired(report: EraseReport): Promise<void> {
-    try {
-      await this.searchService.reclaimRetiredSurfaced();
-      return;
-    } catch (err) {
-      if (!/no such module/i.test(err instanceof Error ? err.message : String(err))) {
-        report.failedStep = 'retired_reclaim';
-        throw new EraseStepError('erase_retired_reclaim_failed', 'erase stopped at step 4: retired FTS table reclaim failed', report, err);
+    // Strategies without reclaim (MiniSearch / Unavailable) cannot DROP: go straight to the shadow-table clear.
+    if (this.searchService.canReclaimRetired()) {
+      try {
+        await this.searchService.reclaimRetiredSurfaced();
+        return;
+      } catch (err) {
+        if (!/no such module/i.test(err instanceof Error ? err.message : String(err))) {
+          report.failedStep = 'retired_reclaim';
+          throw new EraseStepError('erase_retired_reclaim_failed', 'erase stopped at step 4: retired FTS table reclaim failed', report, err);
+        }
       }
     }
     try {
-      for (const name of await this.searchService.retiredTables()) {
+      for (const name of await this._retiredList()) {
         for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
           if (await this.sourceTableExists(`${name}${sfx}`)) await this.db.runAsync(`DELETE FROM ${name}${sfx}`);
         }
@@ -716,6 +742,17 @@ export class MaintenanceService {
       report.failedStep = 'retired_reclaim';
       throw new EraseStepError('erase_retired_reclaim_failed', 'erase stopped at step 4: module-less shadow-table clear failed', report, err);
     }
+  }
+
+  /** Retired list straight from metadata (same key Fts5IndexStrategy maintains), independent of the active strategy. */
+  private async _retiredList(): Promise<string[]> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse((await this.metadataRepo.getMeta(FTS5_RETIRED_TABLES_KEY)) ?? '[]');
+    } catch {
+      return [];
+    }
+    return Array.isArray(raw) ? raw.filter((n): n is string => isRetiredTableName(this.prefix, n)) : [];
   }
 
   private sourceTableExists(name: string): Promise<boolean> {
@@ -1188,7 +1225,13 @@ export class MaintenanceService {
       if (!id) return { deleted: { entries: 0, tasks: 0 }, chainEntryIds: [] };
       const walk = await this.entryRepo.findSupersessionChainWalk(entityId, id, HISTORY_MAX_DEPTH);
       const chainEntryIds = walk.ids.filter((c) => c !== id);
-      const out: ForgetResult = { deleted: { entries: 1 + chainEntryIds.length, tasks: 0 }, chainEntryIds };
+      // Count only live rows: already-soft-deleted chain members would not be deleted by a real call.
+      const all = [id, ...chainEntryIds];
+      const live = await this.db.getFirstAsync<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND id IN (${all.map(() => '?').join(',')})`,
+        [entityId, ...all],
+      );
+      const out: ForgetResult = { deleted: { entries: live?.n ?? 0, tasks: 0 }, chainEntryIds };
       if (walk.truncated) {
         out.truncated = true;
         out.notice = CHAIN_TRUNCATED_NOTICE;

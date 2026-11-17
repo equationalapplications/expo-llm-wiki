@@ -25,7 +25,7 @@ recall — a lesser model navigating a well-built graph outperforms a cleverer m
 
 **Episodic memory** — the event log. Every observation, decision, action, and outcome is kept as
 an event; facts are (re)derived from it. Events are the engine's rebuild-from-history
-mechanism, which is why erasure keeps them by default (see [Erase](#erase) below).
+mechanism, which is why erasure keeps them (the only path that deletes events is `clearAll`; see [Erase](#erase) below).
 
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is
 kept verbatim with provenance, cut into passages with character offsets, and never merged
@@ -48,7 +48,7 @@ forgotten, forgotten facts age into gone, on the host's schedule. It is not an e
 see [Erase](#erase).
 
 **Erase** — takes every forgotten fact in scope past gone: bytes unrecoverable, verified by
-reading the database file back, with a report naming each step's outcome. Always on at full
+the pragma state, the checkpoint result and each step's outcome, with a report naming each step's outcome. Always on at full
 strength; no opt-out. Ships with the forget-erasure work in this release — see
 [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 

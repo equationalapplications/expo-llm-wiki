@@ -378,6 +378,18 @@ export class SearchService {
     return s.retiredTables ? s.retiredTables() : [];
   }
 
+  /** True when the active strategy can DROP retired tables (FTS5); false for MiniSearch / Unavailable. */
+  canReclaimRetired(): boolean {
+    return typeof (this.indexStrategy as unknown as { reclaimRetiredToCompletion?: unknown }).reclaimRetiredToCompletion === 'function';
+  }
+
+  /** Erase step 3: store-wide entries-side fts_pending drain on the sync chain, no deadline, errors surfaced. */
+  drainEntriesLedgerSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { drainEntriesLedgerStrict?: () => Promise<void> };
+    if (!s.drainEntriesLedgerStrict) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.drainEntriesLedgerStrict!());
+  }
+
   /** Erase step 4: reclaim retired tables to completion; errors surfaced. */
   reclaimRetiredSurfaced(): Promise<void> {
     const s = this.indexStrategy as unknown as { reclaimRetiredToCompletion?: () => Promise<void> };

@@ -259,6 +259,7 @@ export class ImportExportService {
     const softDeletedFactIds: string[] = [];
     const clippedTextByFactId = new Map<string, { title: string; body: string }>();
     let clampedEvents = 0;
+    let tombstoneSkipped = 0;
     const restamped = { behind_watermark: 0, invalid: 0 };
 
     await this.db.withTransactionAsync(async (tx) => {
@@ -389,7 +390,10 @@ export class ImportExportService {
             existing.deleted_at != null &&
             !fact.deleted_at &&
             !wipedByThisImport.has(fact.id)
-          ) continue;
+          ) {
+            tombstoneSkipped++;
+            continue;
+          }
           if (merge && safeUpdatedAt <= existing.updated_at && !fact.deleted_at) continue;
         }
 
@@ -635,6 +639,12 @@ export class ImportExportService {
     // Committed: only now may the host hear about refusals (a failed commit emits nothing).
     for (const d of refusalDiagnostics) emitDiagnostic(this.options, d);
 
+    if (tombstoneSkipped > 0) {
+      emitDiagnostic(this.options, {
+        code: 'import_tombstone_skipped', operation: 'importDump', trigger: 'call', entityId,
+        detail: { count: tombstoneSkipped },
+      });
+    }
     if (clampedEvents > 0) {
       emitDiagnostic(this.options, {
         code: 'event_created_at_clamped', operation: 'importDump', trigger: 'call', entityId,

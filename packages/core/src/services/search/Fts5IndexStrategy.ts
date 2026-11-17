@@ -436,6 +436,16 @@ export class Fts5IndexStrategy implements IndexStrategy {
     await this.drainPassages({});
   }
 
+  /**
+   * Erase step 3 (entries side): drain the trigger-fed `fts_pending` ledger store-wide to
+   * empty, no deadline, errors surfaced; throws if rows remain afterwards.
+   */
+  async drainEntriesLedgerStrict(): Promise<void> {
+    while (await this.drainLedgerChunk());
+    const left = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${this.prefix}fts_pending LIMIT 1`);
+    if (left !== null && left !== undefined) throw new Error('entries FTS ledger still has pending rows after drain');
+  }
+
   /** Erase step 7: FTS 'optimize' on each FTS table that exists. */
   async optimizeFts(): Promise<void> {
     const p = this.prefix;

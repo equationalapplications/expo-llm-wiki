@@ -64,7 +64,7 @@ describe('erase() prune core (spec §2 steps 0/1/1b)', () => {
     expect(ids).toEqual(['a']);
     expect(report.holds).toHaveLength(1);
     expect(report.holds[0]).toMatchObject({ entityId: 'e1', failedAt: 'a', remaining: 1 });
-    expect(report.verified).toBe(true);
+    expect(report.verified).toBe(false); // a hold leaves soft-deleted text in the file
   });
 
   it('AC2: events are never deleted and no event_retention_held diagnostic fires', async () => {

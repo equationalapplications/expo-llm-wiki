@@ -48,13 +48,15 @@ slow on mobile.
 guarantees the bytes are gone from the database *file* — SQLite marks freed pages for reuse
 without overwriting them, so deleted text can linger until the pages happen to be reused.
 `erase()` closes that gap. It takes every forgotten fact in scope past gone — bytes
-unrecoverable, verified by reading the database file back — and returns an erasure report
+unrecoverable, verified by the pragma state, the checkpoint result and each step's outcome — and returns an erasure report
 naming each step's outcome, skipped entities and holds, and whether erasure is verified.
 
 ```ts
 await wiki.forget('user-123', { entryId: 'fact_abc' });
 await wiki.erase();
 ```
+
+A failed erase throws `EraseStepError` carrying the report with `verified: false`; it, the `EraseReport` type and `CheckpointIncompleteError` are importable from the package. A hold (an external removal that could not be confirmed) also leaves `verified: false`.
 
 That is the whole recipe. **Do not add a standalone `runPrune()` step.** `erase()`'s first step
 already prunes the facts it is about to erase with `retainSoftDeletedFor: 0` and

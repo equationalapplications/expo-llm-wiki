@@ -89,6 +89,9 @@ describe('erase() orchestration + report (spec §2/§8)', () => {
     expect(report.steps.find((s) => s.step === 'rebuild')?.outcome).toBe('ok');
     const state = await raw.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = ?`, [FTS5_STATE_KEY]);
     expect(state?.value).toBe('rebuilding');
+    expect(report.steps.some((s) => s.step === 'optimize')).toBe(false); // rebuild replaces optimize
+    const retired = await raw.getAllAsync(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts_retired_%'`);
+    expect(retired).toEqual([]);
   });
 
   it('AC4: a forced checkpoint failure reports where it stopped, verified false', async () => {

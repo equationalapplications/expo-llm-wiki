@@ -39,6 +39,8 @@ const dump = parseOkfBundle('user-123', files, {
 await wiki.importDump(dump, { merge: true });
 ```
 
+A restore will not resurrect facts forgotten locally (forget wins): such rows are skipped, and an `import_tombstone_skipped` diagnostic reports the count.
+
 Without `merge: true`, `importDump` replaces the entity: it soft-deletes the entity's facts and
 tasks and deletes its edges before importing. Stored events are kept.
 

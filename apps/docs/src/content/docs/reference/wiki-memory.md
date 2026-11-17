@@ -74,7 +74,10 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `traverseGraph(entityId, GraphTraversalOptions)` | `Promise<{ nodes, edges }>` | [GraphRAG](/expo-llm-wiki/guides/graphrag/) |
 | `history(entityId, factId)` | `Promise<WikiFact[]>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
 | `getMemoryBundle(entityId)` | `Promise<MemoryBundle>` | All non-deleted facts, tasks and edges, plus the 10 newest events. Use `exportDump()` for a full copy |
-| `exportDump(entityIds?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/) |
+| `exportDump(entityIds?, { includeForgotten? }?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/). Forgotten (soft-deleted) rows are excluded unless `includeForgotten: true` |
+| `erase()` | `Promise<EraseReport>` | Verified erasure of every forgotten fact in scope (events are kept). A failure throws `EraseStepError` carrying the report with `verified: false`. See [Deleting data](/expo-llm-wiki/guides/deleting-data/) |
+| `erase({ rebuild: true })` | `Promise<EraseReport>` | As `erase()`, but rebuilds the entries FTS index instead of running `optimize`; the retired index table is reclaimed before the final checks |
+| `getRetentionPolicy()` | `{ retainSoftDeletedFor, retainEventsFor, pruneSupersededAfter }` | The retention this instance applies, in days (`null` = keep forever). Read-only, for disclosure |
 | `getEntitySummary(entityId)` | `Promise<string \| null>` | |
 
 ## Change detection & inventory
@@ -122,6 +125,7 @@ with a matching hash (`{ charCount }`), text stored under a stale hash
 | Method | Returns |
 |---|---|
 | `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>`. A `sourceRef`/`sourceHash` forget also hard-deletes the matching stored text and passages in the same transaction; `clearAll` deletes the entity's whole store. |
+| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's whole supersession chain; the dry run counts only live entries in `deleted.entries` |
 
 ## Ontology
 
