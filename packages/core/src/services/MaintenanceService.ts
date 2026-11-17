@@ -21,7 +21,7 @@ import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRep
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import { anchorAtLegacyBoundary, seedLegacyWatermark } from './legacyWatermark';
-import { entitySummaryMetaKey, START_OF_LOG_WATERMARK, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
+import { CheckpointIncompleteError, entitySummaryMetaKey, START_OF_LOG_WATERMARK, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -236,7 +236,7 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  failedStep: 'secure_delete' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | null;
+  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | null;
 }
 
 /** A failed erase step: carries the partial report (`verified: false`). */
@@ -484,11 +484,7 @@ export class MaintenanceService {
       }
 
       if (vacuum) {
-        // VACUUM may renumber rowids; a watermark must never survive it.
-        await resetNormalizeWatermarks(this.metadataRepo);
-        await this.metadataRepo.vacuum();
-        // After it, so the restarted FTS rebuild snapshots the renumbered rowids (spec #280 7(k)).
-        await restartRebuildAfterVacuum(this.db, this.prefix, this.metadataRepo);
+        await this._wrappedVacuum();
       }
 
       // Output param (erase step 6): filled before anything below can throw.
@@ -504,6 +500,15 @@ export class MaintenanceService {
     } finally {
       this.jobManager.releaseLock('prune', entityId);
     }
+  }
+
+  /** Shared by runPrune and erase step 5. */
+  private async _wrappedVacuum(): Promise<void> {
+    // VACUUM may renumber rowids; a watermark must never survive it.
+    await resetNormalizeWatermarks(this.metadataRepo);
+    await this.metadataRepo.vacuum();
+    // After it, so the restarted FTS rebuild snapshots the renumbered rowids (spec #280 7(k)).
+    await restartRebuildAfterVacuum(this.db, this.prefix, this.metadataRepo);
   }
 
   /**
@@ -538,8 +543,10 @@ export class MaintenanceService {
 
       // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
       report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Date.now() });
+      const syncedByEntity = new Map<string, string[]>();
       for (const entityId of report.entities) {
         const syncedIds: string[] = [];
+        syncedByEntity.set(entityId, syncedIds);
         try {
           await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds }, 'erase');
         } catch (err) {
@@ -572,6 +579,35 @@ export class MaintenanceService {
       }
       if (report.registrySweep.skipped) {
         emitDiagnostic(this.options, { code: 'erase_registry_sweep_skipped', operation: 'erase', trigger: 'call', entityId: '' });
+      }
+
+      // Step 5: wrapped VACUUM (pre/post checkpoints verified inside).
+      try {
+        await this._wrappedVacuum();
+      } catch (err) {
+        if (err instanceof CheckpointIncompleteError) {
+          report.failedStep = 'checkpoint';
+          throw new EraseStepError('erase_checkpoint_incomplete', 'erase stopped at step 5: WAL checkpoint incomplete; erasure is unverified', report, err);
+        }
+        report.failedStep = 'vacuum';
+        throw new EraseStepError('erase_vacuum_failed', 'erase stopped at step 5: VACUUM failed', report, err);
+      }
+
+      // Step 6: index sync for the syncedIds superset, immediately after VACUUM
+      // (deliberately not deduplicated against step 1's internal pass).
+      const byEntity = new Map<string, string[]>();
+      for (const e of report.entities) byEntity.set(e, []);
+      for (const [entityId, ids] of syncedByEntity) byEntity.set(entityId, ids);
+      for (const [entityId, ids] of byEntity) {
+        if (ids.length > 0) await this._eraseSyncEntries(entityId, ids, report);
+      }
+
+      // Step 8: final checkpoint, verified.
+      try {
+        await this.metadataRepo.checkpointTruncateVerified();
+      } catch (err) {
+        report.failedStep = 'checkpoint';
+        throw new EraseStepError('erase_checkpoint_incomplete', 'erase stopped at step 8: WAL checkpoint incomplete; erasure is unverified', report, err);
       }
 
       report.verified = true;
