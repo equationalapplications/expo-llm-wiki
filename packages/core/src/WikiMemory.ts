@@ -424,7 +424,7 @@ export class WikiMemory {
     // Always-on erasure substrate (forget-erasure spec §1, ruling B): no opt-out, no option.
     // secure_delete is connection-wide and ATTACH-wide: it covers every database on this
     // connection. Hosts whose own code writes wiki tables through a different connection
-    // (or re-opens the file) must set `PRAGMA secure_delete=FULL` there too.
+    // (or re-opens the file) must set `PRAGMA secure_delete=ON` there too.
     // A refusal only warns; the honest failure belongs to erase's step 0, not setup.
     // "FULL" is the spec's name for full zeroing; SQLite spells it `ON` (1) — `FULL` is not a
     // SQLite value (reads back 0 on 3.53.4) and `FAST` (2) only zeroes partially.
