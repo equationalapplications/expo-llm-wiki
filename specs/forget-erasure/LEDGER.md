@@ -13,7 +13,7 @@ SDD progress ledger (live): `.superpowers/sdd/forget-erasure/progress.md` (gitig
 | 2026-11-16 | Fable r3 delta | BLOCKED: Claude API 5-h limit, resets 15:30 ET; retry scheduled | $0.0000 |
 | 2026-11-16 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
 
-Lane spend so far: **$27.1063** (all step-0; implementation not started).
+Lane spend so far: **$30.2250** (all spec-stage; implementation not started).
 Baseline gates (worktree): build OK; typecheck OK; unit — core 2565/2566 (idThreading wall-clock flake, 13/13 isolated), mcp-server 135/135, react 76/76, expo 12/12, benchmarks 154/154.
 | 2026-11-16 14:06 | PAUSED: Claude API 5-h limit (resets 15:30 ET) at Fable r3 delta. Handoff: vault `records/handoffs/2026-11-16-handoff-expo-llm-wiki-401-forget-erasure.md` | — | — |
 | 2026-11-16 | Fable r3 delta (resumed after rail reset) | REQUEST CHANGES — BLOCKER (harness canary not tokenizer-stable; postings surface unmeasured) + 3 MAJOR + 3 MINOR, all REAL; folded rev 5 + harness rework; re-measured: F/G/F2/G2 clean both surfaces, B′ NOT clean, pragma load-bearing | $2.5158 |
@@ -78,3 +78,4 @@ sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), no
 | 2026-11-16 | T4 Fable spec gate r1 | REQUEST CHANGES — BLOCKER-1 (INTENT rule-5 contradiction → v1 default = document-as-host-property, GC gated on rule-5 amendment + owner E) + MAJOR-1 (exact-pair predicate) + MAJOR-2 (tasks enumeration) + 8 minors; folded spec rev 18 / investigation rev 12 | $4.7428 |
 | 2026-11-16 | T4 Fable delta r2 | REQUEST CHANGES — 3 MAJOR ('compact' lock design hole; 5 unconditional GC references; fact-path tier whole-file contradiction under v1 default) + 5 minors; folded spec rev 19 | $3.0438 |
 | 2026-11-16 17:20 | PAUSED: 5-h limit mid-T4-delta-2 (no verdict; stub archived). Reset 20:30 ET; resume cron-armed | $2.6684 (partial, kept on lane total) |
+| 2026-11-16 20:42 | T4 Fable delta r3 (relaunch of the 17:20 partial) | REQUEST CHANGES — 3 MAJOR (lock-design self-contradiction → bypass = compact-key check inside prune case + external standalone-runPrune refusal; NULL-match clauses impossible vs NOT NULL source_documents schema — delta-8 nullable was entries table; Release GC-migration wording unconditional) + 5 minors (compact case list, passagesDisabled ledger-gated, 2 cites, fixture sentence, validator receipt); all verified REAL, folded spec rev 20 | $3.1187 |

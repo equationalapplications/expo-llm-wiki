@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 19 — T4 delta-1 findings folded; T4 delta-2 pending. INTENT
+**Status: Draft rev 20 — T4 delta-2 (r3 relaunch) findings folded. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -94,7 +94,7 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    to **standalone `runPrune`** calls, not to compact under the null pin.)
    Inheriting `runPrune`'s safety
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
-   Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-456`): compact
+   Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-455`): compact
    continues to the file steps for the other entities and returns the holds per entity rather
    than throwing (T3 m2).   **Entity enumeration (T3 delta-10 m3, extended T4 MAJOR-2, helper
    T4 m3):** step 1 prunes
@@ -103,7 +103,7 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    `MaintenanceService.ts:387` → `TaskRepository.ts:294-303`, and `tasks.description` holds
    user text, `schema.ts:92`; a task-only `forget({ taskId })` can leave an entity with
    soft-deleted tasks and zero soft-deleted entries). Reuse the existing distinct-entity walk
-   in `MetadataRepository.ts:177-184` (it already spans entries/tasks/events and deliberately
+   in `MetadataRepository.ts:186` (doc comment `:177-185`; it already spans entries/tasks/events and deliberately
    includes soft-deleted-only entities) with the hard-delete cutoff filter added, rather than
    a new UNION query. Test: task-only forget + compact → task rows gone from the file.
    A `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
@@ -116,12 +116,26 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    `MaintenanceService.ts:530-531` is two distinct operations (`'reembed'`/`'global_reembed'`),
    each with its own branch. So: **add `'compact'` to both enums**; `acquireLock`/`releaseLock`
    gain a `'compact'` case that the **`store`, `forget`, `ingest`, `import`, `librarian`,
-   `heal`, `reembed`** cases must check; **`prune` does NOT check it** — compact's step 1
-   calls `runPrune` through an internal entry point that bypasses the per-entity prune lock
-   (if `prune` checked the compact key, step 1 would throw `WikiBusyError` on every entity and
-   compact would "succeed" having deleted nothing). Tests: compact with N entities hard-deletes
-   in all N; a concurrent `storeSource` during compact throws
-   `WikiBusyError('compact', '*')`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
+   `heal`, `reembed`, `ontologyBackfill`** cases must check (T4 delta-2 m1 —
+   `ontologyBackfill` writes wiki tables, `JobManager.ts:11-13`), and the `global_import`
+   pre-check (`JobManager.ts:193-195`) must cover `compact` in **both** directions (compact
+   refuses to start during a global import; a global import refuses during compact). The
+   `WikiBusyError` construction (`JobManager.ts:296-298`) passes `'*'` only for the two global
+   ops — add `'compact'` there so `WikiBusyError('compact', '*')` actually carries `'*'`.
+   **The bypassed thing is the compact-key check inside the `prune` case, not the prune lock
+   itself (T4 delta-2 MAJOR-1):** step 1 calls `acquireLock('prune', entityId)` normally — the
+   `prune` case is the only switch arm that detects work **already in flight** on the entity
+   (`JobManager.ts:198-207`), so bypassing it would hard-delete soft-deleted rows under a
+   running librarian/forget/store — and the `prune` case simply does not consult the
+   `'compact'` key. (If `prune` checked the compact key unconditionally, step 1 would throw
+   `WikiBusyError` on every entity and compact would "succeed" having deleted nothing.)
+   Symmetrically, an **external standalone `runPrune` during compact's steps 3-8 is refused**:
+   the public `acquireLock('prune', e)` checks the compact key unless invoked via compact's
+   internal entry point, so a host `runPrune(e, { vacuum: true })` cannot interleave a second
+   VACUUM / `restartRebuildAfterVacuum` with compact's steps 5-6. Tests: compact with N
+   entities hard-deletes in all N; a concurrent `storeSource` during compact throws
+   `WikiBusyError('compact', '*')`; a standalone `runPrune` during compact throws
+   `WikiBusyError('compact', entityId)`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -137,9 +151,12 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    exact-pair matching, never collect-by-absence).
 3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
    surfaced** (today `syncPassages` swallows failures, `SearchService.ts:353-355`, and
-   `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134` — if the
-   passage index is disabled but its tables exist, compact **fails and reports** rather than
-   claiming erasure, T3 M7).
+   `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134`. T4 delta-2
+   m2: `passagesDisabled` is set on **any** `ensurePassageObjects` throw at open
+   (`Fts5IndexStrategy.ts:80-86`) — including stores with an empty passage ledger and nothing
+   to erase — so compact **fails and reports** rather than claiming erasure (T3 M7) only when
+   `passagesDisabled` **and** the `source_passages_fts_pending` ledger has rows (the ledger
+   probe, `Fts5IndexStrategy.ts:136`, already exists); otherwise it warns and continues).
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired
@@ -352,9 +369,11 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   a GC **candidate** only when the ledger key matches the document's **current
   `(source_ref, source_hash)` pair** exactly (T3 delta-11 M1, **narrowed to exact-pair by T4
   MAJOR-1** — the hash-alone branch is dropped):
-  **`H_key IS NOT NULL AND H_doc = H_key AND R_doc = R_key`**, **or** **`H_key IS NULL AND
-  H_doc IS NULL AND R_doc = R_key`** (a ref match on a NULL hash is allowed only when **both**
-  hashes are NULL). **Why not hash-alone (T4 MAJOR-1):** `sourceStoreUpsert` refuses duplicate
+  **`H_key IS NOT NULL AND H_doc = H_key AND R_doc = R_key`**. **Schema premise (T4 delta-2
+  MAJOR-2):** `source_documents.source_ref` and `source_documents.source_hash` are
+  `TEXT NOT NULL` (`schema.ts:72-73`), so `H_doc` can never be NULL — the former second clause
+  ("both hashes NULL, ref match") matched nothing and is deleted; this also closes T3's
+  nullability thread with a schema fact. **Why not hash-alone (T4 MAJOR-1):** `sourceStoreUpsert` refuses duplicate
   hashes across the store and live registry (`sourceStoreUpsert.ts:70-80`; upsert-by-ref
   logic: `sourceStoreUpsert.ts:53-93`, T4 m4), so a document can
   never be re-keyed in place — the only way `(R_new, H)` exists while `(R_old, H)` is pending
@@ -364,11 +383,12 @@ which is exactly what the documented recipe and the 7-day automatic prune do):
   by ref, so an old `(R, H1)` key must not delete new `(R, H2)` text; and a bare `H_doc ==
   H_key` rule would strand NULL-hash documents). It is **live** if any live entry matches it on
   **either** column (the
-  conservative direction: liveness errs toward keeping). NULL symmetry still applies (T3
-  delta-8 MAJOR-2): a NULL column never matches a non-NULL one on either side, and a key with
-  **both** columns NULL is not written to the ledger. Required test cases: a NULL-hash
-  fact key still GC-matches a NULL-hash document on ref (delta-11 M1); a NULL-ref fact key with a hash
-  GC-matches on hash alone; a live fact sharing the ref but carrying a **different** hash keeps the
+  conservative direction: liveness errs toward keeping). Because the document columns are NOT
+  NULL, exact-pair matching implies a fact key with **either** column NULL can never match a
+  stored document — such a key is dead ledger weight — so a key with **either** `source_ref`
+  or `source_hash` NULL is not written to the ledger (T4 delta-2 MAJOR-2; supersedes T3
+  delta-8 MAJOR-2's both-columns-NULL rule, which assumed NULLable document columns). Required
+  test cases: a live fact sharing the ref but carrying a **different** hash keeps the
   document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts yet survives
   compact() when an old `(R, H1)` key drains** (T3 delta-10 / T4 MAJOR-1 scenario — the
   T3 "re-keyed document matched by old hash" case is deleted: re-keying in place is impossible
@@ -421,7 +441,7 @@ back), and the no-opt-out pragma statement.
   `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 5 governs).
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
   lift + `chainEntryIds`/`truncated`); `compact()` (8-step composition per §2, incl.
-  source-store GC ledger drain and `_wrappedVacuum()`); hold catching/reporting (external
+  source-store GC ledger drain — E=GC only — and `_wrappedVacuum()`); hold catching/reporting (external
   holds via the error channel; compact keeps all events, so no event-hold channel).
 - `packages/core/src/WikiMemory.ts` — `compact()` public API + `forget` param typing.
 - `packages/core/src/repositories/EntryRepository.ts` — depth-aware chain walk (truncation
@@ -443,12 +463,19 @@ back), and the no-opt-out pragma statement.
    found in the `%_content` copy, so a plain byte-scan proves nothing about the postings
    surface.
    - *Fact-path tier (restructured T4 delta MAJOR-3):* the canary lives **only in the fact** —
-     fixture: `ingestDocument` with a stub provider (`remember`'s `RememberInput` carries no
-     `sourceRef`/`sourceHash`, `types.ts:1613-1628`; and **no `storeSource`**, so nothing
+     fixture: `ingestDocument` with a stub provider — `ingestDocument` accepts
+     `sourceRef`/`sourceHash` and writes `source_ref_index` (`MaintenanceService.ts:710-717`)
+     but **never writes `source_documents`** (only `SourceStoreService.ts:61` and
+     `ImportExportService.ts:180` call `upsertStoredSource`; T4 delta-2 m4 — the fixture's
+     canary isolation rests on this, not on `remember`'s `RememberInput`); and **no
+     `storeSource`**, so nothing
      host-stored holds the canary) into a tempdir store with 300+ filler facts (multi-segment
      index). Then `forget({ entryId })`,
      `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null })` (T3 delta-8 m2 —
-     explicit options; the bare default would delete 30-day-old events), `compact()` —
+     explicit options; the bare default would delete 30-day-old events. T4 delta-2 m5 receipt:
+     `retainSoftDeletedFor: 0` passes `_validatePruneDuration`
+     (`MaintenanceService.ts:1788-1791` — rejects only negative/non-finite values), so the
+     validator accepts 0), `compact()` —
      **assert whole-file absence**: canary absent from the entry row, all FTS surfaces (db
      file, `-wal`, `-journal`, `-shm`, **and every `%_data` block**). Because no host-stored
      document exists, whole-file absence is assertable at this tier. `events.summary` and the
@@ -486,10 +513,10 @@ back), and the no-opt-out pragma statement.
    compact — document and passages gone (including `source_passages_fts`). **B1 regression
    test:** a `storeSource`-only document with zero facts **survives `compact()`** unchanged —
    and under the v1 default **every** stored document survives compact.
-   **Key-matching cases (GC path only, T3 delta-4 MAJOR-1 narrowed by T4 MAJOR-1):** a
-   NULL-hash fact key GC-matches a NULL-hash document on ref; a NULL-ref fact key with a hash
-   GC-matches on hash alone; a live fact sharing the ref but with a **different** hash keeps
-   the document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts survives an
+   **Key-matching cases (GC path only, T3 delta-4 MAJOR-1 narrowed by T4 MAJOR-1; the
+   NULL-match cases are deleted T4 delta-2 MAJOR-2 — `source_documents` ref/hash columns are
+   NOT NULL, so a NULL-column key never enters the ledger):** a live fact sharing the ref but
+   with a **different** hash keeps the document live; **a re-stored document (`R`, `H1`→`R`, `H2`) with no facts survives an
    old `(R, H1)` key** (the T3 re-key case is deleted — re-keying in place is impossible
    under the duplicate-hash refusal). **Task-only case (T4 MAJOR-2):** forget tasks only +
    compact → task rows gone from the file.
@@ -526,9 +553,11 @@ back), and the no-opt-out pragma statement.
 
 ## Release
 
-Semver: new public API (`compact()`, `forget` flag) → minor. New migration creates the
-`source_gc_pending` ledger table (unconditional schema — consumers run their migration sweep
-on upgrade). There is **no v18 option migration**: the FTS5 `'secure-delete'` option is
+Semver: new public API (`compact()`, `forget` flag) → minor. **Under the recommended v1
+default (E=default) there is no new migration**; only if owner question E answers GC does a
+migration create the `source_gc_pending` ledger table (unconditional schema — consumers run
+their migration sweep on upgrade) (T4 delta-2 MAJOR-3: the unconditional wording contradicted
+§5 and Files touched). There is **no v18 option migration**: the FTS5 `'secure-delete'` option is
 decided by the per-open gate (§4) on every open — a no-op with a surfaced warning while the
 gate is closed, self-arming when a fixed SQLite ships. No format change occurs unless the
 gate passes (and then the one-way door applies, documented).
