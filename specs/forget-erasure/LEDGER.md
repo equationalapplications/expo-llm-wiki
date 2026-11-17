@@ -93,3 +93,4 @@ sqlite 3.53.4 via better-sqlite3 13.0.3 (reported by SELECT sqlite_version(), no
 | 2026-11-17 | Delta-4 owner-ruling application round (session 938a2c2e approx — see intent-review/opus-delta4.json) | 5 owner rulings → exact edits specified; applied same day (rule 10 deduction, clanker, CJ, engine-top-authority, scrub scope) | $0.8146 |
 | 2026-11-17 | Tier-1.5 ladder on ea-writing-intent-files SOP (3 rungs + fixes) | r1 AWN → fixes → r2 AWN → fixes → r3 AWN → nit fixed; CONVERGED | $0.1415 |
 | 2026-11-17 | Tier-1.5 ladder on EA glossary revision (memory-method verbs, 3 rungs + fixes) | r1 APPROVE → r2 REQUEST CHANGES (fixed) → r3 AWN (fixed); CONVERGED | $0.1488 |
+| 2026-11-17 11:4x | Implementation GO (owner, Discord msg 1572290282026704967) | Kurt directed continuation of the implementation-entry handoff → owner gate cleared; implementation T1–T10 starts (Claude Code subagent serial per plan protocol; dual review + merge ask after) | $0.00 |
