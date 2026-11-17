@@ -75,7 +75,7 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `history(entityId, factId)` | `Promise<WikiFact[]>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
 | `getMemoryBundle(entityId)` | `Promise<MemoryBundle>` | All non-deleted facts, tasks and edges, plus the 10 newest events. Use `exportDump()` for a full copy |
 | `exportDump(entityIds?, { includeForgotten? }?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/). Forgotten (soft-deleted) rows are excluded unless `includeForgotten: true` |
-| `erase()` | `Promise<EraseReport>` | Verified erasure of every forgotten fact in scope (events are kept). A failure throws `EraseStepError` carrying the report with `verified: false`. See [Deleting data](/expo-llm-wiki/guides/deleting-data/) |
+| `erase()` | `Promise<EraseReport>` | Verified erasure of every forgotten fact in scope (events are kept). A step failure throws `EraseStepError` carrying the report with `verified: false`; a refusal before the pipeline starts throws a plain `WikiBusyError` with no report. See [Deleting data](/expo-llm-wiki/guides/deleting-data/) |
 | `erase({ rebuild: true })` | `Promise<EraseReport>` | As `erase()`, but rebuilds the entries FTS index in place of the corrupt-index optimize, then `optimize` still runs on both tables; the retired index table is reclaimed before the final checks |
 | `getRetentionPolicy()` | `{ retainSoftDeletedFor, retainEventsFor, pruneSupersededAfter }` | The retention windows `runPrune()` uses when the host runs it, in days (`null` = keep forever); `erase()` ignores `retainSoftDeletedFor`. Read-only, for disclosure |
 | `getEntitySummary(entityId)` | `Promise<string \| null>` | |
@@ -125,7 +125,7 @@ with a matching hash (`{ charCount }`), text stored under a stale hash
 | Method | Returns |
 |---|---|
 | `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>`. A `sourceRef`/`sourceHash` forget also hard-deletes the matching stored text and passages in the same transaction; `clearAll` deletes the entity's whole store. |
-| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's whole supersession chain; the dry run counts only live entries in `deleted.entries` |
+| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's supersession chain: it follows supersession links in the directions reachable from the selected entry (for A→C←B, forgetting A reaches C but not B), up to 100 links per direction. `chainEntryIds` lists the chain entries reached; `truncated: true` means a chain longer than 100 links was cut at the cap, or links deeper than the per-direction cap were left. The dry run counts only live entries in `deleted.entries` |
 
 ## Ontology
 

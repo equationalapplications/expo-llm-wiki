@@ -49,16 +49,21 @@ routine.
 `forget()` removes facts from recall, and `runPrune()` removes the rows from the table. Neither
 guarantees the bytes are gone from the database *file* — SQLite marks freed pages for reuse
 without overwriting them, so deleted text can linger until the pages happen to be reused.
-`erase()` closes that gap. It takes every forgotten fact in scope past gone — bytes
-unrecoverable, verified by the pragma state, the checkpoint result and each step's outcome — and returns an erasure report
-naming each step's outcome, skipped entities and holds, and whether erasure is verified.
+`erase()` closes that gap. On the connection it runs on, deleted content left in the database
+*file* is overwritten with zeros (`secure_delete` is verified `ON` before any step), and after a
+successful final checkpoint the WAL is truncated to zero bytes. Each step's outcome is verified
+from the pragma state, the checkpoint result and the step's own completion, and the erasure
+report names each step's outcome, skipped entities and holds, and whether erasure is verified.
+What this guarantee does **not** cover: storage-level remnants outside the database file and its
+WAL — unlinked rollback journals, `VACUUM` temporary copies on disk, filesystem snapshots and
+backups. Nothing in this document claims the bytes are unrecoverable at the storage layer.
 
 ```ts
 await wiki.forget('user-123', { entryId: 'fact_abc' });
 await wiki.erase();
 ```
 
-A failed erase throws `EraseStepError` carrying the report with `verified: false`; it, the `EraseReport` type and `CheckpointIncompleteError` are importable from the package. A hold (an external removal that could not be confirmed) also leaves `verified: false`.
+A failed erase throws `EraseStepError` carrying the report with `verified: false`; it, the `EraseReport` type and `CheckpointIncompleteError` are importable from the package. A hold (an external removal that could not be confirmed) also leaves `verified: false`. Failures *before* the pipeline starts — `erase()` refusing because another operation holds a conflicting lock — throw a plain `WikiBusyError` with no report.
 
 That is the whole recipe. **Do not add a standalone `runPrune()` step.** `erase()`'s first step
 already prunes the facts it is about to erase with `retainSoftDeletedFor: 0` and
@@ -129,7 +134,10 @@ unlinked rather than zeroed. These copies are yours to handle:
 `erase()` runs `VACUUM` as part of its recipe, and VACUUM builds its temporary copy of the
 database *outside* the main file while it works — a short window where content pages exist in a
 temp file. The host can close it: run the erase call on a connection with
-`PRAGMA temp_store=MEMORY`, so the temporary copy lives in RAM instead of on disk.
+`PRAGMA temp_store=MEMORY`, so the temporary copy lives in RAM instead of on disk. This is
+build-dependent, not a hard guarantee: a SQLite build compiled with `SQLITE_TEMP_STORE=0`
+overrides the connection setting and keeps the temporary copy on disk. Treat the pragma as
+advice that removes the window on stock builds, not as a safeguard every build honors.
 
 ### Handling an erasure request
 

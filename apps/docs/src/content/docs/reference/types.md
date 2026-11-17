@@ -72,8 +72,12 @@ interface MemoryBundle {
 
 `librarian_watermark` is the exporting database's librarian position, set by `exportDump()` and
 `getMemoryBundle()` when the entity has one. A merge import trusts events at or before it as
-already consolidated at the source and keeps their dates. **It is not the source text store** —
-the watermark tracks the librarian, not stored text.
+already consolidated at the source and keeps their dates. Events dated *after* the watermark
+are not trusted that way: if such an event's date would sort behind the local librarian
+position (or its date is unusable), the import re-dates it just after the current time — or
+just after the librarian position, if that is later — keeping its order, and reports
+`event_created_at_restamped`. **The watermark is not the source text store** —
+it tracks the librarian, not stored text.
 
 ## `WikiEdge`
 

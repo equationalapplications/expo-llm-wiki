@@ -24,8 +24,10 @@ interlinked, and updated through review. The design bar is that the structure it
 recall — a lesser model navigating a well-built graph outperforms a cleverer model without one.
 
 **Episodic memory** — the event log. Every observation, decision, action, and outcome is kept as
-an event; facts are (re)derived from it. Events are the engine's rebuild-from-history
-mechanism, which is why erasure keeps them (the only path that deletes events is `clearAll`; see [Erase](#erase) below).
+an event; facts are (re)derived from it. Events follow the host's `retainEventsFor` window: a
+`runPrune()` with events retention set deletes events that pass the window and the librarian
+watermark, on the host's schedule. `clearAll` deletes all events only with
+`includeEvents: true`; plain erasure keeps them (see [Deleting data](/expo-llm-wiki/guides/deleting-data/)).
 
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is
 kept verbatim with provenance, cut into passages with character offsets, and never merged
@@ -37,7 +39,9 @@ across entities. See [the source store guide](/expo-llm-wiki/guides/source-store
 ended — replaced by a newer fact, or ended without replacement), **forgotten** (removed from
 recall by `forget()`, still in the store), or **gone** (hard-deleted by prune; the text may
 still be recovered from the raw database file). **Erased** is not a state — it's the engine's
-verified claim that the bytes are unrecoverable, delivered in an `erase()` report.
+verified claim that the erase pipeline ran to completion: deleted content in the database file
+overwritten with zeros, the WAL truncated after a verified checkpoint, each step's outcome
+checked, delivered in an `erase()` report.
 
 **Forget** — removes a fact from recall immediately (a soft delete). The promise is "gone from
 recall now, gone from disk at erase" — forgetting is an instruction, not destruction. See
@@ -45,10 +49,11 @@ recall now, gone from disk at erase" — forgetting is an instruction, not destr
 
 **Prune (`runPrune`)** — applies the host's retention windows: superseded facts age into
 forgotten, forgotten facts age into gone, on the host's schedule. It is not an erasure tool —
-see [Erase](#erase).
+see [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 
-**Erase** — takes every forgotten fact in scope past gone: bytes unrecoverable, verified by
-the pragma state, the checkpoint result and each step's outcome, with a report naming each step's outcome. Always on at full
+**Erase** — takes every forgotten fact in scope past gone: deleted content in the database file
+is overwritten with zeros and the WAL is truncated after a verified checkpoint, with a report
+naming each step's outcome. Always on at full
 strength; no opt-out. Ships with the forget-erasure work in this release — see
 [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 

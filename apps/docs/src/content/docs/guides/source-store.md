@@ -35,14 +35,19 @@ The store cuts the text into passages and indexes them for keyword search, so `r
 windows later.
 
 - **Refusals return, they don't throw.** A text that is too large, exceeds the store budget,
-  doesn't match its hash, reuses a hash already held by another ref (stored text or live facts), or
+  reuses a hash already held by another ref (stored text or live facts), or
   contains a NUL or lone surrogate comes back as
   `{ stored: false, diagnostics }`. Each diagnostic also fires on `onDiagnostic` with
   `operation: 'sourceStore'`. See [Diagnostics](/expo-llm-wiki/guides/diagnostics/#codes) for the
-  five codes.
-- **Throws are for invalid calls only.** A bad `sourceRef`, a `sourceHash` that isn't 64-char hex,
-  or a non-string `text` throws before anything is written. A busy lock (`WikiBusyError`) throws
-  too — retry later, like any other writer.
+  five codes. One check is *reactive*, not a refusal at write time: `sourceHash` is accepted as
+  given on a new ref — a value that is not the hash of `text` is only detected (and refused as
+  `source_store_hash_mismatch`) when the same ref is stored again with the same claimed hash but
+  different text. Callers that need provenance verified at write time must hash the text
+  themselves before calling.
+- **Throws are for invalid calls only — and for database failures.** A bad `sourceRef`, a
+  `sourceHash` that isn't 64-char hex, or a non-string `text` throws before anything is written.
+  A busy lock (`WikiBusyError`) throws too — retry later, like any other writer. A failed
+  database transaction also propagates as a throw (its driver error, unchanged).
 - **Re-storing the same ref and hash is a no-op** that returns the existing figures. Re-storing the
   same ref with the *same* hash but *different* text is refused as `source_store_hash_mismatch`. A
   ref with a *changed* hash replaces the old text (and its passages) in one transaction.
@@ -124,5 +129,11 @@ Exceeding either cap refuses the write (`source_store_source_too_large`,
 - `exportDump()` embeds each entity's stored sources in the dump (`storedSources`, with the text
   and the passage offsets). `importDump()` re-cuts the passages from the text — the offsets in a
   dump are fidelity information only — and returns
-  `{ skippedSources: [{ sourceRef, code }] }` for sources it refused. See
+  `{ skippedSources: [{ sourceRef, code }] }` for sources it refused. Order matters in replace
+  mode (no `merge`): the import deletes the entity's *existing* stored sources first, then
+  stores the dump's sources one by one — a replacement source that is refused (for example over
+  the size or budget limits) is simply not stored, and the earlier deletion is not rolled back,
+  so that ref's previous stored text is gone. Check your configured limits — or back up the
+  stored text — before a replace import; use `merge: true` to keep existing sources the dump
+  does not replace. See
   [OKF import & export](/expo-llm-wiki/guides/okf/#what-round-trips).

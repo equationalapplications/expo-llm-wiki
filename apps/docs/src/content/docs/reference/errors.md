@@ -22,7 +22,7 @@ try {
 | Error | Thrown when | Useful fields | What to do |
 |---|---|---|---|
 | `WikiBusyError` | A conflicting job (librarian, heal, ingest, prune, reembed, import, forget, or ontology backfill) is already running for the entity | `operation`, `entityId` | Retry later. It's usually safe to swallow. |
-| `WikiBusyError('erase', '*')` / `EraseStepError` | While `erase()` holds the store-wide lock, other operations (import, auto-heal, and every fenced call) get `WikiBusyError('erase', '*')`. `erase()` itself refuses with `WikiBusyError(<blockingOp>, …)` naming what blocked it; during its pipeline, step failures throw `EraseStepError` | `operation`, `entityId`; step errors carry `code` and the report | Retry after quiescing the store. Retryable step errors: `erase_checkpoint_incomplete`, `erase_orphaned_fts_content` (the latter only after the orphaned content tables are removed) |
+| `WikiBusyError('erase', '*')` / `EraseStepError` | While `erase()` holds the store-wide lock, other operations (import, auto-heal, and every fenced call) get `WikiBusyError('erase', '*')`. `erase()` itself refuses with `WikiBusyError(<blockingOp>, …)` naming what blocked it; during its pipeline, step failures throw `EraseStepError` | `operation`, `entityId`; step errors carry `code` and the report | Retry after quiescing the store. Retryable step errors: `erase_checkpoint_incomplete`, `erase_vacuum_failed` (an unfenced writer holds the database; quiesce and retry), `erase_orphaned_fts_content` (the latter only after the orphaned content tables are removed) |
 | `WikiTransactionError` | A driver error escaped a transaction | `cause`, `sqliteErrorCode` | Alert, grouping by `sqliteErrorCode` |
 | `PrunePartialFailureError` | A deletion hook left some removals unconfirmed during `runPrune`. Prune keeps those rows, finishes its other work, then throws. | `deleted`, `failedAt`, `remaining`, `deletedTasks`, `deletedEvents`, `cause` | Fix the hook, then run prune again |
 | `WikiExternalDeletionError` | `forget()` ran, but your vector index didn't confirm every removal. The local delete stays committed. | `code` (`'WIKI_EXTERNAL_DELETION'`), `entityId`, `unconfirmedIds` (at most 100), `unconfirmedCount`, `timedOut`, `cause` (sanitized; absent on a timeout or when no cause is known) | Fix the hook. The ids stay owed; retry, or call `runExternalDeletions()` |
@@ -42,7 +42,9 @@ Errors you throw from your own callbacks pass through with their type unchanged.
 
 `storeSource()` mostly doesn't throw: size, budget, hash and duplicate refusals come back as
 `{ stored: false, diagnostics }` (see [Source text store](/expo-llm-wiki/guides/source-store/)).
-Only invalid arguments and a busy lock (`WikiBusyError`) throw.
+Only invalid arguments, a busy lock (`WikiBusyError`), and a failed database transaction
+propagate as throws — a transaction failure surfaces its driver error unchanged, without being
+converted to a refusal.
 
 ## Migration v9 fails on existing duplicates
 
