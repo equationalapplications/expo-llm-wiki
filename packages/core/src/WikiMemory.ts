@@ -36,7 +36,7 @@ import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
 import { resolveGrounding } from './utils/grounding';
 import { IngestionService } from './services/IngestionService';
-import { MaintenanceService } from './services/MaintenanceService';
+import { MaintenanceService, type EraseReport } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
@@ -799,6 +799,16 @@ export class WikiMemory {
     const ids = await this.metadataRepo.getDistinctEntityIds();
     if (options?.prefix === undefined) return ids;
     return ids.filter(id => id.startsWith(options.prefix!));
+  }
+
+  /**
+   * Erase everything soft-deleted, store-wide, and verify it (forget-erasure
+   * spec §2). Throws `EraseStepError` (partial report, `verified: false`) when
+   * a step fails; skipped entities report `verified: false`.
+   * `{ rebuild: true }` additionally restarts the FTS rebuild.
+   */
+  async erase(options?: { rebuild?: boolean }): Promise<EraseReport> {
+    return this.maintenanceService.erase(options);
   }
 
   async runPrune(

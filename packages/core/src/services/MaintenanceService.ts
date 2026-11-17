@@ -236,7 +236,17 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | null;
+  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | null;
+  /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */
+  runtime: string;
+  /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds. */
+  steps: Array<{ step: string; outcome: 'ok' | 'partial' | 'failed' }>;
+}
+
+function eraseRuntime(): string {
+  const g = globalThis as { HermesInternal?: unknown; process?: { versions?: { node?: string } } };
+  if (g.process?.versions?.node) return `node ${g.process.versions.node}`;
+  return g.HermesInternal ? 'hermes' : 'unknown';
 }
 
 /** A failed erase step: carries the partial report (`verified: false`). */
@@ -517,12 +527,15 @@ export class MaintenanceService {
    * success it cannot verify: a failed step throws {@link EraseStepError}
    * carrying the partial report with `verified: false`.
    */
-  async erase(): Promise<EraseReport> {
+  async erase(opts?: { rebuild?: boolean }): Promise<EraseReport> {
+    const rebuild = opts?.rebuild === true;
     this.jobManager.acquireLock('erase', '*');
     const report: EraseReport = {
       verified: false, secureDelete: null, sqliteVersion: '', entities: [], holds: [],
       skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], failedStep: null,
+      runtime: eraseRuntime(), steps: [],
     };
+    const ok = (step: string, outcome: 'ok' | 'partial' = 'ok') => { report.steps.push({ step, outcome }); };
     try {
       // Step 0 (ruling B): the pragma is load-bearing and a host can flip it on
       // the shared connection after setup(); verify on the connection in use.
@@ -540,6 +553,7 @@ export class MaintenanceService {
         report.failedStep = 'secure_delete';
         throw new EraseStepError('erase_secure_delete_off', 'erase stopped at step 0: secure_delete is not ON; erasure is unverified', report);
       }
+      ok('secure_delete');
 
       // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
       report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Date.now() });
@@ -563,6 +577,8 @@ export class MaintenanceService {
         report.syncedIds.push(...syncedIds);
       }
 
+      ok('prune', report.holds.length > 0 || report.skipped.length > 0 ? 'partial' : 'ok');
+
       // Step 1b (ruling G): store-wide tombstone sweep, only when the table exists.
       try {
         await this.db.withTransactionAsync(async (tx) => {
@@ -580,6 +596,13 @@ export class MaintenanceService {
       if (report.registrySweep.skipped) {
         emitDiagnostic(this.options, { code: 'erase_registry_sweep_skipped', operation: 'erase', trigger: 'call', entityId: '' });
       }
+      ok('registry_sweep', report.registrySweep.skipped ? 'partial' : 'ok');
+
+      // Step 3: full syncChain drain (awaited to completion), then step 4.
+      await this._eraseDrainPassages(report);
+      ok('passage_drain');
+      await this._eraseReclaimRetired(report);
+      ok('retired_reclaim');
 
       // Step 5: wrapped VACUUM (pre/post checkpoints verified inside).
       try {
@@ -590,8 +613,9 @@ export class MaintenanceService {
           throw new EraseStepError('erase_checkpoint_incomplete', 'erase stopped at step 5: WAL checkpoint incomplete; erasure is unverified', report, err);
         }
         report.failedStep = 'vacuum';
-        throw new EraseStepError('erase_vacuum_failed', 'erase stopped at step 5: VACUUM failed', report, err);
+        throw new EraseStepError('erase_vacuum_failed', 'erase stopped at step 5: VACUUM failed (an unfenced writer may hold the database; retry)', report, err);
       }
+      ok('vacuum');
 
       // Step 6: index sync for the syncedIds superset, immediately after VACUUM
       // (deliberately not deduplicated against step 1's internal pass).
@@ -600,6 +624,30 @@ export class MaintenanceService {
       for (const [entityId, ids] of syncedByEntity) byEntity.set(entityId, ids);
       for (const [entityId, ids] of byEntity) {
         if (ids.length > 0) await this._eraseSyncEntries(entityId, ids, report);
+      }
+      ok('index_sync');
+
+      // Step 4 re-run (cheap when empty); nothing may stay retired except the module-less, emptied tables.
+      await this._eraseReclaimRetired(report);
+      const left = (await this.searchService.retiredTables()).filter((n) => !report.retiredUndroppable.includes(n));
+      if (left.length > 0) {
+        report.failedStep = 'retired_reclaim';
+        emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } } as any);
+        throw new EraseStepError('erase_retired_remaining', `erase stopped after step 6: retired FTS tables remain (${left.join(', ')})`, report);
+      }
+      ok('retired_reclaim_rerun');
+
+      // Step 7: optimize; `rebuild` is the escape hatch (resetAndRearm).
+      await this._eraseOptimize(report);
+      ok('optimize');
+      if (rebuild) {
+        try {
+          await this.searchService.rebuildSurfaced();
+        } catch (err) {
+          report.failedStep = 'rebuild';
+          throw new EraseStepError('erase_rebuild_failed', 'erase stopped at step 7: FTS rebuild failed', report, err);
+        }
+        ok('rebuild');
       }
 
       // Step 8: final checkpoint, verified.
@@ -610,8 +658,16 @@ export class MaintenanceService {
         throw new EraseStepError('erase_checkpoint_incomplete', 'erase stopped at step 8: WAL checkpoint incomplete; erasure is unverified', report, err);
       }
 
-      report.verified = true;
+      ok('checkpoint');
+      // Skipped entities were not erased: honest report, never a verified success.
+      report.verified = report.skipped.length === 0;
       return report;
+    } catch (err) {
+      if (err instanceof EraseStepError && err.report === report && report.failedStep) {
+        report.steps.push({ step: report.failedStep, outcome: 'failed' });
+        report.verified = false;
+      }
+      throw err;
     } finally {
       this.jobManager.releaseLock('erase', '*');
     }
