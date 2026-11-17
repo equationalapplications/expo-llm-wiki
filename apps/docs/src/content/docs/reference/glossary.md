@@ -24,12 +24,13 @@ interlinked, and updated through review. The design bar is that the structure it
 recall — a lesser model navigating a well-built graph outperforms a cleverer model without one.
 
 **Episodic memory** — the event log. Every observation, decision, action, and outcome is kept as
-an event; facts are (re)derived from it. Events follow the host's `retainEventsFor` window: a
-`runPrune()` with events retention set deletes events past the window on the host's schedule —
-under deferred maintenance or the `ops` librarian strategy only events the librarian watermark
-has already passed are deleted, but in any other configuration events past the window are
-deleted without a watermark check. `clearAll` deletes all events only with
-`includeEvents: true`; plain erasure keeps them (see [Deleting data](/expo-llm-wiki/guides/deleting-data/)).
+an event; facts are (re)derived from it. Events are pruned by default: `runPrune()` deletes
+events past the host's `retainEventsFor` window (30 days unless configured; `null` keeps them
+forever) on the host's schedule — under deferred maintenance or the `ops` librarian strategy
+only events the librarian watermark has already passed are deleted, but in any other
+configuration events past the window are deleted without a watermark check. `clearAll`
+deletes all events only with `includeEvents: true`; plain erasure keeps them (see
+[Deleting data](/expo-llm-wiki/guides/deleting-data/)).
 
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is
 kept verbatim with provenance, cut into passages with character offsets, and never merged

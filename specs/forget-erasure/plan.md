@@ -193,7 +193,9 @@ new migration — none, ever**, rulings C+E).
   for either kind of row applies even when the merge recency check would skip the row. Rows the
   replace-import wipe itself just tombstoned are exempt — but only until the first dump row for
   that id is accepted; the exemption is consumed, so an explicit dump tombstone can never be
-  overwritten by its own later live row.
+  overwritten by its own later live row. An accepted dump tombstone also overwrites the local
+  row's **content** (title/body for facts, description/status for tasks) with the dump's text —
+  forget-wins is about the id, not just the tombstone flag.
 Acceptance:
 - AC1: `exportDump()` excludes forgotten rows by default; `includeForgotten: true` includes them.
 - AC2: import with tombstone for a live ref → ref stays tombstoned (forget wins), for facts and

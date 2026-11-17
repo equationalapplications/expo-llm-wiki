@@ -403,6 +403,27 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    asserts erase surfaces the incomplete-checkpoint diagnostic instead of returning
    success.
 
+9. **Final tombstone gate (CodeRabbit r1, 2026-11-17)** — after the last checkpoint, count
+   soft-deleted rows (`deleted_at IS NOT NULL`) across entries and tasks; any survivor fails
+   the erase with the `erase_tombstones_remaining` diagnostic and an
+   `EraseStepError('erase_tombstones_remaining')` carrying the report with `verified: false`
+   (`failedStep: 'tombstone_gate'`; counting itself failing raises
+   `erase_tombstone_gate_failed`). Rationale: `verified: true` must never describe a file
+   that still holds soft-deleted text — before the gate, a row tombstoned with a
+   **future-dated `deleted_at`** (imports never clamp: a dump's tombstone timestamp is
+   stored as supplied) escaped every earlier cutoff-based selection (`<= now` predicates in
+   the entity walk and the prune queries) while erase still reported success. The gate runs
+   only when the report would otherwise be honest — **holds and skipped entities already
+   account for surviving soft-deleted rows** (an unconfirmed external-removal hold keeps its
+   row by contract and already forces `verified: false`), so the gate polices
+   **unaccounted** survivors only. Also new in this round: erase's entity walk and its
+   per-entity prune apply **no `deleted_at` cutoff** (`softDeletedCutoff` override,
+   `Number.MAX_SAFE_INTEGER`), so future-dated tombstones are hard-deleted by step 1 itself;
+   the gate is the backstop for anything that still slips through. Test: seed an entry and a
+   task with `deleted_at = now + 24h`, run `erase()`, assert `verified: true`, both rows
+   gone, and a whole-file canary scan clean (eraseAcceptance future-dated test; RED on the
+   pre-fix code, which returned `verified: true` over surviving text).
+
 A store with no FTS tables (a store whose FTS5 init fails on every open falls back to
 `UnavailableIndexStrategy` (`createIndexStrategy.ts:123`); a host without the fts5/json1
 module detaches to MiniSearch (`createIndexStrategy.ts:109`));
@@ -796,6 +817,9 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
   `erase_checkpoint_incomplete` (an error code, not a diagnostic) / `erase_retired_vtab_undroppable`,
   `erase({ rebuild: true })`; the implementation also introduced the public slugs
   `erase_entity_skipped`, `erase_registry_sweep_skipped`, `erase_retired_remaining`,
+  `erase_tombstones_remaining` (step-9 diagnostic, spec §2 step 9) plus the step-error codes
+  `erase_tombstone_gate_failed`, `erase_secure_delete_read_failed`, and a step-1
+  `erase_prune_failed` path for an entity-walk failure (CodeRabbit r1 fold, 2026-11-17),
   `prune_checkpoint_incomplete`, `import_tombstone_skipped`). Historical review tags (T3/T4 findings) keep their original
   wording where they quote pre-rev-27 text.
 

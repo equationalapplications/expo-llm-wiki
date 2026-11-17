@@ -865,22 +865,25 @@ export class EntryRepository extends BaseRepository {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       // RETURNING names exactly the rows this statement removed: not a row the
-      // guard kept, and not a row that was already gone before it ran.
-      const deleted = (await executor.getAllAsync<{ id: string }>(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id`,
+      // guard kept, and not a row that was already gone before it ran. deleted_at
+      // rides along so the outbox payload stamps the row's real tombstone time —
+      // never the sweep cutoff (erase sweeps with a max cutoff, and a payload
+      // stamped Number.MAX_SAFE_INTEGER would be nonsense as a timestamp).
+      const deleted = (await executor.getAllAsync<{ id: string; deleted_at: number }>(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id, deleted_at`,
         [entityId, cutoff, ...chunk],
-      )).map((r) => r.id);
+      )).map((r) => ({ id: r.id, deleted_at: Number(r.deleted_at) }));
       totalChanges += deleted.length;
-      opts.deletedIds?.push(...deleted);
+      opts.deletedIds?.push(...deleted.map((r) => r.id));
       // Stage outbox entries for permanently deleted records
       if (deleted.length > 0) {
-        for (const id of deleted) {
+        for (const row of deleted) {
           await this.outbox.push({
             entityId,
             tableName: 'entries',
-            recordId: id,
+            recordId: row.id,
             operation: 'DELETE',
-            payload: { id, entity_id: entityId, deleted_at: cutoff },
+            payload: { id: row.id, entity_id: entityId, deleted_at: row.deleted_at },
           }, tx);
         }
       }

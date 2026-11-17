@@ -656,7 +656,7 @@ export class MaintenanceService {
           throw new EraseStepError('erase_checkpoint_incomplete', 'erase stopped at step 5: WAL checkpoint incomplete; erasure is unverified', report, err);
         }
         report.failedStep = 'vacuum';
-        throw new EraseStepError('erase_vacuum_failed', 'erase stopped at step 5: VACUUM failed (an unfenced writer may hold the database; retry)', report, err);
+        throw new EraseStepError('erase_vacuum_failed', 'erase stopped at step 5: VACUUM failed (commonly an unfenced writer holding the database — quiesce and retry; also any other VACUUM failure, e.g. disk-full or I/O errors)', report, err);
       }
       ok('vacuum');
 
