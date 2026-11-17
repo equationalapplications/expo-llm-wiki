@@ -106,6 +106,25 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
 - **Adoption gate** — a measured condition (correctness, performance,
   parity) that must pass before the native crate replaces a TypeScript
   path in production.
+- **Superseded** — a fact replaced by a newer fact through the
+  librarian's UPDATE or SUPERSEDE path. The old fact stays in the
+  store, marked, until the retention window ends; its text is history
+  the host chose to keep, not a forgotten row. Erase never touches it.
+- **Forgotten** — a fact the host deleted through `forget()` (directly
+  or through the chain or source paths). Between the `forget()` call
+  and the hard delete it is soft-deleted: present in the file,
+  invisible to reads. "Forgotten" is an instruction, not a state the
+  storage layer has honored yet.
+- **Gone** — every storage surface a forgotten fact occupied has been
+  overwritten or removed: the row, the FTS postings, the
+  `source_ref_index` tombstone, the WAL/journal residue. Verified by
+  reading the database file back, not by trusting a delete's return
+  value.
+- **Erased** — the engine's claim, delivered in an `erase()` report,
+  that the store is gone. The claim is only as honest as its
+  verification: it names the runtime, the `secure_delete` state, each
+  step's outcome and whether the read-back passed. An erase that cannot
+  verify reports failure — INTENT rule 13.
 
 ## The rules
 
@@ -323,6 +342,53 @@ re-run. The native crate's performance gate is scaffolded
 and has never been run. **Open decision:** when the native engine's gate
 runs and who schedules it.
 
+### 12. Four states, five verbs
+
+A fact is exactly one of: **live** (stored and readable), **superseded**
+(stored, marked, retained by the host's policy), **forgotten**
+(soft-deleted; an instruction awaiting a hard delete) or **gone**
+(every storage surface it occupied is overwritten or removed —
+verified by reading the file, not by trusting a return value). Five
+verbs move a fact between states: `remember`/`ingestDocument` make it
+live; the librarian's UPDATE/SUPERSEDE supersedes it; `forget()` forgets it;
+`erase()` takes every forgotten fact in scope to gone;
+`runPrune` applies the retention windows that turn superseded into
+forgotten and forgotten into gone on the host's schedule.
+
+*Why:* hosts build privacy and audit promises on these words, and the
+charter promises deletion (rule 8's extension: a delete whose text is
+still recoverable from the store file is not done). A taxonomy with a
+state between "asked" and "done" keeps the honest one visible instead
+of letting "deleted" blur both.
+
+**Status: Partly built, pending `erase()` and `expire()`.** Forget,
+prune and supersession exist; `forget()` leaves the file recoverable
+(spec `specs/forget-erasure/`, canary-reproducible), and the retention
+windows are the host's declaration, not yet a readable API surface.
+`erase()` is specced, not built.
+
+### 13. Erasure is verifiable, portability is clean
+
+An erase claim is backed by read-back: the engine surfaces what it did
+— the runtime, the `secure_delete` state, each step's outcome, skipped
+entities and holds — and marks erasure unverified when any verification
+step fails. A failed pre-check is an honest failure, never a false
+success. Portability respects erasure the same way: exports exclude
+forgotten rows unless the caller explicitly asks for a backup dump, and
+an import honors a dump's deletion tombstones over live rows
+(forget wins over re-ingest). Retention is the host's declaration; the
+engine reads it back on request and never invents its own.
+
+*Why:* "trust me, it's deleted" is the one promise the charter cannot
+make cheaply — the storage layer keeps bytes after deletes, so only
+verification distinguishes gone from forgotten (rule 8's extension).
+The same honesty applies to what travels: a dump that resurrects a
+forgotten fact would break the erasure promise through the export
+door.
+
+**Status: Planned, pending `erase()`.** Nothing erases today; the
+guarantee ships with `specs/forget-erasure/`.
+
 ## Out of scope (don't build these here)
 
 - A hosted service inside the package. The cloud door is SynapseTree's
@@ -383,6 +449,20 @@ runs and who schedules it.
    charter promise is a charter amendment first, not an edit here.
 
 ## Amendments
+
+- 2026-11-17 — Rules 12 and 13 are added, and the glossary gains
+  Superseded, Forgotten, Gone and Erased. Owner spec stop A–H for
+  issue #401 (forget must erase, `specs/forget-erasure/`): the owner
+  ruled secure_delete always-on at FULL with surfaced read-back and
+  honest failure (B), the FTS5 gated immediate-erasure deferred behind
+  an explicit host opt-in that never self-arms (C), document-as-host-
+  property with no engine GC — "we cannot violate the founding
+  principle of the LLM Wiki pattern, immutable source files" (E) —
+  and compact() renamed erase() throughout (H). Rule 12's status is
+  "Partly built, pending erase() and expire()"; rule 5 already names
+  every leaving path, so no rule-5 amendment is needed. Why: hosts
+  build GDPR and privacy promises on delete/erase vocabulary, and the
+  engine's words for those states must not blur "asked" into "done".
 
 - 2026-11-15 — Rule 5 reworded: the source store ships (PR #396,
   `specs/source-store/`). The rule now says the engine may keep a
