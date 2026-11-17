@@ -886,6 +886,7 @@ export type WikiDiagnosticCode =
   | 'event_retention_held'
   | 'erase_secure_delete_off'
   | 'erase_entity_skipped'
+  | 'erase_retired_vtab_undroppable'
   | 'erase_registry_sweep_skipped'
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'

@@ -234,7 +234,9 @@ export interface EraseReport {
   /** Superset of the hard-deleted entry ids, for the step-6 index sync (containment, not equality). */
   syncedIds: string[];
   registrySweep: { skipped: boolean; deleted: number };
-  failedStep: 'secure_delete' | 'prune' | 'registry_sweep' | null;
+  /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
+  retiredUndroppable: string[];
+  failedStep: 'secure_delete' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | null;
 }
 
 /** A failed erase step: carries the partial report (`verified: false`). */
@@ -514,7 +516,7 @@ export class MaintenanceService {
     this.jobManager.acquireLock('erase', '*');
     const report: EraseReport = {
       verified: false, secureDelete: null, sqliteVersion: '', entities: [], holds: [],
-      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null,
+      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], failedStep: null,
     };
     try {
       // Step 0 (ruling B): the pragma is load-bearing and a host can flip it on
@@ -576,6 +578,77 @@ export class MaintenanceService {
       return report;
     } finally {
       this.jobManager.releaseLock('erase', '*');
+    }
+  }
+
+  // ── Erase FTS surfaces (spec §2 steps 3/4/6-sync/7). T6 composes these into erase(). ──
+
+  /** Step 3: chained, surfaced passage drain (no deadline). */
+  async _eraseDrainPassages(report: EraseReport): Promise<void> {
+    try {
+      await this.searchService.drainPassagesSurfaced();
+    } catch (err) {
+      report.failedStep = 'passage_drain';
+      throw new EraseStepError('erase_passage_drain_failed', 'erase stopped at step 3: passage drain failed', report, err);
+    }
+  }
+
+  /**
+   * Step 4 (and its re-run after step 6): reclaim retired FTS tables to
+   * completion. A module-less runtime cannot DROP a virtual table, so each
+   * retired table's shadow tables are emptied under the pragma and the name
+   * stays listed; a later FTS5-capable open's step 4 completes the DROP.
+   */
+  async _eraseReclaimRetired(report: EraseReport): Promise<void> {
+    try {
+      await this.searchService.reclaimRetiredSurfaced();
+      return;
+    } catch (err) {
+      if (!/no such module/i.test(err instanceof Error ? err.message : String(err))) {
+        report.failedStep = 'retired_reclaim';
+        throw new EraseStepError('erase_retired_reclaim_failed', 'erase stopped at step 4: retired FTS table reclaim failed', report, err);
+      }
+    }
+    try {
+      for (const name of await this.searchService.retiredTables()) {
+        for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+          if (await this.sourceTableExists(`${name}${sfx}`)) await this.db.runAsync(`DELETE FROM ${name}${sfx}`);
+        }
+        if (!report.retiredUndroppable.includes(name)) report.retiredUndroppable.push(name);
+        emitDiagnostic(this.options, { code: 'erase_retired_vtab_undroppable', operation: 'erase', trigger: 'call', entityId: '' });
+      }
+    } catch (err) {
+      report.failedStep = 'retired_reclaim';
+      throw new EraseStepError('erase_retired_reclaim_failed', 'erase stopped at step 4: module-less shadow-table clear failed', report, err);
+    }
+  }
+
+  private sourceTableExists(name: string): Promise<boolean> {
+    return this.metadataRepo.tableExists(name);
+  }
+
+  /** Step 6 sync: `syncEntries` resolving false means the ledger drain failed — a failed step. */
+  async _eraseSyncEntries(entityId: string, ids: string[], report: EraseReport): Promise<void> {
+    let ok = false;
+    try {
+      ok = await this.searchService.syncEntries(entityId, ids);
+    } catch (err) {
+      report.failedStep = 'index_sync';
+      throw new EraseStepError('erase_index_sync_failed', `erase stopped at index sync (entity ${entityId})`, report, err);
+    }
+    if (!ok) {
+      report.failedStep = 'index_sync';
+      throw new EraseStepError('erase_index_sync_failed', `erase stopped at index sync (entity ${entityId}): ledger drain failed`, report);
+    }
+  }
+
+  /** Step 7: FTS optimize on both FTS tables, after syncEntries. */
+  async _eraseOptimize(report: EraseReport): Promise<void> {
+    try {
+      await this.searchService.optimizeSurfaced();
+    } catch (err) {
+      report.failedStep = 'optimize';
+      throw new EraseStepError('erase_optimize_failed', 'erase stopped at step 7: FTS optimize failed', report, err);
     }
   }
 
