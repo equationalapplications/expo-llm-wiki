@@ -1,6 +1,7 @@
 # Docs site refresh — v9.2.0 alignment, erasure-guide handoff, and the Glossary page
 
-**Status: Draft rev 1 — awaiting owner spec approval.**
+**Status: rev 2 — spec APPROVED by owner (Kurt, Discord msg 1572310398869311610,
+2026-11-17). Implementation gated on plan approval (plan.md written, caps announced).**
 **Issue:** none filed (lane opened by owner directive, Discord msg 1572305016348483625) ·
 **Handoff (content obligations):** vault `records/handoffs/2026-11-17-handoff-expo-llm-wiki-docs-lane-content-inherit.md`
 (owner ruling 2: #404 ships code + INTENT + JSDoc only; all `apps/docs` edits move to this docs lane) ·

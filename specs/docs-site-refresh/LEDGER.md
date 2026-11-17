@@ -15,3 +15,4 @@ Memory) added by owner, 2026-11-17.
 | 2026-11-17 | Lane pickup: #404/#402 ownership re-derived from vault + live PR state; no collision (ruling 2: #404 touches no apps/docs) | session record (vault, end of block) | — |
 | 2026-11-17 | step-0 investigation: docs-vs-v9.2.0 audit (subagent, read-only, every gap cited against `git show v9.2.0`); build verified 53 pages; scrub guard mapped | `investigation.md` rev 1 | — |
 | 2026-11-17 | spec rev 1 draft + PR opened (draft) | `spec.md`, this LEDGER | — |
+| 2026-11-17 | **SPEC APPROVED** (Kurt, Discord msg 1572310398869311610); spec status → rev 2; plan.md written with announced caps (Fable r1 ≤$6, delta ≤$4/round, ladder ≤$18, lane ≤$20) | `plan.md` | — |
