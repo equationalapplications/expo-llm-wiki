@@ -365,6 +365,12 @@ export class SearchService {
     return work;
   }
 
+  /** True when the active strategy has both strict erase drains (FTS5); false for MiniSearch / Unavailable. */
+  hasStrictDrain(): boolean {
+    const s = this.indexStrategy as unknown as { drainPassagesStrict?: unknown; drainEntriesLedgerStrict?: unknown };
+    return typeof s.drainPassagesStrict === 'function' && typeof s.drainEntriesLedgerStrict === 'function';
+  }
+
   /** Erase step 3: chained passage drain, no deadline, errors surfaced. */
   drainPassagesSurfaced(): Promise<void> {
     const s = this.indexStrategy as unknown as { drainPassagesStrict?: () => Promise<void> };

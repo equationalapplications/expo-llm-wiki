@@ -84,12 +84,18 @@ describe('erase() orchestration + report (spec §2/§8)', () => {
     await wiki.setup();
     await ins(raw, 'a', 1);
     await ins(raw, 'b', null);
+    const strategy = (wiki as any).searchService.indexStrategy;
+    const optimized: string[] = [];
+    const realOptimize = strategy.optimizeFts.bind(strategy);
+    strategy.optimizeFts = async () => { optimized.push('both'); return realOptimize(); };
     const report = await wiki.erase({ rebuild: true });
     expect(report.verified).toBe(true);
     expect(report.steps.find((s) => s.step === 'rebuild')?.outcome).toBe('ok');
     const state = await raw.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = ?`, [FTS5_STATE_KEY]);
     expect(state?.value).toBe('rebuilding');
-    expect(report.steps.some((s) => s.step === 'optimize')).toBe(false); // rebuild replaces optimize
+    // N1: optimize always runs after the rebuild (source_passages_fts is untouched by it).
+    expect(report.steps.find((s) => s.step === 'optimize')?.outcome).toBe('ok');
+    expect(optimized.length).toBeGreaterThan(0);
     const retired = await raw.getAllAsync(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts_retired_%'`);
     expect(retired).toEqual([]);
   });

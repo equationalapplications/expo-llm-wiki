@@ -884,6 +884,7 @@ export type WikiDiagnosticCode =
   | 'resolve_failed'
   | 'read_budget'
   | 'event_retention_held'
+  | 'prune_checkpoint_incomplete'
   | 'erase_secure_delete_off'
   | 'erase_entity_skipped'
   | 'erase_retired_vtab_undroppable'

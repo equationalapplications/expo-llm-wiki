@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, erase()
 
-**Status: Draft rev 28 — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
+**Status: rev 28 — implementation folded through Opus delta r2 (PR #404) — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
 genericized all private-repo host references per owner ruling (2026-11-17: the family's
 hosted cloud service is private and provides no value to the engine's public docs —
 retention opinions stay
@@ -305,6 +305,9 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    to erase — so erase **fails and reports** rather than claiming erasure (T3 M7) only when
    `passagesDisabled` **and** the `source_passages_fts_pending` ledger has rows (the ledger
    probe, `Fts5IndexStrategy.ts:136`, already exists); otherwise it warns and continues).
+   Errata (delta r2, 2026-11-17): on a runtime where FTS5 init failed permanently, erase fails
+   with an unverified report whenever either FTS ledger still holds rows — a store whose FTS text
+   was never drained cannot be claimed erased.
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired

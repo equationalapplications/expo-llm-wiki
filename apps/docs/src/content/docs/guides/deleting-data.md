@@ -90,6 +90,10 @@ pragma itself. `erase()` checks the pragma of its own connection before it start
 `secure_delete` is off there, erasure fails with an `erase_secure_delete_off` diagnostic and is
 marked unverified — never a false success.
 
+On a runtime where FTS5 is permanently unavailable, `erase()` refuses (unverified) until the
+pending FTS ledgers (`fts_pending` and `source_passages_fts_pending`) are empty, because text the
+engine could not drain from the full-text index cannot be claimed erased.
+
 Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
 opt-out.
 

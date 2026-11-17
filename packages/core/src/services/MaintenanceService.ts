@@ -512,6 +512,10 @@ export class MaintenanceService {
       // Contract: a superset of the hard-deleted ids, consumed by containment.
       if (options?.syncedIds) options.syncedIds.push(...syncedIds);
       await this.searchService.syncEntries(entityId, syncedIds);
+      if (prunePartial && vacuumCheckpointErr) {
+        // Both failures are real: surface the checkpoint one as a diagnostic rather than dropping it.
+        emitDiagnostic(this.options, { code: 'prune_checkpoint_incomplete', operation: 'prune', trigger: 'call', entityId, detail: { reason: vacuumCheckpointErr.message } });
+      }
       if (prunePartial) {
         throw new PrunePartialFailureError(
           deletedEntries, prunePartial.failedAt, prunePartial.remaining, prunePartial.cause, deletedTasks, deletedEvents,
@@ -647,8 +651,9 @@ export class MaintenanceService {
       }
       ok('index_sync');
 
-      // Step 7 rebuild escape hatch REPLACES optimize (a corrupt index would fail optimize) and runs
-      // before the step-4 re-run, so the entries_fts_retired_N it creates is reclaimed there.
+      // Step 7 rebuild escape hatch runs before the step-4 re-run, so the entries_fts_retired_N it
+      // creates is reclaimed there. Optimize ALWAYS follows: the fresh entries_fts is safe to optimize
+      // and source_passages_fts is untouched by the rebuild.
       if (rebuild) {
         try {
           await this.searchService.rebuildSurfaced();
@@ -661,7 +666,11 @@ export class MaintenanceService {
 
       // Step 4 re-run (cheap when empty); nothing may stay retired except the module-less, emptied tables.
       await this._eraseReclaimRetired(report);
-      const left = (await this._retiredList()).filter((n) => !report.retiredUndroppable.includes(n));
+      // P1: sqlite_master is the truth (Fts5IndexStrategy delists a name even when its DROP failed).
+      const present = await this.db.getAllAsync<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%entries_fts_retired_%'`,
+      );
+      const left = present.map((r) => r.name).filter((n) => isRetiredTableName(this.prefix, n) && !report.retiredUndroppable.includes(n));
       if (left.length > 0) {
         report.failedStep = 'retired_reclaim';
         emitDiagnostic(this.options, { code: 'erase_retired_remaining', operation: 'erase', trigger: 'call', entityId: '', detail: { tables: left } });
@@ -669,11 +678,9 @@ export class MaintenanceService {
       }
       ok('retired_reclaim_rerun');
 
-      // Step 7: optimize (skipped entirely when `rebuild` ran above).
-      if (!rebuild) {
-        await this._eraseOptimize(report);
-        ok('optimize');
-      }
+      // Step 7: optimize on both FTS tables (always, including after a rebuild).
+      await this._eraseOptimize(report);
+      ok('optimize');
 
       // Step 8: final checkpoint, verified.
       try {
@@ -700,10 +707,40 @@ export class MaintenanceService {
 
   // ── Erase FTS surfaces (spec §2 steps 3/4/6-sync/7). T6 composes these into erase(). ──
 
-  /** Step 3: chained, surfaced passage drain (no deadline). */
+  /**
+   * Step 3: chained, surfaced drains (no deadline). Entries-ledger failures are
+   * the entries/index-sync step (`index_sync`); passage failures `passage_drain`.
+   * N2 guard (probe lives here, strategy-agnostic): a strategy without the strict
+   * drains (Unavailable / MiniSearch) cannot drain, so rows in either FTS ledger
+   * mean text was never drained -> the step fails and erasure is unverified.
+   * Absent or empty ledgers proceed.
+   */
   async _eraseDrainPassages(report: EraseReport): Promise<void> {
+    if (!this.searchService.hasStrictDrain()) {
+      for (const [table, failedStep, code] of [
+        [`${this.prefix}fts_pending`, 'index_sync', 'erase_index_sync_failed'],
+        [`${this.prefix}source_passages_fts_pending`, 'passage_drain', 'erase_passage_drain_failed'],
+      ] as const) {
+        let rows = false;
+        try {
+          rows = (await this.sourceTableExists(table)) && (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${table} LIMIT 1`)) != null;
+        } catch (err) {
+          report.failedStep = failedStep;
+          throw new EraseStepError(code, `erase stopped at step 3: could not probe ${table}`, report, err);
+        }
+        if (rows) {
+          report.failedStep = failedStep;
+          throw new EraseStepError(code, `erase stopped at step 3: ${table} holds undrained rows and the FTS index strategy cannot drain them; erasure is unverified`, report);
+        }
+      }
+    }
     try {
       await this.searchService.drainEntriesLedgerSurfaced();
+    } catch (err) {
+      report.failedStep = 'index_sync';
+      throw new EraseStepError('erase_index_sync_failed', 'erase stopped at step 3: entries ledger drain failed', report, err);
+    }
+    try {
       await this.searchService.drainPassagesSurfaced();
     } catch (err) {
       report.failedStep = 'passage_drain';
