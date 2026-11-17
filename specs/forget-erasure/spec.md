@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 21 — T4 delta-3 findings folded. INTENT
+**Status: Draft rev 22 — T4 delta-4 findings folded. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -60,7 +60,7 @@ the acceptance test below): core pragma + plain delete + FTS `'optimize'`
 ### 1. The erasure guarantee lives at compact-time, not at forget-time
 
 `PRAGMA secure_delete=ON` is set in `setup()` on the **host-provided handle** (the engine never
-opens connections; guide line 61). The pragma is read back after setting and surfaced: if the
+opens connections; INTENT.md:137, guide §157). The pragma is read back after setting and surfaced: if the
 runtime refuses it, `setup()` warns. **No opt-out in v1 is the recommendation** — without the
 pragma, even `'rebuild'` leaves text in freed pages (scenario H) — but it is **an owner
 decision (question B)**, because the pragma is connection-wide and ATTACH-wide: it changes
@@ -116,38 +116,50 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    a hand-written per-operation switch (`JobManager.ts:190-299`) — the `'*'` at
    `MaintenanceService.ts:530-531` is two distinct operations (`'reembed'`/`'global_reembed'`),
    each with its own branch. So: **add `'compact'` to both enums**; `acquireLock`/`releaseLock`
-   gain a `'compact'` case that the **`store`, `forget`, `ingest`, `import`, `librarian`,
-   `heal`, `reembed`, `ontologyBackfill`** cases must check (T4 delta-2 m1 —
-   `ontologyBackfill` writes wiki tables, `JobManager.ts:11-13`), and the `global_import`
-   pre-check (`JobManager.ts:193-195`) must cover `compact` in **both** directions (compact
-   refuses to start during a global import; a global import refuses during compact). The
-   `WikiBusyError` construction (`JobManager.ts:296-298`) passes `'*'` only for the two global
-   ops — add `'compact'` there so `WikiBusyError('compact', '*')` actually carries `'*'`.
-   **Compact's acquisition rule (T4 delta-3 MAJOR-2):** compact starts with
+   gain a `'compact'` case — and, **instead of per-arm compact checks (T4 delta-4 MAJOR-1: the
+   rev-21 per-arm enumeration missed `global_reembed`, `JobManager.ts:236-247`, and any future
+   arm), ONE universal pre-check beside the `global_import` pre-check
+   (`JobManager.ts:193-195`):**
+   `operation !== 'compact' && !(operation === 'prune' && owner === 'compact') &&
+   this.activeMaintenanceJobs.has(this._compactKey())` →
+   `throw new WikiBusyError('compact', '*')`.
+   Every present and future operation except compact itself and compact-owned prune is refused
+   while compact holds the key, in one place. The `'compact'` arm self-checks first (a second
+   concurrent `compact()` throws `WikiBusyError('compact', '*')` — mirroring the self-key
+   check that opens `global_reembed`'s arm, `JobManager.ts:237`; T4 delta-4 m2) and mirrors
+   the `global_import` pre-check so compact refuses to start during a global import (the
+   pairing is bidirectional: a global import refuses during compact via the universal
+   pre-check). The `WikiBusyError` construction (`JobManager.ts:296-298`) passes `'*'` only
+   for the two global ops — add `'compact'` there so `WikiBusyError('compact', '*')` actually
+   carries `'*'`. **Compact's acquisition rule (T4 delta-3 MAJOR-2):** compact starts with
    `acquireLock('compact', '*')`, and the `'compact'` arm mirrors `global_reembed`'s
    any-active refusal (`JobManager.ts:236-247`): it refuses while **any** per-entity
    maintenance op is active store-wide (`WikiBusyError` naming the blocking op with `'*'`).
    This is what keeps steps 5-6's store-wide VACUUM out from under an in-flight transaction —
    a librarian/ingest running when compact starts would otherwise hold the connection at step
    5 and VACUUM throws "cannot VACUUM from within a transaction". **The compact-owner
-   mechanism for step 1 (T4 delta-3 MAJOR-2 — names what rev 20 left implicit):**
+   mechanism for step 1 (T4 delta-3 MAJOR-2, param placement T4 delta-4 m4):**
    `MaintenanceService` gains a private `_runPrune(entityId, opts, owner)`; public `runPrune`
-   passes `owner: 'host'`, compact's step 1 passes `owner: 'compact'`; `acquireLock` gains an
-   optional owner argument (default `'host'`), and the `prune` arm consults the `'compact'`
-   key only when `owner !== 'compact'` — the `prune` case is the only arm that detects work
-   already in flight on the entity (`JobManager.ts:198-207`), so step 1 still calls it
-   normally. Under the start-refusal the per-entity skip is not expected to fire; it stays as
-   defense-in-depth — a lock that slipped the acquisition window surfaces as a skip
-   diagnostic, not a hard failure (if `prune` consulted the compact key for compact's own
-   call, step 1 would throw `WikiBusyError` on every entity and compact would "succeed"
-   having deleted nothing). Symmetrically, an **external standalone `runPrune` during
-   compact's steps 3-8 is refused**: `owner: 'host'` means the public path checks the compact
-   key, so a host `runPrune(e, { vacuum: true })` cannot interleave a second VACUUM /
+   passes `owner: 'host'`, compact's step 1 passes `owner: 'compact'`; `acquireLock` gains a
+   **fourth parameter** `owner` (default `'host'` — the existing third positional parameter
+   `sourceRef?`, `JobManager.ts:190`, is not reused). The universal pre-check exempts only
+   compact-owned prune; step 1 still traverses the `prune` case normally — the arm compact's
+   step 1 goes through (`JobManager.ts:198-207`; every per-entity arm detects in-flight work
+   on its own entity — T4 delta-4 m1 reword). Under the start-refusal the per-entity skip is
+   not expected to fire; it stays as defense-in-depth — a lock that slipped the acquisition
+   window surfaces as a skip diagnostic, not a hard failure (if compact-owned prune consulted
+   the compact key, step 1 would throw `WikiBusyError` on every entity and compact would
+   "succeed" having deleted nothing). Symmetrically, an **external standalone `runPrune`
+   during compact's steps 3-8 is refused**: `owner: 'host'` fails the universal pre-check's
+   exemption, so a host `runPrune(e, { vacuum: true })` cannot interleave a second VACUUM /
    `restartRebuildAfterVacuum` with compact's steps 5-6. Tests: compact with N
    entities hard-deletes in all N; a concurrent `storeSource` during compact throws
    `WikiBusyError('compact', '*')`; a standalone `runPrune` during compact throws
-   `WikiBusyError('compact', entityId)`; compact refused at start while a librarian is active
-   throws `WikiBusyError('librarian', '*')`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
+   `WikiBusyError('compact', '*')` (universal pre-check — the blocker is store-wide);
+   a second concurrent `compact()` throws `WikiBusyError('compact', '*')` (self-check); a
+   `global_reembed` during compact throws `WikiBusyError('compact', '*')` (T4 delta-4
+   MAJOR-1); compact refused at start while a librarian is active throws
+   `WikiBusyError('librarian', '*')`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -161,8 +173,12 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
 2. **Source-store GC** (§5) — **conditional on owner question E** (E=default: absent in v1;
    E=GC: drains the durable `source_gc_pending` ledger after the INTENT rule-5 amendment,
    exact-pair matching, never collect-by-absence).
-3. **Full FTS ledger drain** — entries and passages (`drainPassages`), **no deadline, errors
-   surfaced** (today `syncPassages` swallows failures, `SearchService.ts:353-355`, and
+3. **Full FTS ledger drain** — entries and passages — via a **surfaced, `syncChain`-chained
+   variant on `SearchService`** (never a bare `indexStrategy.drainPassages` call: today
+   `syncPassages` serializes the drain behind queued entry rebuilds on `this.syncChain` and
+   swallows failures, `SearchService.ts:349-357` — a bare drain would race a queued rebuild,
+   T4 delta-4 m3), **no deadline, errors surfaced** (today `syncPassages` swallows failures,
+   `SearchService.ts:353-355`, and
    `drainPassages` no-ops when passages are disabled, `Fts5IndexStrategy.ts:134`. T4 delta-2
    m2: `passagesDisabled` is set on **any** `ensurePassageObjects` throw at open
    (`Fts5IndexStrategy.ts:80-86`) — including stores with an empty passage ledger and nothing
@@ -477,7 +493,8 @@ back), and the no-opt-out pragma statement.
   `id, source_ref, source_hash` and gains a `deletedKeys` output option (for the GC ledger;
   `deletedIds` stays `string[]` — T3 delta-7 MAJOR-2).
 - `packages/core/src/services/SearchService.ts` — passage drain surfaced (no swallow) in the
-  compact path.
+  compact path — a surfaced, `syncChain`-chained variant, never a bare
+  `indexStrategy.drainPassages` (T4 delta-4 m3).
 - `apps/docs/src/content/docs/guides/deleting-data.md` — erasure section.
 - `INTENT.md` — status lines touched by this behavior (updated in the implementation PR per
   house rule).
@@ -587,8 +604,12 @@ back), and the no-opt-out pragma statement.
 ## Release
 
 Semver: new public API (`compact()`, `forget` flag) → minor. The exported `WikiBusyOperation`
-union gains `'compact'` — the one public type whose shape changes (safe under the `default`
-arm note at `types.ts:1207`; T4 delta-3 m6). **Under the recommended v1
+union gains `'compact'` — the one public type whose shape changes. **The union-widening semver
+call is a release-time owner ruling (owner question F; T4 delta-4 MAJOR-2):** the
+`types.ts:1203-1207` note records a prior widening as a **breaking change** (`import`/
+`forget` rode **v3.0.0**; exhaustive consumer switches must add a `default` arm), while
+`'ontologyBackfill'` was added afterward and rode **minor** releases (v4.21–4.23, `feat:`
+commits). Do not assert safety from the note — it documents the break. **Under the recommended v1
 default (E=default) there is no new migration**; only if owner question E answers GC does a
 migration create the `source_gc_pending` ledger table (unconditional schema — consumers run
 their migration sweep on upgrade) (T4 delta-2 MAJOR-3: the unconditional wording contradicted
@@ -629,3 +650,8 @@ gate passes (and then the one-way door applies, documented).
   `forget({ sourceRef })`/`forget({ sourceHash })` (already rule-5 paths) and `clearAll` are
   the documented erasure paths. The alternative (compact-time GC) **requires an INTENT rule-5
   amendment first** and ships the §5 blueprint design.
+- **F.** Semver for the `WikiBusyOperation` union widening (`'compact'`; T4 delta-4 MAJOR-2):
+  the `types.ts:1203-1207` note records a prior widening as **breaking** (`import`/`forget`
+  rode v3.0.0), while `'ontologyBackfill'` rode minor releases afterward (v4.21–4.23). Ride
+  the minor (recommended — the union is diagnostic metadata on an error type) or force a
+  major? Ruled at release time, before the version bump.
