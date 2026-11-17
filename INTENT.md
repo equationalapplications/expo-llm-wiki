@@ -108,21 +108,22 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
 - **Adoption gate** — a measured condition (correctness, performance,
   parity) that must pass before the native crate replaces a TypeScript
   path in production.
-- **Superseded** — a fact replaced by a newer fact through the
-  librarian's UPDATE or SUPERSEDE path. The old fact stays in the
+- **Superseded** — a fact whose validity has ended: replaced by a newer
+  fact through the librarian's UPDATE or SUPERSEDE path, or ended
+  without a replacement by `expire()`. An archive is a superseded
+  fact. It stays in the
   store, marked, until the retention window ends; its text is history
-  the host chose to keep, not a forgotten row. Erase never shortens the
-  host's chosen window for it; once that window ends, an aged superseded
-  fact becomes forgotten like any other.
+  the host chose to keep, not a forgotten row. Erase never shortens
+  the host's chosen window for it; once that window ends, an aged
+  superseded fact becomes forgotten like any other.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
   or through the chain or source paths). Between the `forget()` call
   and the hard delete it is soft-deleted: present in the file,
   invisible to reads. "Forgotten" is an instruction, not a state the
   storage layer has honored yet.
 - **Gone** — hard-deleted by prune. The rows are deleted but the text
-  may still be recovered from the raw database file. Verified by
-  reading the file back, not by trusting a delete's return value — but
-  only `erase()` guarantees it.
+  may still be recovered from the raw database file. Only `erase()`
+  takes a forgotten fact all the way to erased.
 - **Erased** — the engine's claim, delivered in an `erase()` report,
   that the bytes are unrecoverable. The claim is only as honest as its
   verification: it names the runtime, the `secure_delete` state, each
@@ -390,7 +391,7 @@ reports the values in force, and every host can change them.
 
 *Why:* "trust me, it's deleted" is the one promise that cannot be made
 cheaply — the storage layer keeps bytes after deletes, so only
-verification distinguishes gone from forgotten. The same honesty
+verification distinguishes erased from gone. The same honesty
 applies to what travels: a dump that resurrects a forgotten fact would
 break the erasure promise through the export door.
 
