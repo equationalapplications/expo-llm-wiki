@@ -1,8 +1,9 @@
 # Forget must erase — FTS5 erasure, chain forget, erase()
 
 **Status: Draft rev 28 — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
-genericized all private-repo host references per owner ruling (2026-11-17: SynapseTree is
-private and provides no value to the engine's public docs — retention opinions stay
+genericized all private-repo host references per owner ruling (2026-11-17: the family's
+hosted cloud service is private and provides no value to the engine's public docs —
+retention opinions stay
 host-side). Rulings folded in rev 27: strict
 store-wide erase, no retention override (A); secure_delete always-on at FULL, no opt-out,
 failed pre-check = honest failure (B); gated immediate-erasure DEFERRED to a later explicit
