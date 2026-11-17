@@ -1,6 +1,7 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 22 — T4 delta-4 findings folded. INTENT
+**Status: Draft rev 23 — T4 delta-5 findings folded; NOT CONVERGED (delta majors held at 2
+across 3 consecutive rounds — early hand-off checkpoint to owner). INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -135,9 +136,29 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    `acquireLock('compact', '*')`, and the `'compact'` arm mirrors `global_reembed`'s
    any-active refusal (`JobManager.ts:236-247`): it refuses while **any** per-entity
    maintenance op is active store-wide (`WikiBusyError` naming the blocking op with `'*'`).
+   The suffix scans **subsume the global keys** — `_globalReembedKey()` is
+   `${prefix}:reembed` (`JobManager.ts:89`) and matches the `:reembed` suffix scan
+   (`JobManager.ts:154`) — so a running global re-embed is caught; state this explicitly in
+   the arm so a from-scratch implementation does not scan only per-entity keys (T4 delta-5
+   MAJOR-2: the reviewer's interleaving scenario is disproved by the key shape, but the
+   explicit check + reverse-direction test are folded as hardening: compact refused while a
+   global re-embed is active throws `WikiBusyError('reembed', '*')`).
    This is what keeps steps 5-6's store-wide VACUUM out from under an in-flight transaction —
    a librarian/ingest running when compact starts would otherwise hold the connection at step
-   5 and VACUUM throws "cannot VACUUM from within a transaction". **The compact-owner
+   5 and VACUUM throws "cannot VACUUM from within a transaction". **Fence boundary (T4
+   delta-5 MAJOR-1):** the start refusal fences only operations that **call `acquireLock`**
+   (librarian, heal, ingest, store, prune, ontologyBackfill, forget, reembed/global_reembed —
+   plus compact itself). `write()`/`remember()` event appends run `withTransactionAsync`
+   **without any lock** (`WriteService.ts:102`, `:125+`; the only lock in that file is the
+   inline librarian at `:172`), and the setup-time external-deletion drain runs unlocked
+   short transactions on the shared connection for up to 10 s (guide 108-113). These paths
+   are **not fenced**: a write transaction open between compact's steps 4 and 5 makes step
+   5's VACUUM throw "cannot VACUUM from within a transaction". That failure is a **reported,
+   retryable step failure** under the T3 M7 semantics: compact has pruned but **not erased**,
+   the report says exactly that (bytes may remain in freed pages/`%_data`), and the host
+   re-runs compact — it is never a false success. (§5's concurrent-`remember` caveat is the
+   same unfenced boundary.) Test: a `write()` racing compact's step 5 surfaces the
+   deterministic step-5 failure rather than success. **The compact-owner
    mechanism for step 1 (T4 delta-3 MAJOR-2, param placement T4 delta-4 m4):**
    `MaintenanceService` gains a private `_runPrune(entityId, opts, owner)`; public `runPrune`
    passes `owner: 'host'`, compact's step 1 passes `owner: 'compact'`; `acquireLock` gains a
@@ -191,7 +212,11 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    table's `%_content` holds verbatim fact text and VACUUM would copy it intact — T3 M4).
    Required **whenever retired tables exist, even if `entries_fts` itself is missing** (a
    forced reset on a runtime where FTS later became unavailable still leaves verbatim text in
-   the retired shadows — T3 delta m1).
+   the retired shadows — T3 delta m1). **Re-run after step 6 (T4 delta-5 m2):** a corruption
+   reset during step 6's `syncEntries` can mint a fresh `entries_fts_retired_N` after step 4
+   already ran (retirement happens only in `resetAndRearm`, `Fts5IndexStrategy.ts:307-324`) —
+   compact **re-runs step 4 after step 6** (cheap when the list is empty), and the test
+   asserts **no `entries_fts_retired_*` table exists when compact returns**.
 5. **Wrapped VACUUM** — the watermark-safe sequence `resetNormalizeWatermarks` →
    `metadataRepo.vacuum()` → `restartRebuildAfterVacuum` (`MaintenanceService.ts:443-449`:
    VACUUM may renumber rowids; a watermark must never survive it; the restarted rebuild must
@@ -216,7 +241,8 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    `runPrune` synced — a superset of the hard-deleted ids** (it may include
    `pruneSupersededAfter`-soft-deleted ids seeded at `:288`, and on hookless/legacy gates
    `deletable` is the requested list, so a row restored mid-run can appear). Step 6 treats it
-   as best-effort input (`syncEntries` throws out and re-reads each id; extra ids are
+   as best-effort input (`syncEntries` discards and re-reads each id — T4 delta-5 m3 wording:
+   "throws out" read as "throws"; extra ids are
    harmless); the test asserts **containment**, not exact equality. **The output array is filled before
    `PrunePartialFailureError` throws** (at the `syncedIds` assembly, `:393`/`:451-455`), so a
    held-back entity still contributes its deleted ids to step 6 — test: a hold and a
@@ -236,7 +262,10 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    checkpoints (the existing pre-VACUUM one and the new post-VACUUM one) run via
    `getFirstAsync` and treat `busy !== 0` or `log !== checkpointed` as a surfaced step
    failure (`compact_checkpoint_incomplete` diagnostic; the compact report marks erasure
-   **unverified**). Test: a two-connection fixture (a second reader holding a read open)
+   **unverified**). Non-WAL stores: `PRAGMA wal_checkpoint` returns `(0, -1, -1)` off-WAL,
+   which passes the `busy !== 0 || log !== checkpointed` test as "complete" — state this so
+   the implementer does not "fix" it into a `log === 0` check (T4 delta-5 m5). Test: a
+   two-connection fixture (a second reader holding a read open)
    asserts compact surfaces the incomplete-checkpoint diagnostic instead of returning
    success.
 
@@ -289,7 +318,12 @@ typing and dry-run selector rules changed here must not box that selector in.
 every existing store as "done" while the gate passes no runtime today — upgraded stores would
 **never** get the option even after a fixed SQLite ships. Instead the gate is evaluated **on
 every open** inside `Fts5IndexStrategy.init` / `ensurePassageObjects` / `rearmInTx` via an
-idempotent `ft_config` write: option set when the runtime passes the gate, otherwise skipped
+idempotent write in the **documented FTS5 command form** —
+`INSERT INTO entries_fts(entries_fts, rank) VALUES('secure-delete', 1)` — which bumps the
+config cookie so FTS5 reloads it and performs the format-5 upgrade the spec treats as the
+one-way door (a direct `%_config` shadow-row write does neither and is undocumented; T4
+delta-5 m1). `ft_config` stays the **read-back** surface: option set when the runtime passes
+the gate, otherwise skipped
 with a surfaced warning. The compact-time guarantee (§1-2) is unaffected either way.
 
 **The gate is lower-bounded on the pinned first-good release — never an exclusion of a
@@ -468,7 +502,9 @@ back), and the no-opt-out pragma statement.
 ## Files touched
 
 - `packages/core/src/services/search/Fts5IndexStrategy.ts` — per-open gated option set
-  (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent `ft_config` write); compact-time
+  (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent write in the documented FTS5
+  command form — `INSERT INTO entries_fts(entries_fts, rank) VALUES('secure-delete', 1)` —
+  with `ft_config` as the read-back; T4 delta-5 m1); compact-time
   retired-table reclaim-to-completion + full ledger drain with surfaced errors.
 - `packages/core/src/db/migrations.ts` — **only if owner question E answers GC**: new
   migration for the `source_gc_pending` ledger table (unconditional schema). No option
@@ -604,7 +640,10 @@ back), and the no-opt-out pragma statement.
 ## Release
 
 Semver: new public API (`compact()`, `forget` flag) → minor. The exported `WikiBusyOperation`
-union gains `'compact'` — the one public type whose shape changes. **The union-widening semver
+union gains `'compact'` — the one public type whose shape changes. **The dry-run lift widens
+two more public shapes additively and optionally (minor-safe; T4 delta-5 m4):**
+`ForgetParams` gains `includeChain?`, `ForgetResult` gains `chainEntryIds`/`truncated`.
+**The union-widening semver
 call is a release-time owner ruling (owner question F; T4 delta-4 MAJOR-2):** the
 `types.ts:1203-1207` note records a prior widening as a **breaking change** (`import`/
 `forget` rode **v3.0.0**; exhaustive consumer switches must add a `default` arm), while
