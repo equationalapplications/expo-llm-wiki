@@ -191,12 +191,13 @@ new migration — none, ever**, rulings C+E).
   the tombstone (forget wins over re-ingest). Scope is both kinds of row: a live dump **fact**
   whose id is locally tombstoned is skipped, and so is a live dump **task**; a dump tombstone
   for either kind of row applies even when the merge recency check would skip the row. Rows the
-  replace-import wipe itself just tombstoned are exempt (they are this import's own doing, not
-  forgets).
+  replace-import wipe itself just tombstoned are exempt — but only until the first dump row for
+  that id is accepted; the exemption is consumed, so an explicit dump tombstone can never be
+  overwritten by its own later live row.
 Acceptance:
 - AC1: `exportDump()` excludes forgotten rows by default; `includeForgotten: true` includes them.
 - AC2: import with tombstone for a live ref → ref stays tombstoned (forget wins), for facts and
-  tasks alike; replace-import wipes are exempt.
+  tasks alike; replace-import wipes are exempt until a dump row for the id is accepted.
 - AC3: `getRetentionPolicy()` returns the configured retention declaration.
 
 ### T9 — Docs, JSDoc policy, INTENT status lines (spec §6, Release, ruling D)

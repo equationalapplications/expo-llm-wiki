@@ -112,4 +112,33 @@ describe('GDPR additions (spec §8)', () => {
     expect(row!.deleted_at).toBeNull();
     expect(row!.description).toBe('replacement task');
   });
+
+  it('AC8: replace mode — a dump tombstone consumed by its own live row cannot resurrect through the wipe exemption', async () => {
+    const { raw, wiki } = await make();
+    await raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at) VALUES (?, 'e1', 'live task', 'pending', 0, 1, 1)`,
+      ['t1'],
+    );
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    const base = { id: 't1', entity_id: 'e1', description: 'x', status: 'pending', priority: 0, created_at: 1, resolved_at: null };
+    dump.entities.e1.tasks = [
+      { ...base, updated_at: 100, deleted_at: 50 }, // explicit dump tombstone
+      { ...base, description: 're-ingested task', updated_at: 200, deleted_at: null }, // its own live row
+    ];
+    await wiki.importDump(dump); // replace mode: wipe adds t1 to the exemption set
+    const row = await raw.getFirstAsync<{ deleted_at: number | null; description: string }>(`SELECT deleted_at, description FROM ${P}tasks WHERE id = 't1'`);
+    expect(row!.deleted_at).toBe(50);
+    expect(row!.description).toBe('x');
+  });
+
+  it('AC9: replace mode — same exemption hole closed for facts', async () => {
+    const { raw, wiki } = await make();
+    await ins(raw, 'a', null);
+    const dump = await wiki.exportDump(undefined, { includeForgotten: true });
+    const live = dump.entities.e1.facts.find((f: any) => f.id === 'a')!;
+    dump.entities.e1.facts = [{ ...live, deleted_at: 50, updated_at: 100 }, { ...live, updated_at: 200 }];
+    await wiki.importDump(dump); // replace mode: wipe adds 'a' to the exemption set
+    const row = await raw.getFirstAsync<{ deleted_at: number | null }>(`SELECT deleted_at FROM ${P}entries WHERE id = 'a'`);
+    expect(row!.deleted_at).toBe(50);
+  });
 });

@@ -512,6 +512,11 @@ export class ImportExportService {
           updated_at: safeUpdatedAt,
           deleted_at: fact.deleted_at ?? null,
         });
+        // Consume the replace-wipe exemption on the first accepted row for this
+        // id: after an explicit dump row is stored, later rows for the same id
+        // face the tombstone guard like any other row — a dump carrying
+        // [tombstone, live] for a wiped id must not resurrect via the exemption.
+        wipedByThisImport.delete(fact.id);
         upsertedFactIds.add(fact.id);
         if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
       }
@@ -597,6 +602,10 @@ export class ImportExportService {
           updated_at: safeUpdatedAt,
           deleted_at: task.deleted_at ?? null,
         });
+        // Consume the replace-wipe exemption after an accepted row (mirrors the
+        // fact branch above): an explicit dump tombstone must not be revocable
+        // by its own later live row through the exemption.
+        wipedTasksByThisImport.delete(task.id);
       }
 
       // created_at means "when stored". Three kinds of value break that: a

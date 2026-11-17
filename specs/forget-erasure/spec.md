@@ -808,6 +808,7 @@ rows unless the caller asks for a backup dump; **`getRetentionPolicy()`** — re
 host's declaration and the engine reads it back on request; and the **tombstone-wins import
 guard** — an import whose dump carries a `deleted_at` tombstone keeps the
 tombstone (forget wins over re-ingest; the guard covers live fact rows and live task rows
-alike, exempting rows the replace-import wipe itself tombstoned). The engine makes GDPR compliance possible for its
+alike, with the replace-import wipe exemption consumed by the first accepted dump row for an
+id, so a dump tombstone is never overwritten by its own live row). The engine makes GDPR compliance possible for its
 hosts; it does not perform it for them.
 

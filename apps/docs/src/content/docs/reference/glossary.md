@@ -25,8 +25,10 @@ recall — a lesser model navigating a well-built graph outperforms a cleverer m
 
 **Episodic memory** — the event log. Every observation, decision, action, and outcome is kept as
 an event; facts are (re)derived from it. Events follow the host's `retainEventsFor` window: a
-`runPrune()` with events retention set deletes events that pass the window and the librarian
-watermark, on the host's schedule. `clearAll` deletes all events only with
+`runPrune()` with events retention set deletes events past the window on the host's schedule —
+under deferred maintenance or the `ops` librarian strategy only events the librarian watermark
+has already passed are deleted, but in any other configuration events past the window are
+deleted without a watermark check. `clearAll` deletes all events only with
 `includeEvents: true`; plain erasure keeps them (see [Deleting data](/expo-llm-wiki/guides/deleting-data/)).
 
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is

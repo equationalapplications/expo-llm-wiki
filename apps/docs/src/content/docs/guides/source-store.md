@@ -39,11 +39,12 @@ windows later.
   contains a NUL or lone surrogate comes back as
   `{ stored: false, diagnostics }`. Each diagnostic also fires on `onDiagnostic` with
   `operation: 'sourceStore'`. See [Diagnostics](/expo-llm-wiki/guides/diagnostics/#codes) for the
-  five codes. One check is *reactive*, not a refusal at write time: `sourceHash` is accepted as
-  given on a new ref — a value that is not the hash of `text` is only detected (and refused as
-  `source_store_hash_mismatch`) when the same ref is stored again with the same claimed hash but
-  different text. Callers that need provenance verified at write time must hash the text
-  themselves before calling.
+  five codes. There is no hash verification at write time: the claimed `sourceHash` is
+  never compared against the text. Re-storing a ref is compared against the *previously
+  stored text* instead — `source_store_hash_mismatch` fires when the same ref comes back
+  with the same claimed hash but text whose content hash differs from the stored copy.
+  Storing the same text again with the same wrong `sourceHash` succeeds; callers that need
+  provenance verified must hash the text themselves before calling.
 - **Throws are for invalid calls only — and for database failures.** A bad `sourceRef`, a
   `sourceHash` that isn't 64-char hex, or a non-string `text` throws before anything is written.
   A busy lock (`WikiBusyError`) throws too — retry later, like any other writer. A failed
