@@ -90,9 +90,13 @@ pragma itself. `erase()` checks the pragma of its own connection before it start
 `secure_delete` is off there, erasure fails with an `erase_secure_delete_off` diagnostic and is
 marked unverified — never a false success.
 
-On a runtime where FTS5 is permanently unavailable, `erase()` refuses (unverified) until the
-pending FTS ledgers (`fts_pending` and `source_passages_fts_pending`) are empty, because text the
-engine could not drain from the full-text index cannot be claimed erased.
+When FTS5 init fails on an open and the engine falls back to its unavailable-strategy mode
+(FTS tables still present), `erase()` refuses (unverified) until the pending FTS ledgers
+(`fts_pending` and `source_passages_fts_pending`) are empty, because text the engine could not
+drain from the full-text index cannot be claimed erased. A module-less runtime that earlier ran
+FTS5 keeps the full-text content tables, whose stored text `erase()` does not reach today —
+erase may still report verified there; the limitation is tracked in
+[issue #407](https://github.com/equationalapplications/expo-llm-wiki/issues/407).
 
 Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
 opt-out.

@@ -59,6 +59,7 @@ const wiki = createWiki(db, {
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet. To delete them on request, see [Wipe an entity completely](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely) |
 | `import_tombstone_skipped` | `importDump` skipped live dump rows whose ids were forgotten locally (forget wins) (`detail.count`) |
+| `prune_checkpoint_incomplete` (`warn`) | A prune ran with a partial failure and the post-VACUUM WAL checkpoint was also incomplete; deleted bytes may remain in the WAL |
 | `event_created_at_clamped` | `importDump` re-dated future-dated events just after the current time, or after the librarian position if later (`detail.count`) |
 | `event_created_at_restamped` | `importDump` re-dated events that would have sorted behind the librarian position or had an unusable `created_at`, or cleared an unusable `occurred_at` (`detail.count`, `detail.reason`) |
 | `source_store_source_too_large` | A source document exceeded the per-document size cap and was not stored |

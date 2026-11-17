@@ -305,9 +305,13 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    to erase — so erase **fails and reports** rather than claiming erasure (T3 M7) only when
    `passagesDisabled` **and** the `source_passages_fts_pending` ledger has rows (the ledger
    probe, `Fts5IndexStrategy.ts:136`, already exists); otherwise it warns and continues).
-   Errata (delta r2, 2026-11-17): on a runtime where FTS5 init failed permanently, erase fails
-   with an unverified report whenever either FTS ledger still holds rows — a store whose FTS text
-   was never drained cannot be claimed erased.
+   Errata (delta r2/r3, 2026-11-17): when FTS5 init fails on this open and the engine falls
+   back to `UnavailableIndexStrategy` (FTS tables still present, triggers alive), erase fails
+   with an unverified report whenever either FTS ledger still holds rows — queued deletes mean
+   undrained text, which cannot be claimed erased. A runtime that never had FTS5 at all
+   detaches with the ledgers dropped (nothing to drain). A module-less runtime that earlier ran
+   FTS5 keeps the live `entries_fts`/`source_passages_fts` content tables, whose stored text
+   erase does not reach today — known limitation, tracked in issue #407.
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired
@@ -394,11 +398,14 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    asserts erase surfaces the incomplete-checkpoint diagnostic instead of returning
    success.
 
-A store with no FTS tables (no-FTS runtime — hosts whose FTS5 availability probe fails, so
+A store with no FTS tables (hosts whose FTS5 availability probe fails on every open, so
 `createIndexStrategy.ts` falls back to `UnavailableIndexStrategy` (`createIndexStrategy.ts:123`);
 there is no `enableFTS` option in the tree, T4 delta-6 m2) skips the FTS
 steps (3, 4, 7) for surfaces that don't exist — but step 4 still runs for any retired tables
-left behind — and remains correct: there is nothing to drain or optimize,
+left behind, and step 3's ledger guard fails the erase (unverified) whenever either FTS ledger
+still holds rows (delta r2 errata, above). A module-less runtime that earlier ran FTS5 keeps
+the live FTS content tables, whose stored text erase does not reach today — issue #407.
+For a runtime that never had FTS5 at all there is nothing to drain or optimize,
 and the other steps still erase. **`syncEntries` never rejects** (`SearchService.ts:199-208`) —
 it **resolves `false` only when a ledger drain failed** (the caller's ids were not applied), so
 step 6 treats a `false` return as a **failed step** (T4 m3). VACUUM and checkpoint are whole-file operations — they
