@@ -884,6 +884,9 @@ export type WikiDiagnosticCode =
   | 'resolve_failed'
   | 'read_budget'
   | 'event_retention_held'
+  | 'erase_secure_delete_off'
+  | 'erase_entity_skipped'
+  | 'erase_registry_sweep_skipped'
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
   | 'external_deletion_pending'
@@ -900,7 +903,7 @@ export type WikiDiagnosticCode =
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore' | 'erase';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';

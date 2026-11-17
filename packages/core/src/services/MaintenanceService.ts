@@ -9,7 +9,7 @@ import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
-import { PrunePartialFailureError } from '../types';
+import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
 import { removalGate, type VectorRemovalService } from './VectorRemovalService';
 import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
@@ -218,6 +218,34 @@ export const formatSkipError = (err: unknown): string => {
   return base;
 };
 
+/** Report of the erase core (steps 0/1/1b); T6 extends it with the file steps. */
+export interface EraseReport {
+  /** True only when every step ran and the pragma read back ON. */
+  verified: boolean;
+  /** `PRAGMA secure_delete` as read back on the connection (1 = ON). */
+  secureDelete: number | null;
+  sqliteVersion: string;
+  /** Entities step 1 enumerated. */
+  entities: string[];
+  /** External-removal holds, per entity (event-retention holds cannot arise: events are kept). */
+  holds: Array<{ entityId: string; deleted: number; deletedTasks: number; failedAt: string; remaining: number }>;
+  /** Entities skipped because their per-entity prune lock was busy. */
+  skipped: string[];
+  /** Superset of the hard-deleted entry ids, for the step-6 index sync (containment, not equality). */
+  syncedIds: string[];
+  registrySweep: { skipped: boolean; deleted: number };
+  failedStep: 'secure_delete' | 'prune' | 'registry_sweep' | null;
+}
+
+/** A failed erase step: carries the partial report (`verified: false`). */
+export class EraseStepError extends Error {
+  constructor(readonly code: string, message: string, readonly report: EraseReport, cause?: unknown) {
+    super(message);
+    this.name = 'EraseStepError';
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
 export class MaintenanceService {
   private promptService: PromptService;
 
@@ -246,7 +274,7 @@ export class MaintenanceService {
 
   private edgeRepo: EdgeRepository;
 
-  async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
+  async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[] }): Promise<{ entries: number; tasks: number; events: number }> {
     return this._runPrune(entityId, options, 'host');
   }
 
@@ -257,7 +285,7 @@ export class MaintenanceService {
    */
   private async _runPrune(
     entityId: string,
-    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean } | undefined,
+    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[] } | undefined,
     owner: 'host' | 'erase',
   ): Promise<{ entries: number; tasks: number; events: number }> {
     this.jobManager.acquireLock('prune', entityId, undefined, owner);
@@ -461,6 +489,9 @@ export class MaintenanceService {
         await restartRebuildAfterVacuum(this.db, this.prefix, this.metadataRepo);
       }
 
+      // Output param (erase step 6): filled before anything below can throw.
+      // Contract: a superset of the hard-deleted ids, consumed by containment.
+      if (options?.syncedIds) options.syncedIds.push(...syncedIds);
       await this.searchService.syncEntries(entityId, syncedIds);
       if (prunePartial) {
         throw new PrunePartialFailureError(
@@ -470,6 +501,81 @@ export class MaintenanceService {
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.jobManager.releaseLock('prune', entityId);
+    }
+  }
+
+  /**
+   * Erase core (forget-erasure spec §2, steps 0 / 1 / 1b). Thin entry: T6
+   * completes the pipeline (FTS, VACUUM, checkpoint, sync). Never reports a
+   * success it cannot verify: a failed step throws {@link EraseStepError}
+   * carrying the partial report with `verified: false`.
+   */
+  async erase(): Promise<EraseReport> {
+    this.jobManager.acquireLock('erase', '*');
+    const report: EraseReport = {
+      verified: false, secureDelete: null, sqliteVersion: '', entities: [], holds: [],
+      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null,
+    };
+    try {
+      // Step 0 (ruling B): the pragma is load-bearing and a host can flip it on
+      // the shared connection after setup(); verify on the connection in use.
+      const readPragma = async () =>
+        (await this.db.getFirstAsync<{ secure_delete: number }>('PRAGMA secure_delete'))?.secure_delete ?? null;
+      let pragma = await readPragma();
+      if (pragma !== 1) {
+        await this.db.execAsync('PRAGMA secure_delete=ON');
+        pragma = await readPragma();
+      }
+      report.secureDelete = pragma;
+      report.sqliteVersion = (await this.db.getFirstAsync<{ v: string }>('SELECT sqlite_version() AS v'))?.v ?? '';
+      if (pragma !== 1) {
+        emitDiagnostic(this.options, { code: 'erase_secure_delete_off', operation: 'erase', trigger: 'call', entityId: '' });
+        report.failedStep = 'secure_delete';
+        throw new EraseStepError('erase_secure_delete_off', 'erase stopped at step 0: secure_delete is not ON; erasure is unverified', report);
+      }
+
+      // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
+      report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Date.now() });
+      for (const entityId of report.entities) {
+        const syncedIds: string[] = [];
+        try {
+          await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds }, 'erase');
+        } catch (err) {
+          if (err instanceof PrunePartialFailureError) {
+            report.holds.push({ entityId, deleted: err.deleted, deletedTasks: err.deletedTasks, failedAt: err.failedAt, remaining: err.remaining });
+          } else if (err instanceof WikiBusyError) {
+            report.skipped.push(entityId);
+            emitDiagnostic(this.options, { code: 'erase_entity_skipped', operation: 'erase', trigger: 'call', entityId });
+          } else {
+            report.failedStep = 'prune';
+            throw new EraseStepError('erase_prune_failed', `erase stopped at step 1 (entity ${entityId})`, report, err);
+          }
+        }
+        report.syncedIds.push(...syncedIds);
+      }
+
+      // Step 1b (ruling G): store-wide tombstone sweep, only when the table exists.
+      try {
+        await this.db.withTransactionAsync(async (tx) => {
+          if (await this.sourceRefIndexPresent(tx)) {
+            const r = await tx.runAsync(`DELETE FROM ${this.prefix}source_ref_index WHERE deleted_at IS NOT NULL`);
+            report.registrySweep = { skipped: false, deleted: r.changes };
+          } else {
+            report.registrySweep = { skipped: true, deleted: 0 };
+          }
+        });
+      } catch (err) {
+        report.failedStep = 'registry_sweep';
+        throw new EraseStepError('erase_registry_sweep_failed', 'erase stopped at step 1b', report, err);
+      }
+      if (report.registrySweep.skipped) {
+        emitDiagnostic(this.options, { code: 'erase_registry_sweep_skipped', operation: 'erase', trigger: 'call', entityId: '' });
+      }
+
+      report.verified = true;
+      return report;
+    } finally {
+      this.jobManager.releaseLock('erase', '*');
     }
   }
 
