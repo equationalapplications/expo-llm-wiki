@@ -330,8 +330,9 @@ replacement; `expire()` ends a fact's validity without a replacement —
 an archive, not a deletion); `forget()` forgets it;
 `runPrune` applies the retention windows that turn superseded into
 forgotten and forgotten into gone on the host's schedule; `erase()`
-takes every forgotten fact in scope past gone, verified by reading the
-file back. `remember` and `ingestDocument` create facts; they do not
+takes every forgotten fact in scope past gone, verified by what the
+database itself reports back: the pragma state, each step's outcome,
+the checkpoint result. `remember` and `ingestDocument` create facts; they do not
 move a fact between states. "Erased" is not a fifth state: it is the
 verified outcome of `erase()`, a claim in its report.
 
@@ -340,8 +341,8 @@ text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
 visible. Today forget, prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
-canary-reproducible), which is why `erase()` exists and verifies the
-file before it claims erasure. The retention windows are the host's
+canary-reproducible), which is why `erase()` exists and claims
+erasure only on the database's own read-back. The retention windows are the host's
 declaration, readable back through `getRetentionPolicy()`. `expire()`
 is ratified and needs a spec home before it is built.
 
@@ -363,8 +364,7 @@ reports the values in force, and every host can change them.
 cheaply — the storage layer keeps bytes after deletes, so only
 verification distinguishes erased from gone. The same honesty
 applies to what travels: a dump that resurrects a forgotten fact would
-break the erasure promise through the export door. Nothing erases
-today; the guarantee ships with `specs/forget-erasure/`.
+break the erasure promise through the export door.
 
 ## Out of scope (don't build these here)
 
