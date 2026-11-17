@@ -5,13 +5,13 @@ it must follow, what it deliberately does not do, and how changes are made.
 
 Two documents sit above and below this one:
 
-- **Above it:** the SynapseTree founding charter
-  (`SynapseTree/docs/founding/INTENT.md`, in the sibling repository). That
-  charter decides what the memory engine promises its users: bring your own
+- **Above it:** the founding charter of the family's hosted cloud service
+  (in a private sibling repository). That charter decides what the hosted
+  service promises its users: bring your own
   inference, your data stays yours, search that bends when your provider
   fails, no invisible spend, and the rest. This file does not restate or
-  re-decide any of it. Where this file and the charter disagree, the charter
-  wins, and this file gets amended.
+  re-decide any of it. Where this file and that charter disagree, that
+  charter wins, and this file gets amended.
 - **Below it:** the specs, one folder each under `specs/<name>/` (see
   `specs/README.md`; work from before 2026-11-01 stays in
   `docs/superpowers/specs/`). If this file and a spec disagree, this file
@@ -33,7 +33,8 @@ file carries order only; status stays in the lines described above.
 
 ## Why this repository exists
 
-SynapseTree is one memory engine with two doors: a cloud service and an
+The family's memory platform is one memory engine with two doors: a hosted
+cloud service and an
 installed package. This repository is the installed package. The charter
 names the Expo package as the door for phone apps and the core package as
 the door for everything else. The same engine code runs behind both doors.
@@ -43,16 +44,16 @@ Three kinds of software depend on what is published from here:
 - **Curated Thoughts**, the desktop app, pins an exact core version and
   checks the wiki tables' schema at startup from Rust before the JavaScript
   engine loads.
-- **SynapseTree's cloud service**, which runs the engine in-process over one
-  SQLite file per tenant.
+- **Hosted multi-tenant deployments**, which run the engine in-process over
+  one SQLite file per tenant.
 - **Developers on npm**, who install one of the published packages into an
   Expo, React, Node, or plain JavaScript app, and who can try the engine in
   the browser playground published to GitHub Pages.
 
 The repository is a pnpm monorepo. Published packages live under
 `packages/` (core, expo, react, okf, core-llm-tools, schema-org,
-schema-software-org, prisma-outbox, and `mcp-server`, the SynapseTree
-agent door; see `specs/mcp-server/spec.md`). Two packages are private and never
+schema-software-org, prisma-outbox, and `mcp-server`, the agent
+door to the hosted cloud service; see `specs/mcp-server/spec.md`). Two packages are private and never
 published: `integration` (integration tests) and `benchmarks` (the
 benchmark harness). Two browser apps live under `apps/`. A Rust crate,
 `crates/graphrag-core`, holds the start of a native engine.
@@ -138,8 +139,8 @@ function, retrieval is keyword search in-process.
 *(Scope note, added 2026-11-01 with PR #305: this rule governs the engine
 packages — the libraries a host embeds. `packages/mcp-server`, the agent
 door approved by Kurt VanDusen on 2026-11-01, is a credential-carrying
-stdio server by design: it holds the user's SynapseTree API key, calls
-the SynapseTree cloud API, and never embeds this engine or calls any
+stdio server by design: it holds the user's hosted-cloud API key, calls
+the hosted cloud API, and never embeds this engine or calls any
 model.)*
 
 *Why:* this is the charter's bring-your-own-inference promise, rendered
@@ -391,8 +392,8 @@ guarantee ships with `specs/forget-erasure/`.
 
 ## Out of scope (don't build these here)
 
-- A hosted service inside the package. The cloud door is SynapseTree's
-  repository; this one ships code that runs in the host's process.
+- A hosted service inside the package. The cloud door lives in a separate
+  (private) repository; this one ships code that runs in the host's process.
 - A bundled model, a default provider, or key storage. See rule 1.
 - An external graph database. Graph retrieval runs on SQLite with one
   recursive query, and stays that way.

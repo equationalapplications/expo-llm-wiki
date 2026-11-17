@@ -1,6 +1,9 @@
 # Forget must erase — FTS5 erasure, chain forget, erase()
 
-**Status: Draft rev 27 — owner spec stop A–H RATIFIED (2026-11-17) and folded: strict
+**Status: Draft rev 28 — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
+genericized all private-repo host references per owner ruling (2026-11-17: SynapseTree is
+private and provides no value to the engine's public docs — retention opinions stay
+host-side). Rulings folded in rev 27: strict
 store-wide erase, no retention override (A); secure_delete always-on at FULL, no opt-out,
 failed pre-check = honest failure (B); gated immediate-erasure DEFERRED to a later explicit
 host opt-in, never self-arming (C); documented host-step carve-out for events/summaries (D);
@@ -15,9 +18,9 @@ rule-5 amendment is needed; the GC alternative is rejected, not deferred.**
 
 A `forget()` call does not erase. Facts are soft-deleted and hard-delete only through
 `runPrune` (default 7-day retention); FTS5 postings and row content survive deletes in the
-database file; WAL/journal residue is host-dependent. The hosted consumer (SynapseTree) gates
-its privacy promises on real erasure: charter rule 8 promises deletion — INTENT.md:468 says
-"a delete the host's index never heard about is not done"; this spec **extends that precedent**
+database file; WAL/journal residue is host-dependent. A hosted deployment gates
+its privacy promises on real erasure: its founding charter promises
+deletion — "a delete the host's index never heard about is not done"; this spec **extends that precedent**
 to storage: a delete whose text is still recoverable from the store file is not done (§2 "Your
 database stays yours", INTENT.md:135).
 
@@ -539,8 +542,7 @@ back), the **VACUUM temporary-database residue window** (investigation §3.5 cen
 builds its temp copy outside the main file — host guidance is `PRAGMA temp_store=MEMORY`
 for the erase call; T4 delta-7 m2), and the no-opt-out pragma statement
 (`secure_delete=FULL`, always on — owner ruling B). Ruling D's guide sentences: events
-follow the host's `retainEventsFor`, and SynapseTree's charter rule 12 is the cloud's value
-of it; a **"handling an erasure request" recipe** names `forget({ eventId })` (#386) as the
+follow the host's `retainEventsFor` — each host publishes its own value; a **"handling an erasure request" recipe** names `forget({ eventId })` (#386) as the
 prerequisite path for retained quotes — a host that claims GDPR erasure needs it, it is not
 a convenience follow-up.
 
@@ -744,7 +746,7 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
 - **D (events/summaries).** Documented **host-step carve-out**: the guide names the
   `clearAll({ includeEvents: true })` full-wipe path and `forget({ eventId })` (#386) as the
   prerequisite for any host claiming GDPR erasure; events follow the host's
-  `retainEventsFor`, and SynapseTree's charter rule 12 is the cloud's value of it (GDPR
+  `retainEventsFor` — each host publishes its own value (GDPR
   consult §8-D reframes the carve-out around the erasure-request recipe). Folded: §6.
 - **E (source ownership).** **Document-as-host-property, no engine GC** — final. Standing
   owner principle, first-class: *"we cannot violate the founding principle of the LLM Wiki
