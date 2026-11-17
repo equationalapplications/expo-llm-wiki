@@ -3,42 +3,28 @@
 **Read this file first.** It explains why this repository exists, the rules
 it must follow, what it deliberately does not do, and how changes are made.
 
-Two documents sit above and below this one:
+One document sits below this one:
 
-- **Above it:** the founding charter of the family's hosted cloud service
-  (in a private sibling repository). That charter decides what the hosted
-  service promises its users: bring your own
-  inference, your data stays yours, search that bends when your provider
-  fails, no invisible spend, and the rest. This file does not restate or
-  re-decide any of it. Where this file and that charter disagree, that
-  charter wins, and this file gets amended.
 - **Below it:** the specs, one folder each under `specs/<name>/` (see
   `specs/README.md`; work from before 2026-11-01 stays in
   `docs/superpowers/specs/`). If this file and a spec disagree, this file
   wins on *intent* (what we are trying to do) and the spec wins on *detail*
   (exactly how).
 
-Each rule has a **Status** line saying how much of it the code does today:
-
-- **Built** — the code does this.
-- **Partly built** — some of it exists; the line says what is missing.
-- **Planned** — decided, but not in the code yet.
-- **Open decision** — not decided yet.
-
-Statuses were checked against the code on 2026-10-29 (release 7.13.1);
-rules 12 and 13 carry status lines dated 2026-11-17.
-Update a status line in the same pull request that changes the behavior.
+The hosted cloud service and the family's apps build on this engine. Where
+they need something it does not do, they file an issue here; this file does
+not take orders from their documents.
 
 What is planned next, and in what order, is in `docs/ROADMAP.md`. That
-file carries order only; status stays in the lines described above.
+file carries order only.
 
 ## Why this repository exists
 
 The family's memory platform is one memory engine with two doors: a hosted
 cloud service and an
-installed package. This repository is the installed package. The charter
-names the Expo package as the door for phone apps and the core package as
-the door for everything else. The same engine code runs behind both doors.
+installed package. This repository is the installed package. The Expo
+package is the door for phone apps; the core package is the door for
+everything else. The same engine code runs behind both doors.
 
 Three kinds of software depend on what is published from here:
 
@@ -146,14 +132,13 @@ stdio server by design: it holds the user's hosted-cloud API key, calls
 the hosted cloud API, and never embeds this engine or calls any
 model.)*
 
-*Why:* this is the charter's bring-your-own-inference promise, rendered
-as code. The host decides where thinking comes from; the engine only
-decides what to ask.
+*Why:* the host decides where thinking comes from; the engine only
+decides what to ask. This rule renders that as code.
 
-**Status: Built.** The only external runtime dependency of the core
-package is the keyword-search library. Platform packages add only
-first-party workspace packages plus the peer dependencies the host
-already has (`expo-sqlite`, `expo-crypto`, `react`).
+The core package's only external runtime dependency is the keyword-search
+library. Platform packages add only first-party workspace packages plus
+the peer dependencies the host already has (`expo-sqlite`, `expo-crypto`,
+`react`).
 
 ### 2. Your database stays yours
 
@@ -163,15 +148,15 @@ columns, tables and indexes; they never drop a column or a table that
 holds your facts. A host can refuse to run a pending migration inside a
 time-critical open (`setup({ migrations: 'refuse' })`) and run it later.
 
-*Why:* the package is installed into someone else's database. The charter
-says your memories stay yours in every sense; the smallest version of that
+*Why:* the package is installed into someone else's database. Your
+memories stay yours in every sense; the smallest version of that
 is "we don't rearrange your schema behind your back."
 
-**Status: Built**, with two honest footnotes. Migration v2 dropped an
-old full-text index table and its triggers (search index, not facts), and
-v12 swapped one index for a better one. Migration v9 refuses to run, with
-instructions, if it finds data that an older race condition could have
-left inconsistent, rather than guessing which rows to keep.
+Migrations have never dropped a table that holds facts: v2 dropped an old
+full-text search index and its triggers, and v12 swapped one index for a
+better one. Migration v9 refuses to run, with instructions, if it finds
+data that an older race condition could have left inconsistent, rather
+than guessing which rows to keep.
 
 ### 3. One database, many memories, never mixed
 
@@ -181,14 +166,13 @@ is rejected whole, before any row is written, with an error that names
 nothing about the other entity. A dangling edge into another entity
 resolves to an unreadable ID, never to that entity's content.
 
-*Why:* the charter promises that memories are never mixed with another
-customer's. In the cloud that is one file per tenant; in the package it is
+*Why:* memories are never mixed with another customer's. In the cloud
+that is one file per tenant; in the package it is
 entity isolation inside one file, because hosts do put many brains in one
 database.
 
-**Status: Built** (7.1.3, 2026-09-18). One boundary is the host's: a
-custom vector-ranking adapter must filter by entity itself. `SECURITY.md`
-says how.
+One boundary is the host's: a custom vector-ranking adapter must filter
+by entity itself. `SECURITY.md` says how.
 
 ### 4. Search bends, it does not break
 
@@ -197,14 +181,12 @@ have a different dimension than the query (you switched embedding
 models), `read()` falls back to keyword search over your facts' own words
 and tells you it did (`onRetrievalFallback`). Facts whose vectors cannot
 be used are flagged, and `runReembed()` converts them. Nothing is lost and
-nothing is silently worse without a signal.
+nothing is silently worse without a signal. Dimension mismatch is
+detected at read and at embed time; the fallback, the callback, the
+mismatch count and `runReembed` all exist.
 
-*Why:* the charter's "search bends instead of breaking" and its care
-around embedding switches both land here.
-
-**Status: Built.** Dimension mismatch is detected at read and at embed
-time; the fallback, the callback, the mismatch count and `runReembed` all
-exist.
+*Why:* search bends instead of breaking, and embedding switches get the
+same care; both land here.
 
 ### 5. Documents are immutable sources and facts
 
@@ -231,29 +213,26 @@ legacy and heal facts carry none — the accepted gap. See
 *Why:* a document is evidence. The engine may reason around it; it may
 not edit it.
 
-**Status: Built.**
-
 ### 6. Honest reporting
 
 Nothing is dropped silently. Every rejected chunk, rejected fact, dropped
 edge and failed background job produces a typed, content-free diagnostic.
 A fact that fails a check is stored as a draft, not thrown away. Health
 checks (`lint`) report and never repair. Partial ingest failures return a
-result with the failures listed; only a total failure throws.
+result with the failures listed; only a total failure throws. Diagnostics
+(7.x), draft review, grounding, `lint` and `pendingSources` all ship.
+Diagnostics describe work that really happened. Most are delivered after
+the transaction commits, and an operation that throws before it commits
+delivers none. Some calls deliver diagnostics and then still throw.
+`importDump` commits each entity in its own transaction, so entities
+committed before the throw have delivered theirs, and so may the entity
+that threw, if it threw after its own commit. Ingest delivers its
+LLM-pass diagnostics when a duplicate-hash race rolls back its write.
+`llm_usage` goes out as each model call returns. A diagnostic delivered
+before a throw is still accurate.
 
 *Why:* the host cannot fix what it cannot see, and a draft a person can
 review is worth more than a silent rejection.
-
-**Status: Built.** Diagnostics (7.x), draft review, grounding, `lint` and
-`pendingSources` all ship. Diagnostics describe work that really
-happened. Most are delivered after the transaction commits, and an
-operation that throws before it commits delivers none. Some calls deliver
-diagnostics and then still throw. `importDump` commits each entity in its
-own transaction, so entities committed before the throw have delivered
-theirs, and so may the entity that threw, if it threw after its own
-commit. Ingest delivers its LLM-pass diagnostics when a duplicate-hash
-race rolls back its write. `llm_usage` goes out as each model call
-returns. A diagnostic delivered before a throw is still accurate.
 
 ### 7. Nothing spends your allowance invisibly
 
@@ -262,14 +241,12 @@ host can set. Usage is reported per call through a diagnostic when the
 host asks for it, marked `estimated` when the provider did not report real
 counts. In deferred mode nothing runs in the background, with one exception that makes no model call: after `setup()` the engine finishes removals from the host's vector index that the host already requested, when the host turns on `drainExternalDeletionsOnSetup` (off by default). The host decides when and how much.
 
-*Why:* this is the charter's "no invisible spend" promise. Background work
-that burns a user's allowance without saying so is the failure this rule
-exists to prevent.
+*Why:* background work that burns a user's allowance without saying so
+is the failure this rule exists to prevent.
 
-**Status: Built** (7.8.0, 2026-09-30, opt-in; the default from 8.0.0).
-Kurt ruled on 2026-11-09 that 8.0.0 flips both defaults: `librarian.strategy`
-to `'ops'` and `maintenance` to `'deferred'`. Hosts can restore either with
-explicit configuration. See the 2026-11-09 amendment.
+The 8.0.0 defaults are ruled: `librarian.strategy` flips to `'ops'` and
+maintenance to `'deferred'`, and hosts can restore either with explicit
+configuration. See the 2026-11-09 amendment.
 Amended 2026-11-11 (owner ruling): the "nothing runs in the background"
 sentence gained one exception, the no-model drain of owed vector-index
 removals after `setup()`. See the 2026-11-11 amendment and
@@ -285,13 +262,12 @@ have no runtime dependencies. Platform packages depend on first-party
 workspace packages plus the peer dependencies the host supplies. The Rust
 crate depends on four crates.
 This is not "zero dependencies" and should never be described that way.
+One 2026-09 spec still carries the overstated "zero runtime dependencies"
+wording.
 
 *Why:* the package is installed into other people's apps. Every
 dependency we add is a dependency they inherit, and one they cannot
 audit as easily as we can.
-
-**Status: Built.** The earlier wording "zero runtime dependencies" that
-appears in one 2026-09 spec is the overstated version of this rule.
 
 ### 9. The supply-chain gate is binding
 
@@ -302,28 +278,25 @@ live in one place (`pnpm-workspace.yaml`). A version may be admitted early
 only with a written waiver from Kurt recorded in that file with a date
 and a reason.
 
+Dependabot security updates bypass the cooldown by GitHub's design; the
+manual override pattern is what keeps the gate honest. Detail lives in
+the supply-chain spec. The waiver rule was recorded 2026-10-29, with one
+precedent on file.
+
 *Why:* this repository's build pipeline is the one surface a consumer's
 own gate cannot protect, because a library's lockfile never ships.
-
-**Status: Built** (2026-09-16; waiver rule recorded 2026-10-29, one
-precedent on file). Dependabot security updates bypass the cooldown by
-GitHub's design; the manual override pattern is what keeps the gate
-honest. Detail lives in the supply-chain spec.
 
 ### 10. Spec first, and status lines tell the truth
 
 Behavior changes start with a spec, `specs/<name>/spec.md` (legacy
 specs before 2026-11-01: `docs/superpowers/specs/`). Every
 spec carries a Status line. The Status line is updated in the same pull
-request that changes the behavior, never later.
+request that changes the behavior, never later. All 75 specs carry one
+today; the rule holds only as long as every PR keeps it.
 
 *Why:* on 2026-10-29 a sweep found three specs whose features had shipped
 weeks earlier with "implementation not started" still at the top. A
 reader trusting those headers would have been wrong about the product.
-
-**Status: Built.** All 75 specs carry a Status line; the three stale ones
-were corrected 2026-10-29. The rule holds only as long as every PR keeps
-it.
 
 ### 11. Benchmarks gate behavior changes
 
@@ -333,18 +306,17 @@ produced them, naming the model, the judge, the slice and the caveats.
 The native crate replaces a TypeScript path in production only after its
 adoption gates pass.
 
-*Why:* "faster" and "more accurate" are claims consumers build on. The
-charter's equal-standing and no-invisible-spend promises both depend on
-numbers that are real.
+*Why:* "faster" and "more accurate" are claims consumers build on. Equal
+standing for the hosted service and this package, and no invisible
+spend, both depend on numbers that are real.
 
-**Status: Partly built.** The benchmark harness exists and refuses to
-spend tokens without an explicit flag. Supersession results for 7.8.0
-versus 7.7.7 are published with caveats. LongMemEval accuracy and
-tokens-per-answer are not measured yet; the first rerun attempt died to a
-benchmark-CLI shutdown bug, fixed in 7.8.0 (#247), and has not been
-re-run. The native crate's performance gate is scaffolded
-and has never been run. **Open decision:** when the native engine's gate
-runs and who schedules it.
+The benchmark harness exists and refuses to spend tokens without an
+explicit flag. Supersession results for 7.8.0 versus 7.7.7 are published
+with caveats. LongMemEval accuracy and tokens-per-answer are not measured
+yet; the first rerun attempt died to a benchmark-CLI shutdown bug, fixed
+in 7.8.0 (#247), and has not been re-run. The native crate's performance
+gate is scaffolded and has never been run. **Open decision:** when the
+native engine's gate runs and who schedules it.
 
 ### 12. Four states and their verbs
 
@@ -366,14 +338,11 @@ verified outcome of `erase()`, a claim in its report.
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
-visible.
-
-**Status: Partly built, pending `erase()` and `expire()`.** Forget,
-prune and supersession exist; `forget()` leaves the file recoverable
-(spec `specs/forget-erasure/`, canary-reproducible), and the retention
-windows are the host's declaration, not yet a readable API surface.
-`erase()` is specced, not built. `expire()` is ratified (harmonization,
-2026-11-17); it needs a spec home before it is built.
+visible. Today forget, prune and supersession exist; `forget()`
+leaves the file recoverable (spec `specs/forget-erasure/`,
+canary-reproducible), and the retention windows are the host's
+declaration, not yet a readable API surface. `erase()` is specced, not
+built; `expire()` is ratified and needs a spec home before it is built.
 
 ### 13. Erasure is verifiable, portability is clean
 
@@ -393,10 +362,8 @@ reports the values in force, and every host can change them.
 cheaply — the storage layer keeps bytes after deletes, so only
 verification distinguishes erased from gone. The same honesty
 applies to what travels: a dump that resurrects a forgotten fact would
-break the erasure promise through the export door.
-
-**Status: Planned, pending `erase()`.** Nothing erases today; the
-guarantee ships with `specs/forget-erasure/`.
+break the erasure promise through the export door. Nothing erases
+today; the guarantee ships with `specs/forget-erasure/`.
 
 ## Out of scope (don't build these here)
 
@@ -455,7 +422,8 @@ guarantee ships with `specs/forget-erasure/`.
    admission needs Kurt's written waiver in `pnpm-workspace.yaml`.
 7. **Changes to this file** go through the same review as code, with a
    dated note of what changed and why. Anything that would change a
-   charter promise is a charter amendment first, not an edit here.
+   promise in this file goes through an amendment to this file first,
+   not an edit in the spec.
 
 ## Amendments
 
