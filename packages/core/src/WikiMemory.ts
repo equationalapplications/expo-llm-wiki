@@ -1071,8 +1071,25 @@ export class WikiMemory {
     return (await sync) && this.searchService.isKeywordAvailable();
   }
 
-  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
-    return this.importExportService.exportDump(entityIds);
+  async exportDump(entityIds?: string[], opts?: { includeForgotten?: boolean }): Promise<MemoryDump> {
+    return this.importExportService.exportDump(entityIds, opts);
+  }
+
+  /**
+   * The retention this instance applies (shipped defaults plus host overrides),
+   * for GDPR disclosure. Days; `null` means "keep forever". Read-only.
+   */
+  getRetentionPolicy(): {
+    retainSoftDeletedFor: number;
+    retainEventsFor: number | null;
+    pruneSupersededAfter: number | null;
+  } {
+    const c = this.options.config;
+    return {
+      retainSoftDeletedFor: c?.pruneRetainSoftDeletedFor ?? 7,
+      retainEventsFor: c?.pruneEventsAfter ?? 30,
+      pruneSupersededAfter: c?.pruneSupersededAfter ?? null,
+    };
   }
 
   /** Entity summary prose persisted from an OKF profile ≥ 1 import; null when none stored. */

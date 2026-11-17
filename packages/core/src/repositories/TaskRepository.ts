@@ -278,10 +278,11 @@ export class TaskRepository extends BaseRepository {
    * Fetch all non-deleted tasks for an entity, ordered by priority DESC, created_at ASC.
    * Used by _getFullBundle().
    */
-  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiTask[]> {
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiTask[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+      `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ?${live} ORDER BY priority DESC, created_at ASC`,
       [entityId],
     );
     return rows.map(mapRowToTask);

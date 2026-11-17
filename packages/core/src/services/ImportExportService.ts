@@ -38,7 +38,8 @@ export class ImportExportService {
     private prefix?: string,
   ) {}
 
-  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
+  async exportDump(entityIds?: string[], opts?: { includeForgotten?: boolean }): Promise<MemoryDump> {
+    const includeForgotten = opts?.includeForgotten === true;
     let ids: string[];
     if (entityIds && entityIds.length > 0) {
       ids = Array.from(new Set(entityIds));
@@ -61,7 +62,7 @@ export class ImportExportService {
       const batchResults = await Promise.all(
         batch.map(
           async (id): Promise<[string, MemoryDumpEntity]> => {
-            const bundle = await this.getFullBundle(id, { includeBlobs: true });
+            const bundle = await this.getFullBundle(id, { includeBlobs: true, includeForgotten });
             const storedSources = await this.exportStoredSources(id);
             return [id, storedSources.length > 0 ? { ...bundle, storedSources } : bundle];
           },
@@ -191,15 +192,16 @@ export class ImportExportService {
 
   async getFullBundle(
     entityId: string,
-    opts?: { maxEvents?: number; includeBlobs?: boolean },
+    opts?: { maxEvents?: number; includeBlobs?: boolean; includeForgotten?: boolean },
   ): Promise<MemoryBundle> {
+    const incl = opts?.includeForgotten ? { includeDeleted: true } : undefined;
     // Read first: the watermark must not be newer than the events exported with it.
     const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
     const [factsRaw, tasks, events, edges, summaryValue] = await Promise.all([
       opts?.includeBlobs
-        ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
-        : this.entryRepo.findAllByEntityId(entityId),
-      this.taskRepo.findAllByEntityId(entityId),
+        ? this.entryRepo.findAllByEntityIdWithBlobs(entityId, undefined, incl)
+        : this.entryRepo.findAllByEntityId(entityId, undefined, incl),
+      this.taskRepo.findAllByEntityId(entityId, undefined, incl),
       this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
       this.edgeRepo.getByEntityId(entityId),
       this.metadataRepo.getMeta(entitySummaryMetaKey(entityId)),
@@ -281,10 +283,11 @@ export class ImportExportService {
         await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
       }
 
+      const wipedByThisImport = new Set(softDeletedFactIds);
       const factIds = bundle.facts.map((fact) => fact.id);
       const existingFactsById = new Map<
         string,
-        { id: string; entity_id: string; updated_at: number }
+        { id: string; entity_id: string; updated_at: number; deleted_at?: number | null }
       >();
       const existingFacts = await this.entryRepo.findExistingMetadataByIds(
         factIds,
@@ -378,7 +381,16 @@ export class ImportExportService {
             );
             continue;
           }
-          if (merge && safeUpdatedAt <= existing.updated_at) continue;
+          // Spec §8 tombstone-wins: forget beats re-ingest. A local tombstone is
+          // never resurrected by a live dump row, and a dump tombstone applies
+          // even when the merge recency check would otherwise skip the row.
+          // (Rows the replace-import wipe above just tombstoned are not forgets.)
+          if (
+            existing.deleted_at != null &&
+            !fact.deleted_at &&
+            !wipedByThisImport.has(fact.id)
+          ) continue;
+          if (merge && safeUpdatedAt <= existing.updated_at && !fact.deleted_at) continue;
         }
 
         const safeTitle = clip(String(fact.title ?? ''), IMPORT_TITLE_MAX);

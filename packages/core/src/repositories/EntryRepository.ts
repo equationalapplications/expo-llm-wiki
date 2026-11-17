@@ -404,17 +404,22 @@ export class EntryRepository extends BaseRepository {
   async findExistingMetadataByIds(
     ids: readonly string[],
     tx?: SQLiteAdapter,
-  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }>> {
     const executor = this.getExecutor(tx);
-    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    const rows: Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }> = [];
     for (let i = 0; i < ids.length; i += this.chunkSize) {
       const chunk = ids.slice(i, i + this.chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       const chunkRows = await executor.getAllAsync<any>(
-        `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+        `SELECT id, entity_id, updated_at, deleted_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
         chunk,
       );
-      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+      rows.push(...chunkRows.map((row) => ({
+        id: row.id,
+        entity_id: row.entity_id,
+        updated_at: Number(row.updated_at),
+        deleted_at: row.deleted_at == null ? null : Number(row.deleted_at),
+      })));
     }
     return rows;
   }
@@ -653,10 +658,11 @@ export class EntryRepository extends BaseRepository {
    * Fetch all non-deleted entries for an entity, ordered by updated_at DESC.
    * Used by _getFullBundle().
    */
-  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ?${live} ORDER BY updated_at DESC`,
       [entityId],
     );
     return rows.map(mapRowToFact);
@@ -765,10 +771,11 @@ export class EntryRepository extends BaseRepository {
    * Fetch all non-deleted entries for an entity with embedding blobs preserved.
    * Used by ImportExportService for export/import round-tripping.
    */
-  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ?${live} ORDER BY updated_at DESC`,
       [entityId],
     );
     return rows.map(mapRowToFactWithBlobs);
