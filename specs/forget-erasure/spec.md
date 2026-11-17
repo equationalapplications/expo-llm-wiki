@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 20 — T4 delta-2 (r3 relaunch) findings folded. INTENT
+**Status: Draft rev 21 — T4 delta-3 findings folded. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -102,10 +102,11 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    **soft-deleted tasks** (`runPrune` hard-deletes soft-deleted tasks too,
    `MaintenanceService.ts:387` → `TaskRepository.ts:294-303`, and `tasks.description` holds
    user text, `schema.ts:92`; a task-only `forget({ taskId })` can leave an entity with
-   soft-deleted tasks and zero soft-deleted entries). Reuse the existing distinct-entity walk
-   in `MetadataRepository.ts:186` (doc comment `:177-185`; it already spans entries/tasks/events and deliberately
-   includes soft-deleted-only entities) with the hard-delete cutoff filter added, rather than
-   a new UNION query. Test: task-only forget + compact → task rows gone from the file.
+   soft-deleted tasks and zero soft-deleted entries). Add the hard-delete cutoff as an
+   **optional parameter or a sibling method** on the existing distinct-entity walk
+   (`MetadataRepository.ts:186`; its doc comment `:177-185` deliberately widens the walk for
+   the host's maintenance sweep, so the shared method's host-facing semantics must not change
+   — T4 delta-3 m4) — rather than a new UNION query. Test: task-only forget + compact → task rows gone from the file.
    A `WikiBusyError` on a per-entity `'prune'` lock (`acquireLock('prune', entityId)`,
    `MaintenanceService.ts:250` — T3 delta-11 m1; `:459` is the release call) — a concurrent
    operation on that entity — **skips that entity** with a surfaced diagnostic and does not
@@ -122,20 +123,31 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    refuses to start during a global import; a global import refuses during compact). The
    `WikiBusyError` construction (`JobManager.ts:296-298`) passes `'*'` only for the two global
    ops — add `'compact'` there so `WikiBusyError('compact', '*')` actually carries `'*'`.
-   **The bypassed thing is the compact-key check inside the `prune` case, not the prune lock
-   itself (T4 delta-2 MAJOR-1):** step 1 calls `acquireLock('prune', entityId)` normally — the
-   `prune` case is the only switch arm that detects work **already in flight** on the entity
-   (`JobManager.ts:198-207`), so bypassing it would hard-delete soft-deleted rows under a
-   running librarian/forget/store — and the `prune` case simply does not consult the
-   `'compact'` key. (If `prune` checked the compact key unconditionally, step 1 would throw
-   `WikiBusyError` on every entity and compact would "succeed" having deleted nothing.)
-   Symmetrically, an **external standalone `runPrune` during compact's steps 3-8 is refused**:
-   the public `acquireLock('prune', e)` checks the compact key unless invoked via compact's
-   internal entry point, so a host `runPrune(e, { vacuum: true })` cannot interleave a second
-   VACUUM / `restartRebuildAfterVacuum` with compact's steps 5-6. Tests: compact with N
+   **Compact's acquisition rule (T4 delta-3 MAJOR-2):** compact starts with
+   `acquireLock('compact', '*')`, and the `'compact'` arm mirrors `global_reembed`'s
+   any-active refusal (`JobManager.ts:236-247`): it refuses while **any** per-entity
+   maintenance op is active store-wide (`WikiBusyError` naming the blocking op with `'*'`).
+   This is what keeps steps 5-6's store-wide VACUUM out from under an in-flight transaction —
+   a librarian/ingest running when compact starts would otherwise hold the connection at step
+   5 and VACUUM throws "cannot VACUUM from within a transaction". **The compact-owner
+   mechanism for step 1 (T4 delta-3 MAJOR-2 — names what rev 20 left implicit):**
+   `MaintenanceService` gains a private `_runPrune(entityId, opts, owner)`; public `runPrune`
+   passes `owner: 'host'`, compact's step 1 passes `owner: 'compact'`; `acquireLock` gains an
+   optional owner argument (default `'host'`), and the `prune` arm consults the `'compact'`
+   key only when `owner !== 'compact'` — the `prune` case is the only arm that detects work
+   already in flight on the entity (`JobManager.ts:198-207`), so step 1 still calls it
+   normally. Under the start-refusal the per-entity skip is not expected to fire; it stays as
+   defense-in-depth — a lock that slipped the acquisition window surfaces as a skip
+   diagnostic, not a hard failure (if `prune` consulted the compact key for compact's own
+   call, step 1 would throw `WikiBusyError` on every entity and compact would "succeed"
+   having deleted nothing). Symmetrically, an **external standalone `runPrune` during
+   compact's steps 3-8 is refused**: `owner: 'host'` means the public path checks the compact
+   key, so a host `runPrune(e, { vacuum: true })` cannot interleave a second VACUUM /
+   `restartRebuildAfterVacuum` with compact's steps 5-6. Tests: compact with N
    entities hard-deletes in all N; a concurrent `storeSource` during compact throws
    `WikiBusyError('compact', '*')`; a standalone `runPrune` during compact throws
-   `WikiBusyError('compact', entityId)`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
+   `WikiBusyError('compact', entityId)`; compact refused at start while a librarian is active
+   throws `WikiBusyError('librarian', '*')`. **Scope (T3 delta-2 M2, corrected T3 delta-9 MAJOR-1):** the caught error
    covers **external-removal holds only** (`MaintenanceService.ts:397-401`). Event-retention
    holds **cannot arise in compact** — with `retainEventsFor: null` the retention block never
    runs (see above) — they apply only to standalone `runPrune`.
@@ -201,7 +213,16 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
 8. `wal_checkpoint(TRUNCATE)` — **last** (`MetadataRepository.vacuum()` today checkpoints
    only before; the post-VACUUM, post-sync checkpoint is what clears everything — including
    any frames `syncEntries` wrote — through the WAL, so no delete-marker term bytes reappear
-   in `%_data` or `-wal` after compact returns; T3 delta-3 m1).
+   in `%_data` or `-wal` after compact returns; T3 delta-3 m1). **Result-row observability
+   (T4 delta-3 MAJOR-1):** `PRAGMA wal_checkpoint(TRUNCATE)` does not raise when it cannot
+   complete — it returns a `(busy, log, checkpointed)` row and leaves the WAL untruncated,
+   and today `MetadataRepository.ts:173` discards that row via `execAsync`. **Both**
+   checkpoints (the existing pre-VACUUM one and the new post-VACUUM one) run via
+   `getFirstAsync` and treat `busy !== 0` or `log !== checkpointed` as a surfaced step
+   failure (`compact_checkpoint_incomplete` diagnostic; the compact report marks erasure
+   **unverified**). Test: a two-connection fixture (a second reader holding a read open)
+   asserts compact surfaces the incomplete-checkpoint diagnostic instead of returning
+   success.
 
 A store with no FTS tables (no-FTS runtime, expo hosts without `enableFTS`) skips the FTS
 steps (3, 4, 7) for surfaces that don't exist — but step 4 still runs for any retired tables
@@ -255,17 +276,22 @@ every open** inside `Fts5IndexStrategy.init` / `ensurePassageObjects` / `rearmIn
 idempotent `ft_config` write: option set when the runtime passes the gate, otherwise skipped
 with a surfaced warning. The compact-time guarantee (§1-2) is unaffected either way.
 
-**The gate is equality-based on a known-good release, not a range (T3 M6).** The gate is
+**The gate is lower-bounded on the pinned first-good release — never an exclusion of a
+known-buggy interval (T3 M6; rev 20's "equality-based" mislabeled a `>=` bound, T4 delta-3
+m2).** The gate is
 `sqlite_version() >= <first release containing the fix check-in 0b486e53a4>` — that release
 does not exist yet, so **the gate is closed today** (no runtime passes); 3.53.4 is
 "**treated as unfixed**" (not listed as fixed — the investigation's wording, T4 m8), never
 asserted unfixed as fact. The version comparison is a **numeric tuple compare**
 (major.minor.patch), never a string compare. Wording like
 "outside the known-buggy range 3.46.0→3.53.2" is forbidden: it would admit 3.42.0-3.45.x
-(untested, same merge code) and 3.53.3/3.53.4 (unfixed). **Gate-test detail (T4 m8):** the
+(untested, same merge code) and 3.53.3/3.53.4 (unfixed). **Gate-test detail (T4 m8, cite
+corrected T4 delta-3 m3):** the
 format-5 mock must raise a **non-`SQLITE_CORRUPT*` code** — FTS5 reports format mismatch as
-`SQLITE_ERROR`, and `ftsCorruptionClass` (`Fts5IndexStrategy.ts:737-742`) routes
-`SQLITE_CORRUPT*` to `resetAndRearm` instead of the `UnavailableIndexStrategy` path (§4).
+`SQLITE_ERROR`, and the `ftsCorruptionClass` routing (`Fts5IndexStrategy.ts:737-742`, applied
+at `:209`) sends `'corrupt'` to `resetAndRearm` only when the error is FTS-only and
+`'vtab'` unconditionally — so only a non-CORRUPT code reaches the `UnavailableIndexStrategy`
+path (§4).
 
 Format-5 read errors on older builds (the one-way door): the real fallback path is
 `initEntries` rethrow → `UnavailableIndexStrategy` (`Fts5IndexStrategy.ts:213`) — migration
@@ -437,7 +463,9 @@ back), and the no-opt-out pragma statement.
 - `packages/core/src/db/schema.ts` / `packages/core/src/WikiMemory.ts` `setup()` —
   `PRAGMA secure_delete=ON` + read-back in `setup()` (T3 delta-2 m1: one file named).
 - `packages/core/src/repositories/MetadataRepository.ts` — `vacuum()` gains **only** the
-  post-VACUUM `wal_checkpoint(TRUNCATE)`; the watermark wrapper stays in
+  post-VACUUM `wal_checkpoint(TRUNCATE)`; **both checkpoints read their result row**
+  (`getFirstAsync`) and surface `busy !== 0` / `log !== checkpointed` (T4 delta-3 MAJOR-1);
+  the watermark wrapper stays in
   `MaintenanceService._wrappedVacuum()` (T3 delta-2 M1 — §2 step 5 governs).
 - `packages/core/src/services/MaintenanceService.ts` — `forget()` chain flag (incl. dry-run
   lift + `chainEntryIds`/`truncated`); `compact()` (8-step composition per §2, incl.
@@ -464,7 +492,9 @@ back), and the no-opt-out pragma statement.
    surface.
    - *Fact-path tier (restructured T4 delta MAJOR-3):* the canary lives **only in the fact** —
      fixture: `ingestDocument` with a stub provider — `ingestDocument` accepts
-     `sourceRef`/`sourceHash` and writes `source_ref_index` (`MaintenanceService.ts:710-717`)
+     `sourceRef`/`sourceHash` and writes `source_ref_index` (`IngestionService.ts:752`,
+     `sourceRefIndexRepo.upsert`; `MaintenanceService.ts:710-717` is forget's soft-delete of
+     the registry row — T4 delta-3 m1 cite fix)
      but **never writes `source_documents`** (only `SourceStoreService.ts:61` and
      `ImportExportService.ts:180` call `upsertStoredSource`; T4 delta-2 m4 — the fixture's
      canary isolation rests on this, not on `remember`'s `RememberInput`); and **no
@@ -478,7 +508,10 @@ back), and the no-opt-out pragma statement.
      validator accepts 0), `compact()` —
      **assert whole-file absence**: canary absent from the entry row, all FTS surfaces (db
      file, `-wal`, `-journal`, `-shm`, **and every `%_data` block**). Because no host-stored
-     document exists, whole-file absence is assertable at this tier. `events.summary` and the
+     document exists, whole-file absence is assertable at this tier. Variant (T4 delta-3 m5):
+     the same fixture run as **exactly** `forget({ entryId })` → `compact()` — no standalone
+     `runPrune` — so the documented §2 recipe (compact's step 1 → `syncedIds` → step 6) is
+     itself under the canary. `events.summary` and the
      entity summary are documented carve-outs (owner question D). Host-stored text has its
      **own tier below** (T4 delta MAJOR-3); the E=GC ledger-exercise variant of this tier
      (with `storeSource` + the same-ref fact, asserting GC removal) runs only under E=GC.
@@ -553,7 +586,9 @@ back), and the no-opt-out pragma statement.
 
 ## Release
 
-Semver: new public API (`compact()`, `forget` flag) → minor. **Under the recommended v1
+Semver: new public API (`compact()`, `forget` flag) → minor. The exported `WikiBusyOperation`
+union gains `'compact'` — the one public type whose shape changes (safe under the `default`
+arm note at `types.ts:1207`; T4 delta-3 m6). **Under the recommended v1
 default (E=default) there is no new migration**; only if owner question E answers GC does a
 migration create the `source_gc_pending` ledger table (unconditional schema — consumers run
 their migration sweep on upgrade) (T4 delta-2 MAJOR-3: the unconditional wording contradicted
