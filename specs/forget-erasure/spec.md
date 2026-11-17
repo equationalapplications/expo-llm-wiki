@@ -1,7 +1,8 @@
 # Forget must erase — FTS5 erasure, chain forget, compact()
 
-**Status: Draft rev 24 — T4 delta-6 findings folded (1 MAJOR + 4 minors; majors trajectory
-2→2→2→1). Pending owner question G + confirming round. INTENT
+**Status: Draft rev 25 — T4 delta-7 findings folded (3 MAJOR + 4 minors; majors trajectory
+2→2→2→1→3 — wider review context keeps surfacing design gaps). Pending owner questions +
+convergence decision. INTENT
 alignment: v1 default (document-as-host-property) is rule-5-consistent; the GC alternative
 requires a rule-5 amendment before implementation (see §5 / owner question E).**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
@@ -129,7 +130,20 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    this.activeMaintenanceJobs.has(this._compactKey())` →
    `throw new WikiBusyError('compact', '*')`.
    Every present and future operation except compact itself and compact-owned prune is refused
-   while compact holds the key, in one place. The `'compact'` arm self-checks first (a second
+   while compact holds the key, in one place. Pin `_compactKey()` to `` `${prefix}:compact` ``
+   so no suffix scan matches it, and exclude `'compact'` from the `lockKeyFns` map type
+   (`JobManager.ts:104-107`, typed over `Exclude<OperationType, ...>`) — or `releaseLock`'s
+   per-operation fallthrough (`:322`) indexes a missing entry (T4 delta-7 m1). **The same
+   check is mirrored in `isBlocked` (`JobManager.ts:332-389`, T4 delta-7 MAJOR-3)** — a
+   parallel hand-written decision copy that already duplicates the `global_import` pre-check
+   (`:333`) and which `write()` consults before its auto-librarian/auto-heal triggers
+   (`WriteService.ts:145`, `:154`, `:194`). Without the mirror, every `write()` during
+   compact advances the memory checkpoint inside its transaction
+   (`WriteService.ts:149-150`), has `acquireLock('librarian')` throw at `:172`, and rolls
+   the checkpoint back in a **second, unlocked** transaction (`:189-192`) — extra unfenced
+   transactions in exactly the window step 5's VACUUM is most exposed; the heal branch at
+   `:194` behaves the same. Test: `write()` during compact neither advances nor rolls back
+   the memory checkpoint. The `'compact'` arm self-checks first (a second
    concurrent `compact()` throws `WikiBusyError('compact', '*')` — mirroring the self-key
    check that opens `global_reembed`'s arm, `JobManager.ts:237`; T4 delta-4 m2) and mirrors
    the `global_import` pre-check so compact refuses to start during a global import (the
@@ -199,23 +213,30 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    **next** compact — accepted. **Scope (T4 m5):** the expired-history soft-delete runs only
    for entities step 1 enumerates; an entity with expired history but no soft-deleted rows is
    never visited — the "next compact" claim holds only for enumerated entities.
-   **Step 1b — registry tombstone hard-delete (T4 delta-6 MAJOR-1; owner question G):**
-   after each enumerated entity's prune, compact hard-deletes that entity's
-   `source_ref_index` tombstones — rows with `deleted_at IS NOT NULL`
-   (`SourceRefIndexRepository`; the `clearAll` precedent hard-deletes the same table
-   live-or-not, `MaintenanceService.ts:636-643`). Today nothing but `clearAll` erases them:
-   `forget({ sourceRef })` soft-deletes the row (`MaintenanceService.ts:715-717`), re-ingest
-   soft-deletes the prior row (`IngestionService.ts:749`), and `runPrune` never touches the
-   table — so after `forget({ sourceRef: R })` + `compact()` the tombstone keeps the
-   erased ref and hash strings in the file forever. **Safe to hard-delete:** the unique
-   index is partial on `deleted_at IS NULL` (`schema.ts:62-64`) and the duplicate-hash
-   check reads live rows only (`sourceStoreUpsert.ts:75-78`), so removing tombstones blocks
-   nothing; re-ingest ownership still works because the ingest pre-check looks for a
-   **live** ref. Fails the compact per the T3 M7 contract like every step. Under question
-   G's alternative (documented carve-out) this step is dropped and §6 plus the guide state
-   the tombstone retention explicitly instead. Test: `forget({ sourceRef: R })` +
-   `compact()` → the file contains no `source_ref_index` row carrying `R`, live or
-   tombstoned.
+   **Step 1b — registry tombstone hard-delete (T4 delta-6 MAJOR-1; store-wide per T4
+   delta-7 MAJOR-1; owner question G):**
+   compact hard-deletes **all** `source_ref_index` tombstones in one store-wide statement —
+   `DELETE FROM source_ref_index WHERE deleted_at IS NOT NULL` — **not** per enumerated
+   entity: step 1 enumerates only entities holding soft-deleted entries/tasks/events past
+   the cutoff, so an entity whose facts a prior 7-day `runPrune` already hard-deleted (the
+   forget → sweep path; every re-ingest also tombstones its prior row,
+   `IngestionService.ts:749`) is never enumerated, and per-entity scoping would leave that
+   entity's tombstone in the file forever (`SourceRefIndexRepository.ts:46-49` records both
+   facts: "nothing reads a soft-deleted row and runPrune never sweeps this table"). Nothing
+   reads a tombstone — `findActiveByEntityAndHash` filters live and the duplicate-hash
+   check reads live rows only (`sourceStoreUpsert.ts:77`) — and ingest is fenced by
+   compact's start refusal, so there is no per-entity reason to scope it. Still safe:
+   the unique index is partial on `deleted_at IS NULL` (`schema.ts:62-64`), so removing
+   tombstones blocks nothing; re-ingest ownership still works because the ingest pre-check
+   looks for a **live** ref. (Today nothing but `clearAll` erases them —
+   `MaintenanceService.ts:636-643` hard-deletes the table live-or-not; `forget({
+   sourceRef })` soft-deletes the row, `MaintenanceService.ts:715-717`.) Fails the compact
+   per the T3 M7 contract like every step. Under question G's alternative (documented
+   carve-out) this step is dropped and §6 plus the guide state the tombstone retention
+   explicitly instead. Tests: `forget({ sourceRef: R })` + `compact()` → the file contains
+   no `source_ref_index` row carrying `R`, live or tombstoned; **variant (T4 delta-7
+   MAJOR-1): `forget({ sourceRef: R })` → standalone `runPrune` → `compact()` → same
+   assertion** (the sweep hard-deletes the facts first, so the entity is unenumerated).
 2. **Source-store GC** (§5) — **conditional on owner question E** (E=default: absent in v1;
    E=GC: drains the durable `source_gc_pending` ledger after the INTENT rule-5 amendment,
    exact-pair matching, never collect-by-absence).
@@ -237,7 +258,22 @@ surfaces errors; a failed step fails the compact and reports where it stopped):
    table's `%_content` holds verbatim fact text and VACUUM would copy it intact — T3 M4).
    Required **whenever retired tables exist, even if `entries_fts` itself is missing** (a
    forced reset on a runtime where FTS later became unavailable still leaves verbatim text in
-   the retired shadows — T3 delta m1). **Re-run after step 6 (T4 delta-5 m2):** a corruption
+   the retired shadows — T3 delta m1). **Module-less runtime (T4 delta-7 MAJOR-2):** on a
+   host whose FTS5 availability probe failed, `Fts5IndexStrategy` is never instantiated and
+   `DROP TABLE` on a virtual table without its module throws `no such module: fts5` — both
+   recorded in the code (`Fts5IndexStrategy.ts:109-113`, `createIndexStrategy.ts:54-58`;
+   `delistRetired(name, true)` at `:453-455` issues the bare `DROP`). So on that runtime
+   step 4 **cannot use `DROP`** and **cannot live in `Fts5IndexStrategy`** (see Files
+   touched): compact runs a **module-independent fallback** — `DELETE FROM` each retired
+   table's plain shadow tables (`<name>_content`, `<name>_data`, `<name>_idx`,
+   `<name>_docsize`) under the `secure_delete` pragma (the row content is the erasure
+   target; the virtual-table shell is inert), **keep the retired name listed**, and surface
+   a `compact_retired_vtab_undroppable` diagnostic; a later FTS5-capable open's step 4
+   completes the `DROP`. Skipping the fallback is the exact false-success the T3 M7
+   contract forbids — compact would "succeed" while the retired shadows keep verbatim fact
+   text that VACUUM copies intact. Test: no-FTS runtime with an `entries_fts_retired_N`
+   present → shadow tables empty, name still listed, diagnostic surfaced. **Re-run after
+   step 6 (T4 delta-5 m2):** a corruption
    reset during step 6's `syncEntries` can mint a fresh `entries_fts_retired_N` after step 4
    already ran (retirement happens only in `resetAndRearm`, `Fts5IndexStrategy.ts:307-324`) —
    compact **re-runs step 4 after step 6** (cheap when the list is empty), and the test
@@ -329,7 +365,7 @@ fan-in A→C←B it reaches C but not B (the predecessor walk starts at the fact
 `EntryRepository.ts:1103-1113`); the forward walk **does delete the live current fact** (that
 is the point of `includeChain`, documented); chain ids are added to `deletedEntryIds` so
 `syncEntries`, the vector-removal drain and `backstopEnqueue` cover them
-(`MaintenanceService.ts:730-743`). Chain members are
+(`MaintenanceService.ts:730-743`, drain at `:754`; T4 delta-7 m3). Chain members are
 **soft-deleted** into the existing prune flow; their erasure completes at `compact()` like
 every other fact.
 
@@ -525,7 +561,9 @@ E=GC), the host-connection pragma
 requirement, the copy census (events kept unless
 `includeEvents`; drain the outbox; host-stored documents survive compact unless
 `forget({ sourceRef })` or the E=GC path; manifest stays; exports bring data
-back), and the no-opt-out pragma statement.
+back), the **VACUUM temporary-database residue window** (investigation §3.5 census: VACUUM
+builds its temp copy outside the main file — host guidance is `PRAGMA temp_store=MEMORY`
+for the compact call; T4 delta-7 m2), and the no-opt-out pragma statement.
 
 ## Files touched
 
@@ -533,7 +571,10 @@ back), and the no-opt-out pragma statement.
   (`init` / `ensurePassageObjects` / `rearmInTx`, idempotent write in the documented FTS5
   command form — `INSERT INTO entries_fts(entries_fts, rank) VALUES('secure-delete', 1)` —
   with `ft_config` as the read-back; T4 delta-5 m1); compact-time
-  retired-table reclaim-to-completion + full ledger drain with surfaced errors.
+  retired-table reclaim-to-completion + full ledger drain with surfaced errors —
+  **on a module-less runtime the step-4 fallback reclaim lives beside compact in
+  `MaintenanceService` instead (T4 delta-7 MAJOR-2): `Fts5IndexStrategy` is never
+  instantiated on that runtime.**
 - `packages/core/src/db/migrations.ts` — **only if owner question E answers GC**: new
   migration for the `source_gc_pending` ledger table (unconditional schema). No option
   migration (per-open gate, §4); under the v1 default there is **no** GC migration.
@@ -676,7 +717,8 @@ call is a release-time owner ruling (owner question F; T4 delta-4 MAJOR-2):** th
 `types.ts:1203-1207` note records a prior widening as a **breaking change** (`import`/
 `forget` rode **v3.0.0**; exhaustive consumer switches must add a `default` arm), while
 `'ontologyBackfill'` was added afterward and rode **minor** releases (v4.21–4.23, `feat:`
-commits). Do not assert safety from the note — it documents the break. **Under the recommended v1
+commits — verified against tag history: `807220be`/`19d0255c` shipped in v4.21.0,
+`199df2e2` in v4.23.0; T4 delta-7 m4). Do not assert safety from the note — it documents the break. **Under the recommended v1
 default (E=default) there is no new migration**; only if owner question E answers GC does a
 migration create the `source_gc_pending` ledger table (unconditional schema — consumers run
 their migration sweep on upgrade) (T4 delta-2 MAJOR-3: the unconditional wording contradicted
@@ -719,13 +761,14 @@ gate passes (and then the one-way door applies, documented).
   amendment first** and ships the §5 blueprint design.
 - **F.** Semver for the `WikiBusyOperation` union widening (`'compact'`; T4 delta-4 MAJOR-2):
   the `types.ts:1203-1207` note records a prior widening as **breaking** (`import`/`forget`
-  rode v3.0.0), while `'ontologyBackfill'` rode minor releases afterward (v4.21–4.23). Ride
+  rode v3.0.0), while `'ontologyBackfill'` rode minor releases afterward (v4.21–4.23;
+  verified against tag history, T4 delta-7 m4). Ride
   the minor (recommended — the union is diagnostic metadata on an error type) or force a
   major? Ruled at release time, before the version bump.
-- **G.** `source_ref_index` tombstone erasure (T4 delta-6 MAJOR-1): compact **step 1b**
-  hard-deletes each enumerated entity's soft-deleted registry rows (recommended — they are
-  the only `forget({ sourceRef })` residue compact otherwise leaves in the file, and
-  removing them blocks nothing: the unique index is partial on live rows,
-  `schema.ts:62-64`, and the duplicate-hash check reads live rows only,
-  `sourceStoreUpsert.ts:75-78`) — or keep the tombstones and document the carve-out in
-  §6 and the deleting-data guide instead, dropping step 1b.
+- **G.** `source_ref_index` tombstone erasure (T4 delta-6 MAJOR-1, store-wide per T4
+  delta-7 MAJOR-1): compact **step 1b** runs one store-wide
+  `DELETE FROM source_ref_index WHERE deleted_at IS NOT NULL` (recommended — tombstones are
+  the only `forget({ sourceRef })` residue compact otherwise leaves in the file, nothing
+  reads them, and removing them blocks nothing: the unique index is partial on live rows,
+  `schema.ts:62-64`) — or keep the tombstones and document the carve-out in §6 and the
+  deleting-data guide instead, dropping step 1b.
