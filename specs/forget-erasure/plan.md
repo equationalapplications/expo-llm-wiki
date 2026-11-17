@@ -238,6 +238,8 @@ Acceptance:
 - AC1: canary absent from every surface at every tier that claims whole-file absence.
 - AC2: typecheck + unit suite green (documented flake signature excepted).
 
+### T11 (follow-up lane) — expire() spec: thin setTemporal wrapper, archive-without-replacement (ratified; not in this lane's scope).
+
 ---
 
 ## Implementation order & dependencies

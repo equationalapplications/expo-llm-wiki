@@ -719,6 +719,11 @@ resolved). There is **no v18 option migration and no per-open gate in v1**: the 
 explicit host opt-in — it never self-arms when a fixed SQLite appears; no format change
 occurs unless a host opts in (and then the one-way door applies, documented).
 
+`expire()` is ratified (owner, harmonization 2026-11-17) — a thin
+`setTemporal` wrapper for archive-without-replacement. It needs its own
+small spec before implementation and is NOT part of this lane's
+implementation scope.
+
 ## Non-goals
 
 - Erasing events or outbox rows on single-fact `forget()` (documented host steps).
