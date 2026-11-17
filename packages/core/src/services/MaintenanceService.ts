@@ -733,6 +733,19 @@ export class MaintenanceService {
           throw new EraseStepError(code, `erase stopped at step 3: ${table} holds undrained rows and the FTS index strategy cannot drain them; erasure is unverified`, report);
         }
       }
+      for (const suffix of ['entries_fts_content', 'source_passages_fts_content']) {
+        let orphaned = false;
+        try {
+          orphaned = await this.sourceTableExists(`${this.prefix}${suffix}`);
+        } catch (err) {
+          report.failedStep = 'index_sync';
+          throw new EraseStepError('erase_orphaned_fts_content', `erase stopped: could not probe ${this.prefix}${suffix}`, report, err);
+        }
+        if (orphaned) {
+          report.failedStep = 'index_sync';
+          throw new EraseStepError('erase_orphaned_fts_content', 'erase stopped: orphaned full-text content tables may still hold forgotten text', report);
+        }
+      }
     }
     try {
       await this.searchService.drainEntriesLedgerSurfaced();

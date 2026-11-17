@@ -484,6 +484,7 @@ export class JobManager {
     // A refused pass is not lost work: WriteService.maybeRunHeal holds its
     // checkpoint back, so the next write retries.
     if (this.isAnyReembedActive()) return false;
+    if (this.activeMaintenanceJobs.has(this._eraseKey())) return false;
 
     const healKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(healKey)) return false;
@@ -534,6 +535,7 @@ export class JobManager {
    * Validates all entities before acquiring any lock (same as current importDump semantics).
    */
   acquireImportLocks(entityIds: string[]): void {
+    if (this.activeMaintenanceJobs.has(this._eraseKey())) throw new WikiBusyError('erase', '*');
     for (const entityId of entityIds) {
       if (this.activeMaintenanceJobs.has(this._importKey(entityId))) throw new WikiBusyError('import', entityId);
       if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) throw new WikiBusyError('librarian', entityId);

@@ -128,6 +128,10 @@ describe('erase() wrapped VACUUM + checkpoints (spec §2 steps 5/6/8)', () => {
     expect(err.report.failedStep).toBe('index_sync');
     await raw.runAsync(`DELETE FROM ${P}fts_pending`);
     await raw.runAsync(`DELETE FROM ${P}source_passages_fts_pending`);
+    // Live FTS5 shadow tables would read as orphaned content (F-MAJOR-1); a
+    // strategy without FTS5 has none.
+    await raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
     const report = await (wiki as any).maintenanceService.erase();
     expect(report.verified).toBe(true);
     ss.indexStrategy = strategy;

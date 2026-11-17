@@ -1076,8 +1076,10 @@ export class WikiMemory {
   }
 
   /**
-   * The retention this instance applies (shipped defaults plus host overrides),
-   * for GDPR disclosure. Days; `null` means "keep forever". Read-only.
+   * The retention windows `runPrune()` uses when the host runs it (shipped
+   * defaults plus host overrides), for GDPR disclosure. Nothing prunes
+   * automatically; `erase()` ignores `retainSoftDeletedFor`. Days; `null`
+   * means "keep forever". Read-only.
    */
   getRetentionPolicy(): {
     retainSoftDeletedFor: number;

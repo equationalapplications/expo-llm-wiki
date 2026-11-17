@@ -110,6 +110,14 @@ describe('WikiMemory — fencing while the erase lock is held (spec §2)', () =>
     await expect(wiki.runPrune('e1')).rejects.toMatchObject({ operation: 'erase', entityId: '*' });
   });
 
+  it('F-MAJOR-2: importDump and auto-heal acquisition during erase → refused', async () => {
+    const { wiki, jm } = await mk();
+    jm.acquireLock('erase', '*');
+    await expect(wiki.importDump({ entities: {} } as never)).rejects.toMatchObject({ operation: 'erase', entityId: '*' });
+    expect(busy(() => jm.acquireImportLocks(['e1']))).toEqual(ERASE_BUSY);
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(false);
+  });
+
   it('AC8: write() during erase neither advances nor rolls back the memory checkpoint', async () => {
     const { db, wiki, jm } = await mk();
     const ck = async () =>

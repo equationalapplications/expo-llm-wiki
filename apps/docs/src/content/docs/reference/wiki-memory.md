@@ -76,8 +76,8 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `getMemoryBundle(entityId)` | `Promise<MemoryBundle>` | All non-deleted facts, tasks and edges, plus the 10 newest events. Use `exportDump()` for a full copy |
 | `exportDump(entityIds?, { includeForgotten? }?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/). Forgotten (soft-deleted) rows are excluded unless `includeForgotten: true` |
 | `erase()` | `Promise<EraseReport>` | Verified erasure of every forgotten fact in scope (events are kept). A failure throws `EraseStepError` carrying the report with `verified: false`. See [Deleting data](/expo-llm-wiki/guides/deleting-data/) |
-| `erase({ rebuild: true })` | `Promise<EraseReport>` | As `erase()`, but rebuilds the entries FTS index instead of running `optimize`; the retired index table is reclaimed before the final checks |
-| `getRetentionPolicy()` | `{ retainSoftDeletedFor, retainEventsFor, pruneSupersededAfter }` | The retention this instance applies, in days (`null` = keep forever). Read-only, for disclosure |
+| `erase({ rebuild: true })` | `Promise<EraseReport>` | As `erase()`, but rebuilds the entries FTS index in place of the corrupt-index optimize, then `optimize` still runs on both tables; the retired index table is reclaimed before the final checks |
+| `getRetentionPolicy()` | `{ retainSoftDeletedFor, retainEventsFor, pruneSupersededAfter }` | The retention windows `runPrune()` uses when the host runs it, in days (`null` = keep forever); `erase()` ignores `retainSoftDeletedFor`. Read-only, for disclosure |
 | `getEntitySummary(entityId)` | `Promise<string \| null>` | |
 
 ## Change detection & inventory
@@ -111,7 +111,7 @@ with a matching hash (`{ charCount }`), text stored under a stale hash
 | `runLibrarian(entityId, { promptOverride? }?)` | `Promise<void>` | [Maintenance](/expo-llm-wiki/guides/maintenance/) |
 | `runHeal(entityId, { promptOverride?, batchSize? }?)` | `Promise<HealResult>` | |
 | `runReembed(entityId?, { skipExisting?, force? }?)` | `{ embedded, skipped, failed, deferred, permanentlyFailed }` | |
-| `runPrune(entityId, { retainSoftDeletedFor?, retainEventsFor?, vacuum? }?)` | `{ entries, tasks, events }` | |
+| `runPrune(entityId, { retainSoftDeletedFor?, retainEventsFor?, vacuum? }?)` | `{ entries, tasks, events }` | With `vacuum: true`, an incomplete post-VACUUM checkpoint throws `CheckpointIncompleteError` after the deletes land; persistent reader connections make this routine |
 | `runOntologyBackfill(entityId, { batchSize?, promptOverride?, classifier? }?)` | `{ scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }` | [Ontologies](/expo-llm-wiki/guides/ontologies/#backfill-untyped-facts) |
 | `getPendingMaintenance(entityIds?)` | `PendingMaintenance[]` (adds `pendingExternalDeletions?`; removal-only entities are listed only while a row is outside backoff) | [Deferred](/expo-llm-wiki/guides/maintenance/#deferred-maintenance) |
 | `runPendingMaintenance({ entityIds?, tokenBudget?, deadlineMs?, jobs? }?)` | `{ perEntity, tokensUsed, estimated, remaining, stoppedReason, externalDeletions }` | `jobs` accepts `'librarian'`, `'heal'`, `'reembed'`, `'externalDeletions'` (default all). `externalDeletions` is `{ confirmed, pending }`. It runs first and doesn't use `tokenBudget`. It awaits the `setup()` removal drain first, when one was started. |

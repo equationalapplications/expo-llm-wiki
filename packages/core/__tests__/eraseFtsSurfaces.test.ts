@@ -149,6 +149,21 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     warn.mockRestore();
   });
 
+  it('step 3: strategy without strict drain refuses on orphaned FTS content tables (F-MAJOR-1); absent tables proceed', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    // A real minisearch store never had FTS5 tables: model that by dropping them.
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await maint(t.wiki)._eraseDrainPassages(newReport());
+    await t.raw.runAsync(`CREATE TABLE ${P}entries_fts_content (id INTEGER, c0 TEXT)`);
+    await t.raw.runAsync(`INSERT INTO ${P}entries_fts_content (id, c0) VALUES (1, 'CANARY-forgotten-text')`);
+    const report = newReport();
+    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_orphaned_fts_content' });
+    expect(report.failedStep).toBe('index_sync');
+    expect(report.verified).toBe(false);
+  });
+
   it('step 7: optimize runs on both FTS tables', async () => {
     const t = await make();
     const spy = vi.spyOn(t.raw, 'execAsync');

@@ -40,7 +40,9 @@ await wiki.runPrune('user-123', { retainSoftDeletedFor: 0, vacuum: true });
 ```
 
 `vacuum: true` rewrites the database file so the freed pages are actually released. It can be
-slow on mobile.
+slow on mobile. With `vacuum: true`, an incomplete post-VACUUM checkpoint throws
+`CheckpointIncompleteError` after the deletes land; persistent reader connections make this
+routine.
 
 ## Erase: verified erasure
 
@@ -94,17 +96,19 @@ When FTS5 init fails on an open and the engine falls back to its unavailable-str
 (FTS tables still present), `erase()` refuses (unverified) until the pending FTS ledgers
 (`fts_pending` and `source_passages_fts_pending`) are empty, because text the engine could not
 drain from the full-text index cannot be claimed erased. A module-less runtime that earlier ran
-FTS5 keeps the full-text content tables, whose stored text `erase()` does not reach today —
-erase may still report verified there; the limitation is tracked in
-[issue #407](https://github.com/equationalapplications/expo-llm-wiki/issues/407).
+FTS5 keeps orphaned full-text content tables whose stored text `erase()` does not reach; on
+such runtimes erase refuses with `erase_orphaned_fts_content` until the orphaned content tables
+are removed (remediation is tracked in
+[issue #407](https://github.com/equationalapplications/expo-llm-wiki/issues/407)).
 
 Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
 opt-out.
 
 ### Copy census: what erase does and doesn't reach
 
-`erase()` zeroes the store file (and its WAL/journal surfaces). These copies are yours to
-handle:
+`erase()` zeroes the store file (and its WAL/journal surfaces). In WAL mode the WAL is
+checkpointed and the zeroed surfaces are covered; in rollback-journal mode the journal is
+unlinked rather than zeroed. These copies are yours to handle:
 
 1. **Events.** Erase deletes none of them — events follow the host's `retainEventsFor`
    setting. Each host publishes its own value; the engine doesn't pick one for you. If you need
@@ -131,7 +135,9 @@ temp file. The host can close it: run the erase call on a connection with
 
 When a subject asks you to erase their data (a GDPR Art. 17 request), the sequence is:
 
-1. **Stop writes to the subject's entities.**
+1. **Stop writes to the subject's entities.** Quiesce the whole store, not just the subject's
+   entities: erase refuses while any maintenance op or ingest is active store-wide, and step 5
+   needs store-wide write quiescence.
 2. **Deal with the subject's retained events.** This is a prerequisite, not a convenience
    follow-up: events follow your `retainEventsFor` value, and `erase()` deletes none of them, so a
    host claiming erasure must first remove the event rows it keeps. `forget()` has no per-event

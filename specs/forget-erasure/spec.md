@@ -181,7 +181,10 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    `operation !== 'erase' && this.activeMaintenanceJobs.has(this._eraseKey())` —
    `isBlocked(operation, entityId)` (`JobManager.ts:332`) carries no `owner` parameter, and
    it is consulted only for `librarian`/`heal` from `write()`, so the erase-owned-prune
-   exemption cannot arise there (T4 delta-8 m2). Test: `write()` during erase neither advances nor rolls back
+   exemption cannot arise there (T4 delta-8 m2). `JobManager.acquireImportLocks` (used by
+   `importDump`) is a **second acquisition path** that consults the erase key directly
+   (`WikiBusyError('erase', '*')`), as does `tryAcquireAutoHealLock` — neither may
+   depend on `write()` consulting `isBlocked` first (Fable r1 F-MAJOR-2). Test: `write()` during erase neither advances nor rolls back
    the memory checkpoint. The `'erase'` arm self-checks first (a second
    concurrent `erase()` throws `WikiBusyError('erase', '*')` — mirroring the self-key
    check that opens `global_reembed`'s arm, `JobManager.ts:237`; T4 delta-4 m2) and
@@ -311,7 +314,9 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    undrained text, which cannot be claimed erased. A runtime that never had FTS5 at all
    detaches with the ledgers dropped (nothing to drain). A module-less runtime that earlier ran
    FTS5 keeps the orphaned `entries_fts`/`source_passages_fts` content tables, whose stored text
-   erase does not reach today — known limitation, tracked in issue #407.
+   erase does not reach. Erase now **fails unverified** with `erase_orphaned_fts_content`
+   (`failedStep: 'index_sync'`) when those orphaned content tables are present;
+   remediation (clearing them) remains tracked in issue #407.
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired
@@ -390,7 +395,7 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    and today `MetadataRepository.ts:173` discards that row via `execAsync`. **Both**
    checkpoints (the existing pre-VACUUM one and the new post-VACUUM one) run via
    `getFirstAsync` and treat `busy !== 0` or `log !== checkpointed` as a surfaced step
-   failure (`erase_checkpoint_incomplete` diagnostic; the erase report marks erasure
+   failure (fails the erase with the `erase_checkpoint_incomplete` error code; the erase report marks erasure
    **unverified**). Non-WAL stores: `PRAGMA wal_checkpoint` returns `(0, -1, -1)` off-WAL,
    which passes the `busy !== 0 || log !== checkpointed` test as "complete" — state this so
    the implementer does not "fix" it into a `log === 0` check (T4 delta-5 m5). Test: a
@@ -788,8 +793,10 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
   deleting-data guide, and every code identifier this spec names (`OperationType` /
   `WikiBusyOperation` member `'erase'`, `JobManager` case + `_eraseKey()` →
   `` `${prefix}:erase` ``, diagnostics `erase_secure_delete_off` /
-  `erase_checkpoint_incomplete` / `erase_retired_vtab_undroppable`,
-  `erase({ rebuild: true })`). Historical review tags (T3/T4 findings) keep their original
+  `erase_checkpoint_incomplete` (an error code, not a diagnostic) / `erase_retired_vtab_undroppable`,
+  `erase({ rebuild: true })`; the implementation also introduced the public slugs
+  `erase_entity_skipped`, `erase_registry_sweep_skipped`, `erase_retired_remaining`,
+  `prune_checkpoint_incomplete`, `import_tombstone_skipped`). Historical review tags (T3/T4 findings) keep their original
   wording where they quote pre-rev-27 text.
 
 **Ratified rev-27 additions carried from the GDPR consult (§8, "additions, not new
