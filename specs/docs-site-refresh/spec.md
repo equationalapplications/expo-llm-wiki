@@ -242,12 +242,12 @@ SUPERSEDED by the owner ruling; the erase()-forward-documentation concern is moo
 whole-PR review (docs and the API ship in one PR).
 
 This PR is file-disjoint from #404 (ruling 2) and is built on `origin/main` (not stacked).
-The erase()/expire() vocabulary documents an API that ships with #404. Two orderings:
+The erase()/expire() vocabulary documents an API that ships with #404 — under the
+whole-PR review that concern is moot (docs and the API ship in one PR).
 
-- **(SUPERSEDED by the owner ruling above — kept for the record only)** earlier
-  options "merge after #404" and "merge first with ship-next-release markers" are
-  both dead; the whole-PR review on #404 resolves the erase()-forward-documentation
-  concern (docs and the API ship in one PR).
+**(SUPERSEDED — kept for the record only)** earlier options "merge after #404" and
+"merge first with ship-next-release markers" are both dead; the owner ruling above
+replaces them.
 
 ## Test plan
 
@@ -256,8 +256,9 @@ The erase()/expire() vocabulary documents an API that ships with #404. Two order
    and diagnostic code written by this PR matches `git show v9.2.0:packages/core/src/...`
    (source-store rows) or branch `specs/forget-erasure` (erase rows, publish-time re-check).
 3. **Obligation checklist:** deleting-data.md contains every §6 sentence in the handoff
-   list; the recipe has no standalone-prune step; `grep -i "secure_delete=FULL"` over the
-   tree returns nothing.
+   list; the recipe has no standalone-prune step; `grep -ri "secure_delete=FULL"
+   apps/docs` returns nothing (scoped to the docs tree — the spec/plan files themselves
+   quote "FULL" as the erratum).
 4. **Scrub guard (added lines only):** `git diff main -U0 -- apps/docs | grep '^+' |
    grep -iE 'synapsetree'` returns nothing.
 5. **Link hygiene:** new internal links follow the `/expo-llm-wiki/<section>/<page>/`

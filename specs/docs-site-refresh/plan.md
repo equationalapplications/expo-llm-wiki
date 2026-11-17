@@ -27,8 +27,10 @@ embeds `storedSources`; import re-cuts, returns `skippedSources`).
 Acceptance:
 - AC1: every identifier/signature/default matches v9.2.0 source (spot-checked against
   `git show v9.2.0:packages/core/src`).
-- AC2: frontmatter `title`/`description`/`sidebar.order` (between ingest-documents and
-  diagnostics ordering); internal links use `/expo-llm-wiki/...` base pattern.
+- AC2: frontmatter `title`/`description`/`sidebar.order` — the guide takes
+  `sidebar.order: 3.5` (fractional insert between ingest-documents=3 and the next
+  integer; Starlight orders numerically); the glossary takes `sidebar.order: 6`
+  (free slot in `reference/`); internal links use `/expo-llm-wiki/...` base pattern.
 - AC3: intro notes "added in 9.1/9.2" per feature; no `runPrune`-as-erasure claims; links
   to the glossary for the Sources layer term.
 
