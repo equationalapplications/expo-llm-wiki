@@ -506,6 +506,20 @@ child report. Do NOT force the fixture.
   });
 ```
 
+NOTE (controller ruling 2026-11-18, E6 second resume — supersedes the
+automated AC2 test): the AC2 automated test is NOT buildable in this
+environment. The real erased state on a module-less runtime keeps the
+vtab ROW (detach's `DROP TABLE` fails without the module and is
+swallowed), with emptied but structurally-intact plain shadows — so a
+capable re-open takes `retireFtsTable` (RENAME vtab + shadows, no
+collision) and never the create path; the create-path collision the
+fixture hit is unreachable in reality. A module-capable build cannot
+hold the real state. Therefore: DELETE the AC2 test from the test file —
+AC2's determinism promise is verified by the MANUAL canary run against a
+real module-less SQLite build before merge and recorded honestly in the
+PR body. Buildable automated coverage: AC8 plus E4's Path A pins. Do not
+replace AC2 with a weaker pin.
+
 NOTE for the implementer: adapt the AC2 test's search call to the real
 `SearchService.search` signature (read it first); the assertion to hold is
 "the rebuilt index serves a query for the pre-existing row". If
