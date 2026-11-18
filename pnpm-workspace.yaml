@@ -86,19 +86,21 @@ overrides:
   # behavior change is observable in any repo gate surface (verified:
   # investigation.md). Residual accepted risk: @expo/fingerprint and
   # @expo/config ignore semantics are unprobed (no expo app exists in-repo
-  # to test). Drop condition (scoped 2026-11-18 per CodeRabbit r1 fold —
-  # check only parents whose DECLARED range is subject to each override,
-  # not the whole resolved graph; e.g. filelist's minimatch 5.1.9 sits
-  # below the >=7.0.0 floor and never blocks retirement): list the
-  # parents with `pnpm why glob` / `pnpm why minimatch`, then remove each
+  # to test). Drop condition (check only parents whose DECLARED range is
+  # subject to each override, not the whole resolved graph; e.g. filelist's
+  # minimatch 5.1.9 sits below the >=7.0.0 floor and never blocks
+  # retirement): list the parents with `pnpm why glob` / `pnpm why
+  # minimatch`, then remove each
   # line when no in-scope parent declares a range that excludes
   # 14.0.2 / 11.0.1 — check each parent's DECLARED range with
   # `pnpm view <parent>@<locked> dependencies.glob` (or
   # `dependencies.minimatch`); the workspace importers themselves never
-  # declare glob or minimatch. In-scope minimatch parents as of
-  # 2026-11-18: eslint, @typescript-eslint/typescript-estree,
-  # @expo/fingerprint, @eslint/config-array (still `^10.2.4` at 0.23.5 —
-  # line NOT yet retirable). Re-check in every cooldown sweep.
+  # declare glob or minimatch. In-scope parents as of 2026-11-18:
+  # glob — @expo/cli, @expo/config, @expo/config-plugins, @expo/metro-config,
+  # @expo/fingerprint, workbox-build; minimatch — eslint,
+  # @typescript-eslint/typescript-estree, @expo/fingerprint,
+  # @eslint/config-array (still `^10.2.4` at 0.23.5 — line NOT yet
+  # retirable). Re-check in every cooldown sweep.
   'glob@>=9.0.0 <14.0.2': 14.0.2
   'minimatch@>=7.0.0 <11.0.1': 11.0.1
   # node-forge 2026-11-01 advisory burst (GHSA-7wch-p9px-956x,

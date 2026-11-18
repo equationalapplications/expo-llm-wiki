@@ -1,6 +1,7 @@
 # Investigation: adopt glob 14.0.2 / minimatch 11.0.1 to clear GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249
 
-**Date:** 2026-11-16 (rev 6 — step 0 COMPLETE. Opus ladder: APPROVE WITH
+**Date:** 2026-11-16 (rev 7 2026-11-18 — implementation merged into this
+PR's docs; step 0 COMPLETE. Opus ladder: APPROVE WITH
 NITS. Tier-4 Fable: r1 REQUEST CHANGES → rev 5 fold → r2 delta APPROVE
 WITH NITS, all nits folded below.)
 **Status:** Step 0 COMPLETE — owner ruling 2026-11-16: forced-major
@@ -206,8 +207,9 @@ resolved graph; and the drop condition:
 > `dependencies.minimatch`). Re-check in every cooldown sweep (the standing
 > cadence that already re-derives the audit surface).
 >
-> **Scope correction (2026-11-18, CodeRabbit r1 fold):** "no package in the
-> resolved graph" above is too broad — the check covers only parents whose
+> **Scope correction (2026-11-18, CodeRabbit r1 fold):** the earlier wording
+> here said "remove each line when no package in the resolved graph declares
+> a range that excludes …" — too broad — the check covers only parents whose
 > DECLARED range falls inside the override range. `filelist` retains
 > `minimatch@5.1.9`, below the override floor `>=7.0.0`; it is an unrelated
 > consumer and never blocks retirement. Spec + `pnpm-workspace.yaml` carry
@@ -339,5 +341,17 @@ comment, (3) open the PR.
   consequence stated (deploy.yml builds scopelab once per checkout, so
   the published service worker has always been the 7-entry form — the
   duplicate has never shipped). **Step 0 COMPLETE: Opus APPROVE WITH NITS
-  + Fable APPROVE WITH NITS, all findings folded. Awaiting owner ruling
-  per Precondition.**
+  + Fable APPROVE WITH NITS, all findings folded. Owner ruling landed
+  2026-11-16 (see Status).**
+- **rev 7 (2026-11-18):** implementation cycle on PR #402. CI 5/5 SUCCESS
+  at `6ca72ee1` after the stale-base merge of origin/main (9.4.0).
+  CodeRabbit r1 (3 MINORs) folded `6ca72ee1`: drop condition scoped to
+  in-range parents, intent check added to the spec, step-4 cleanup
+  completed (plan + ledger deleted). Tier-3 Opus cycle r1
+  (medium, $0.65, `tier3-opus-cycle-r1.json`): **APPROVE WITH CHANGES** —
+  M1 intent-check rule-8 overclaim + 4 minors folded `23079c83`
+  (alignment rests on rule 9 alone; @eslint/config-array `^10.2.4` added
+  to the drop-condition scope — minimatch line not yet retirable; manual
+  full moderate audit recorded, the two lane GHSAs absent). Opus r2 delta
+  (medium, $0.50): **APPROVE WITH NITS** — remaining nits are this rev's
+  record fixes (scope note as history, rev 7, YAML parent-list symmetry).
