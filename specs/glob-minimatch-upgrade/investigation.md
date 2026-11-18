@@ -201,6 +201,13 @@ resolved graph; and the drop condition:
 > with `pnpm view <parent>@<locked> dependencies.glob` (or
 > `dependencies.minimatch`). Re-check in every cooldown sweep (the standing
 > cadence that already re-derives the audit surface).
+>
+> **Scope correction (2026-11-18, CodeRabbit r1 fold):** "no package in the
+> resolved graph" above is too broad — the check covers only parents whose
+> DECLARED range falls inside the override range. `filelist` retains
+> `minimatch@5.1.9`, below the override floor `>=7.0.0`; it is an unrelated
+> consumer and never blocks retirement. Spec + `pnpm-workspace.yaml` carry
+> the scoped wording.
 
 No allowlist change: neither GHSA was allowlisted.
 

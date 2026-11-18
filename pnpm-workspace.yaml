@@ -86,10 +86,13 @@ overrides:
   # behavior change is observable in any repo gate surface (verified:
   # investigation.md). Residual accepted risk: @expo/fingerprint and
   # @expo/config ignore semantics are unprobed (no expo app exists in-repo
-  # to test). Drop condition: remove each line when no package in the
-  # resolved graph (`pnpm why glob` / `pnpm why minimatch`) declares a
-  # range that excludes 14.0.2 / 11.0.1 — check each parent's DECLARED
-  # range with `pnpm view <parent>@<locked> dependencies.glob` (or
+  # to test). Drop condition (scoped 2026-11-18 per CodeRabbit r1 fold —
+  # check only parents whose DECLARED range is subject to each override,
+  # not the whole resolved graph; e.g. filelist's minimatch 5.1.9 sits
+  # below the >=7.0.0 floor and never blocks retirement): remove each
+  # line when no in-scope parent declares a range that excludes
+  # 14.0.2 / 11.0.1 — check each parent's DECLARED range with
+  # `pnpm view <parent>@<locked> dependencies.glob` (or
   # `dependencies.minimatch`); the workspace importers themselves never
   # declare glob or minimatch. Re-check in every cooldown sweep.
   'glob@>=9.0.0 <14.0.2': 14.0.2

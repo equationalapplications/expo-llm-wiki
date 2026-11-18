@@ -5,6 +5,17 @@
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278
+**Intent check:** this spec touches INTENT rules **8** (small, first-party,
+auditable dependency surface) and **9** (the supply-chain gate is binding),
+and aligns with both: the forced majors are adopted via the repo's one
+override home (`pnpm-workspace.yaml`) with the 14-day gate cleared
+(2026-11-10) and the owner ruling recorded in-file and in the ledger — the
+override pattern is exactly what rule 9 names as the honest adoption
+mechanism; and because glob/minimatch are dev-time tooling (no runtime
+dependency added), the audit-clean dependency surface rule 8 protects is
+strengthened, not widened, by clearing two audit advisories. The scoped
+drop condition keeps the override surface temporary (rule 8: overrides
+retire once every affected range accepts the patched major).
 
 ## Problem
 
@@ -44,9 +55,13 @@ All nits are folded. Key evidence:
 
 The override comment must state: advisory ids, patch publish dates, gate
 clear dates, reach, the forced-major fact, the accepted residual risk, and
-the drop condition. The drop condition: remove each line when no package in
-the resolved graph declares a range that excludes 14.0.2 / 11.0.1. Re-check
-in every cooldown sweep.
+the drop condition. The drop condition: remove each line when no parent
+whose DECLARED range falls inside the override range still excludes
+14.0.2 / 11.0.1 — i.e. every range holder subject to the override (glob
+`^11`/`^13`, minimatch `^10.2.x`) has accepted the patched major.
+Unrelated consumers outside the override range (e.g. `filelist`'s
+`minimatch` `5.1.9`, below the override floor `>=7.0.0`) do not block
+retirement. Re-check in every cooldown sweep.
 
 ## Files touched
 
