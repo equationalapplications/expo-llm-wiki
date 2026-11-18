@@ -231,6 +231,7 @@ describe('runOntologyBackfill', () => {
     const sys = generateText.mock.calls[0][0].systemPrompt as string;
     expect(sys).toContain('TITLE CATALOG');
     expect(sys).toContain('- "Ada" (person)');
+    expect(sys).not.toContain('"Untyped Node"'); // untyped rows stay out of the catalog
     expect(sys).not.toContain('valid only if');
   });
 

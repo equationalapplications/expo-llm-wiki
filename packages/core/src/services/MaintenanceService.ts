@@ -2083,6 +2083,9 @@ export class MaintenanceService {
     // 2026-11-18.json); this shipped block covers all typed nodes and has not
     // itself been benchmarked yet. The wording is deliberately non-exclusive:
     // same-batch targets and titles beyond the 200-entry cap remain valid.
+    // The catalog is built once per pass, so facts typed in an earlier batch
+    // of the same run are accepted targets but are not listed yet — another
+    // known divergence from the E1 variant.
     const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId);
     const titleCatalog = buildTitleCatalogBlock(titleRows);
 

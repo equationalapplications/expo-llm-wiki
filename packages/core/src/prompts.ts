@@ -93,7 +93,7 @@ export function buildTitleCatalogBlock(
   return [
     'TITLE CATALOG: existing typed nodes in this memory include:',
     catalog,
-    ...(truncated ? ['(This list is truncated; more typed nodes exist beyond the first 200 titles.)'] : []),
+    ...(truncated ? [`(This list is truncated; more typed nodes exist beyond the first ${TITLE_CATALOG_MAX_ENTRIES} titles.)`] : []),
     'A "target_title" may be copied verbatim from this catalog, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.',
   ].join('\n');
 }

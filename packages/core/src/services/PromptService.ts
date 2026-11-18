@@ -365,8 +365,9 @@ export class PromptService {
       };
     }
     // #381: the title catalog splices in between the base prompt and the
-    // ontology appendix, mirroring the E1 experiment prompt that measured
-    // 28/28 correct-target proposals (results/statement-kinds-e1-*).
+    // ontology appendix. E1's seed-only variant measured 28/28 — diagnosis
+    // evidence the gap was the blocker; the shipped block is unbenchmarked
+    // (results/statement-kinds-e1-*).
     const effective = titleCatalog !== undefined ? `${template}\n\n${titleCatalog}` : template;
     return {
       systemPrompt: this.appendOntology(effective, ontologyContext),

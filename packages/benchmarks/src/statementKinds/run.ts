@@ -122,7 +122,7 @@ export interface RunStatementKindsOpts {
   engine: Awaited<ReturnType<typeof engineInfo>>;
   /** Replaces the base classifier system prompt (ontology appendix still appended). */
   promptOverride?: string;
-  /** Free-form variant label recorded in the report for provenance. */
+  /** Free-form variant label recorded in the report for provenance (e.g. 'custom-override'). */
   variant?: string;
 }
 
