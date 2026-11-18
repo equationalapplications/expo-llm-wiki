@@ -429,16 +429,10 @@ facts too.
    implementation.` with `Ships in this release — see [Temporal
    facts](/expo-llm-wiki/guides/temporal-facts/).`
 
-6. **Supersede lower-bound gap issue** (D1 note):
-
-   ```bash
-   gh issue create \
-     --title "supersede(): no lower-bound check — validFrom can precede the old fact's validity start" \
-     --body "Filed from specs/expire (D1). TemporalService.supersedeInTx (packages/core/src/services/TemporalService.ts:43) never checks the supersede time t against the old row's interval start (valid_from ?? created_at), so a supersede at t <= start creates a zero-width or inverted live interval for the archived row — the same empty-interval problem expire() rejects as invalid_interval (specs/expire/spec.md, D1). Requested: mirror expire()'s check — reject with WikiSupersedeError('invalid_interval') when t <= (old.valid_from ?? old.created_at). Separate from the expire() MINOR by design; not folded into specs/expire." \
-     --repo equationalapplications/expo-llm-wiki
-   ```
-
-   Record the issue number in the PR body.
+6. **Supersede lower-bound gap issue** (D1 note): **ALREADY FILED by the
+   controller as #414** (2026-11-18) — do NOT create another. Put
+   "References #414" in the PR body at step 9 (not "Fixes": it stays
+   open).
 
 **Run:** `pnpm --filter docs build` green. **Commit:**
 `docs(core): expire() API page, guide, errors, glossary + INTENT spec-home sentence`.
