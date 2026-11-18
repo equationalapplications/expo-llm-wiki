@@ -510,7 +510,7 @@ export class ImportExportService {
 
         if (blobData != null) {
           factsWithPreservedBlob.set(fact.id, blobData);
-          if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
+          if (fact.deleted_at == null) preservedBlobDims.add(blobData.byteLength / 4);
         }
 
         existingFactsById.set(fact.id, {
@@ -713,7 +713,7 @@ export class ImportExportService {
 
     for (const fact of bundle.facts) {
       if (
-        !fact.deleted_at &&
+        fact.deleted_at == null &&
         liveEmbedFactIds.has(fact.id) &&
         !factsWithPreservedBlob.has(fact.id)
       ) {
@@ -749,7 +749,7 @@ export class ImportExportService {
 
     for (const fact of bundle.facts) {
       const blobData = factsWithPreservedBlob.get(fact.id);
-      if (blobData && !fact.deleted_at && upsertedFactIds.has(fact.id)) {
+      if (blobData && fact.deleted_at == null && liveEmbedFactIds.has(fact.id)) {
         try {
           const float32Vector = new Float32Array(
             blobData.buffer,

@@ -693,6 +693,7 @@ export class MaintenanceService {
         );
       } catch (err) {
         report.failedStep = 'retired_reclaim';
+        emitDiagnostic(this.options, { code: 'erase_retired_read_failed', operation: 'erase', trigger: 'call', entityId: '' });
         throw new EraseStepError('erase_retired_read_failed', 'erase stopped after step 6: the retired-table read failed; erasure is unverified', report, err);
       }
       const left = present.map((r) => r.name).filter((n) => isRetiredTableName(this.prefix, n) && !report.retiredUndroppable.includes(n));
