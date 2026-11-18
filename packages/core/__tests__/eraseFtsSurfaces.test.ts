@@ -341,6 +341,53 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(report.failedStep).toBe('index_sync');
   });
 
+  /** Make the in-transaction RENAME (and optionally the DROP) of entries_fts throw `code`; records every statement. */
+  function failRetire(raw: any, code: string, alsoDrop: boolean) {
+    const stmts: string[] = [];
+    const orig = raw.withTransactionAsync.bind(raw);
+    vi.spyOn(raw, 'withTransactionAsync').mockImplementation((fn: any) =>
+      orig((tx: any) => fn(new Proxy(tx, {
+        get(target, prop) {
+          if (prop !== 'execAsync') return Reflect.get(target, prop);
+          return async (sql: string) => {
+            stmts.push(sql);
+            const hit = sql.startsWith(`ALTER TABLE ${P}entries_fts RENAME`) || (alsoDrop && sql === `DROP TABLE ${P}entries_fts`);
+            if (hit) {
+              throw Object.assign(new Error("invalid fts5 file format (found 0, expected 4 or 5) - run 'rebuild'"), { code });
+            }
+            // The test driver (better-sqlite3) is defensive: it forbids writing sqlite_schema. The unregister
+            // DELETE is recorded, and stood in for by a real DROP of the (actually healthy) vtab.
+            if (sql.startsWith('DELETE FROM sqlite_schema')) return target.execAsync(`DROP TABLE ${P}entries_fts`);
+            if (sql.startsWith('PRAGMA writable_schema')) return;
+            return target.execAsync(sql);
+          };
+        },
+      }))));
+    return stmts;
+  }
+  const shadowNames = async (t: Awaited<ReturnType<typeof make>>) =>
+    (await t.raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts_%' AND name NOT LIKE '%retired%'`)).map((r) => r.name);
+
+  it('E9: an unreadable vtab (RENAME and DROP both corrupt) is unregistered via writable_schema and rebuilt fresh', async () => {
+    const t = await make();
+    const stmts = failRetire(t.raw, 'SQLITE_CORRUPT_VTAB', true);
+    await (search(t.wiki).indexStrategy as any).resetAndRearm();
+    expect(stmts).toContain('PRAGMA writable_schema = ON');
+    expect(stmts).toContain('PRAGMA writable_schema = OFF');
+    expect(stmts.some((s) => s.startsWith('DELETE FROM sqlite_schema'))).toBe(true);
+    // Fresh vtab and its shadow tables exist (the old ones were dropped, then recreated by the CREATE).
+    expect(await shadowNames(t)).toEqual(expect.arrayContaining([`${P}entries_fts_data`, `${P}entries_fts_idx`, `${P}entries_fts_content`]));
+    await expect(t.raw.getAllAsync(`SELECT rowid FROM ${P}entries_fts WHERE ${P}entries_fts MATCH 'x'`)).resolves.toEqual([]);
+    expect(await t.meta.getMeta(FTS5_STATE_KEY)).toBe('rebuilding');
+  });
+
+  it('E9 guard: a transient RENAME error (SQLITE_BUSY) propagates with no unregister', async () => {
+    const t = await make();
+    const stmts = failRetire(t.raw, 'SQLITE_BUSY', true);
+    await expect((search(t.wiki).indexStrategy as any).resetAndRearm()).rejects.toMatchObject({ cause: { code: 'SQLITE_BUSY' } });
+    expect(stmts.some((s) => s.includes('writable_schema'))).toBe(false);
+  });
+
   it('step 7: optimize runs on both FTS tables', async () => {
     const t = await make();
     const spy = vi.spyOn(t.raw, 'execAsync');
