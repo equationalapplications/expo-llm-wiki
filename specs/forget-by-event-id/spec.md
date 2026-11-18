@@ -1,14 +1,14 @@
 # forget({ eventId }) — delete librarian facts by their source-pointer event id
 
-**Status: Draft v4 — design ratified by the owner 2026-11-18 ("422 ratified"); Opus T3 spec review folds applied (3 MAJOR + 7 minor, verdict REQUEST CHANGES → folded); delta + Fable T4 spec gate pending**  
+**Status: Draft v5 — design ratified by the owner 2026-11-18 ("422 ratified"); Opus T3 folds + Fable T4 folds applied (B1 BLOCKER: planner-dependent JSON guard — empirically probed; M1–M2; m1–m5); implementation next**  
 **Intent check:** INTENT rule 2 — this change adds one optional selector
 (`eventId`) to `ForgetParams` (`packages/core/src/types.ts`) and three
 `EntryRepository` methods; it adds no columns, drops nothing, and changes no
 existing selector's semantics (rule-2 clean: pure additive surface). The
-`forget()` removal pipeline is the one INTENT **Rule 7** already governs
-(with its 2026-11-11/12 amendments recording the drain contract and
-`specs/durable-vector-removal/`) — the new selector feeds that pipeline
-unchanged. Named follow-up of the ruled source-pointers spec (§forget
+`forget()` removal pipeline is governed by INTENT **Rule 13** (erasure is
+verifiable) with the drain contract in `specs/durable-vector-removal/` and
+its Rule 7 drain amendments (2026-11-11/12) — the new selector feeds that
+pipeline unchanged. Named follow-up of the ruled source-pointers spec (§forget
 boundary, §Non-goals); the 2026-11-14 owner ruling requires this deletion
 path to exist because it is the first-class removal path for retained
 quotes.
@@ -44,18 +44,26 @@ to this issue (new deletion semantics on a JSON column).
 A fact matches when, entity-scoped:
 
 ```sql
-json_extract(
-  CASE WHEN json_valid(source_pointer) THEN source_pointer END,
-  '$.event_id'
-) = ?
-  AND json_type(source_pointer, '$.event_id') = 'text'
+CASE WHEN json_valid(source_pointer)
+     THEN json_type(source_pointer, '$.event_id') = 'text'
+          AND json_extract(source_pointer, '$.event_id') = ?
+     ELSE 0 END
 ```
 
-- The `CASE WHEN json_valid(...)` wrapper is **required for correctness**,
-  not style: SQLite does not promise AND-term evaluation order, so a bare
-  `json_valid(source_pointer) AND json_extract(...)` can still raise on
-  malformed text if the planner reorders terms. This is the repo's existing
-  pattern (`fts5Sql.ts:40`, `LintRepository.ts:11`).
+- **Every JSON function call sits under the single `json_valid` guard —
+  this is a correctness requirement, not style.** `json_type` (like every
+  SQLite JSON function except `json_valid`/`json_error_position`/
+  `json_quote`) raises `malformed JSON` on non-JSON input, and under
+  three-valued logic a guarded `json_extract` term evaluates to NULL (not
+  FALSE) for a malformed row, which forces evaluation of any unguarded
+  AND operand. Empirically probed on better-sqlite3 (SQLite 3.50): the
+  standalone `json_type` on corrupted text raises, while the v4 draft's
+  two-term form happened NOT to throw only because that planner split the
+  AND into separate filter terms and filtered the malformed row first —
+  term-splitting is planner behavior, not a documented guarantee, and the
+  bundled builds behind the expo peer range differ. The single-guard CASE
+  form is deterministic under every evaluation order (same `CASE
+  WHEN json_valid` pattern as `fts5Sql.ts:40`, `LintRepository.ts:11`).
 - `json_type(..., '$.event_id') = 'text'` pins the slot to a string — the
   only shape producers write (`validateSourcePointerValue:50`).
 - **Read-side asymmetry, stated on purpose:** deletion matches the
@@ -77,17 +85,19 @@ json_extract(
   availability so a build without JSON1 fails loudly in CI, not on a
   device.
 
-**Canary scope, stated honestly:** the probe runs in vitest against the CI
-adapters (better-sqlite3 and node:sqlite). This repo has no native Expo
-device-runner harness, so the canary cannot itself execute a device SQLite
-binary. On-device coverage rests on a dependency already in production:
-the FTS5 index strategy requires JSON1 on every runtime —
-`createIndexStrategy.ts:39` probes `SELECT json_valid('[]')` at index
-creation and degrades explicitly on "no such function" — so any device
-whose SQLite can build the search index (all expo-sqlite peer versions
-bundle SQLite where JSON1 is unconditional, ≥ 3.38) can run this selector.
-D1 introduces no new class of driver requirement; the canary formalizes an
-existing one.
+**Canary scope and JSON1-less builds, stated honestly:** the probe runs in
+vitest against the CI adapters (better-sqlite3 and node:sqlite); it cannot
+execute a device SQLite binary (no native Expo device-runner harness in
+this repo). JSON1 is **not** required by every engine runtime: the FTS5
+index path needs it, and when it is absent `probeFts5`
+(`createIndexStrategy.ts:21,42`) returns false and the engine falls back
+to minisearch and keeps working — so a fully functional JSON1-less engine
+build exists. On such a build, `forget({ eventId })` raises the raw SQLite
+`no such function` error, unchanged and unhandled (deletion paths have no
+fallback; spec decision: the error propagates). In practice the exposure is
+theoretical — every expo-sqlite peer version bundles SQLite ≥ 3.45, where
+JSON1 is unconditional. The canary formalizes what the CI adapters guarantee
+and this spec does not claim more.
 
 **Count semantics under tombstones:** the mutator carries the same
 `deleted_at IS NULL` guard as `softDeleteBySource`
@@ -101,7 +111,8 @@ by-source today.
 
 ### Performance envelope
 
-`entries_entity_idx` (`schema.ts:43`) narrows every match query to one
+`entries_entity_idx` (`packages/core/src/db/schema.ts:43`) narrows every
+match query to one
 entity's rows before any JSON evaluation — the scan is bounded by
 facts-per-entity, never store-wide. Within one entity the `json_extract`
 predicate is an unindexable scan of that entity's rows: accepted for
@@ -121,6 +132,16 @@ requires `clearAll`. Rationale: a quote-hygiene call is "remove event X's
 traces from this entity" — a distinct intent from ingest-ownership or
 id-targeted deletion; composition would force this spec to rule on
 untested intersections.
+
+**Existing surfaces this change must touch (same PR, or they go stale):**
+
+- the `includeChain` guard (`MaintenanceService.ts:1161`) gains `eventId`
+  in its exclusion list;
+- the dry-run rejection message (`MaintenanceService.ts:1466`) names
+  `eventId` alongside sourceRef/sourceHash;
+- the `ForgetParams` JSDoc (`types.ts:1409`: "`clearAll` excludes the
+  other selectors"; `includeChain`: "Does not compose with other
+  selectors") documents the new selector.
 
 ### D3 — Repository trio, shared predicate constant, outbox parity
 
@@ -170,7 +191,7 @@ carry `source_pointer`). Explicit non-touches:
 After the transaction: enumerated ids → ledger `backstopEnqueue` (when the
 gate is `hook`) → `searchService.syncEntries` → `vectorRemoval.drain` →
 `WikiExternalDeletionError` on unconfirmed removals — the same pipeline
-every other selector uses (INTENT Rule 7 amendments;
+every other selector uses (INTENT Rule 13 + Rule 7 drain amendments;
 `specs/durable-vector-removal/` drain/deferred contract). Nothing new is
 invented for vector removal or FTS.
 
@@ -188,7 +209,10 @@ so **all `eventId` exclusivity validation lives in public `forget()` beside
 the existing checks (~:1155-1163), before the dry-run dispatch**. Without
 this, a naive `eventId` + `sourceRef` dry run would fall through to the
 source-count branch. The dry run reports the live-only count through
-`countLiveByPointerEvent` (D3) in its existing reporting shape.
+`countLiveByPointerEvent` (D3) in its existing reporting shape — and the
+`eventId` branch dispatches **before** the no-source-selector early return
+(`MaintenanceService.ts:1488-1490`), so a dry run can never silently
+report zero for a valid `eventId` call.
 
 ### D8 — Reporting: the return value and the outbox — no new diagnostics
 
@@ -216,7 +240,10 @@ is a separate additive ruling.
 `Invalid eventId` (same message family as `Invalid sourceRef`, which is
 normalized+validated at `MaintenanceService.ts:1226-1227`). This matters
 because the branch dispatch uses truthiness gates — an empty string must
-be rejected up front, not silently match nothing.
+be rejected up front, not silently match nothing. Unlike `sourceRef`,
+**`eventId` is matched exactly with no normalization or trimming** — event
+ids are engine-generated, so there is no host-chosen spelling to
+canonicalize.
 
 ## Rejected alternatives
 
@@ -266,11 +293,14 @@ be rejected up front, not silently match nothing.
    (e.g. `position` numbers out of range) with `event_id: 'E1'` IS
    soft-deleted by `forget({ eventId: 'E1' })`.
 8. **JSON1 availability probe** (CI canary for D1 — scope per §Canary
-   scope: CI adapters; on-device covered by the existing index-strategy
-   JSON1 dependency).
-9. **Exclusivity + validation**: every forbidden composition throws with
-   the existing error-message style (`clearAll` + `eventId` included);
-   `eventId: ''` and non-strings throw `Invalid eventId`.
+   scope: CI adapters only; on a JSON1-less build the selector's SQLite
+   error propagates unchanged, per the stated decision).
+9. **Exclusivity + validation**: every forbidden composition throws, with
+   the exact new/updated message texts pinned (`clearAll` + `eventId`,
+   `eventId` + each of entryId/taskId/sourceRef/sourceHash,
+   `includeChain` + `eventId`, `includeEvents` without `clearAll` all
+   reject; the dry-run rejection message names `eventId`); `eventId: ''`
+   and non-strings throw `Invalid eventId`.
 10. **Tombstone idempotence**: a second `forget({ eventId })` call on the
     same entity reports `deleted.entries: 0` (the `IS NULL` guard counts
     transitions, not matches).
@@ -295,6 +325,8 @@ be rejected up front, not silently match nothing.
 
 ## Release surface
 
-Additive public API → **MINOR release** (same class as `erase()`, which
-shipped as MINOR per the forget-erasure spec ruling F). Next minor after the
-current one; no migration, no schema change.
+Additive public API → **MINOR release**, standing on INTENT rule 2 alone
+(pure additive surface; no behavior of any existing caller changes). (The
+forget-erasure "ruling F" precedent covers only the `WikiBusyOperation`
+union widening that rode that lane's MINOR, not `erase()` as a whole.)
+Next minor after the current one; no migration, no schema change.
