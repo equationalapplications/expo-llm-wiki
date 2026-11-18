@@ -1,6 +1,6 @@
 # erase() on module-less runtimes: clear orphaned FTS5 content so erasure completes verified
 
-**Status: Implemented 2026-11-18 (PR #411) — Path A/B/C shipped; Path A preserves fts5's internal rows so a capable re-open rebuilds (canary-verified)**  
+**Status: Implemented 2026-11-18 (PR #411) (Path A verified manually 2026-11-18 — see AC2) — Path A/B/C shipped; Path A preserves fts5's internal rows so a capable re-open rebuilds (canary-verified)**  
 **Issue:** equationalapplications/expo-llm-wiki#407 (second half — the remediation; the honesty half shipped in PR #404).  
 **Intent check:** INTENT rule 13 ("Erasure is verifiable") — this spec
 extends verified erasure to module-less/config-MiniSearch runtimes and
@@ -165,7 +165,9 @@ flags for remediation) → vtab probe → path body (clears incl.
 companions) → `FTS5_STATE_KEY` write → pending-ledger re-check. The
 strict-drain (FTS5) branch is untouched, and its
 erasure behavior is unchanged byte-for-byte; the
-`canReclaimRetired()` retired-table machinery is untouched.
+`canReclaimRetired()` retired-table machinery is untouched. A crash or
+failure mid-Path-A leaves some shadows hollow with the state key unwritten;
+this is safe because erase re-runs idempotently and reports `verified: false`.
 
 **D5 — later capable open stays correct.** Path A leaves the vtab row plus
 hollowed shells in `sqlite_master`. The next capable open sees
@@ -177,7 +179,9 @@ new cross-open protocol is introduced. (As implemented, Path A additionally PRES
 `%_data` ids 1 (averages) and 10 (structure) and the `%_config` table;
 none hold user text — so the inert vtab stays readable and the capable
 re-open's retire path works. The canary in this folder proves the
-module-less → capable transition end-to-end.)
+module-less → capable transition end-to-end. Open verification item: the
+retired-table DROP on a capable re-open is NOT covered by the canary, which
+covers only the live-surface rename path.)
 
 **D6 — no consumer changes.** `erase()` and `EraseReport` are exposed only
 on `WikiMemory` (`WikiMemory.ts:39,810-812`); react/expo forwards nothing

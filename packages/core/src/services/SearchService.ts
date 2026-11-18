@@ -9,7 +9,6 @@ import type {
   IndexStrategy,
   PassageHit,
 } from './search/IndexStrategy';
-import { MiniSearchIndexStrategy } from './search/MiniSearchIndexStrategy';
 import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
 import type { SQLiteAdapter } from '../types';
 
@@ -364,17 +363,6 @@ export class SearchService {
     const work = this.syncChain.then(fn);
     this.syncChain = work.then(() => undefined, () => undefined);
     return work;
-  }
-
-  /**
-   * True when the ACTIVE strategy instance is a MiniSearchIndexStrategy. NOT
-   * proof of a config-chosen choice: the pre-setup placeholder is also a
-   * MiniSearchIndexStrategy. Erase's Path B gates on
-   * `options.config.indexStrategy === 'minisearch'` instead — this method
-   * remains for diagnostics/tests only.
-   */
-  usesMiniSearchIndex(): boolean {
-    return this.indexStrategy instanceof MiniSearchIndexStrategy;
   }
 
   /** True when the active strategy is the transient outage placeholder (erase orphan remediation, D1: never drop under it). */

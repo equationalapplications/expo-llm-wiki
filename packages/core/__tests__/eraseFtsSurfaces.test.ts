@@ -305,7 +305,6 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     // Orphaned-but-queryable vtabs from an earlier FTS5 life:
     await raw.execAsync(`CREATE VIRTUAL TABLE ${P}entries_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tags, tokenize = 'porter unicode61'); INSERT INTO ${P}entries_fts (id, entity_id, title, body, tags) VALUES ('x', 'e1', 'CANARY', 'CANARY-body', '[]');`);
     await raw.execAsync(`CREATE VIRTUAL TABLE ${P}source_passages_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tokenize = 'porter unicode61');`);
-    expect(search(wiki).usesMiniSearchIndex()).toBe(true);
     const report = await maint(wiki).erase();
     expect(report.verified).toBe(true);
     const names =(await raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('${P}entries_fts', '${P}source_passages_fts')`)).map((r) => r.name);
