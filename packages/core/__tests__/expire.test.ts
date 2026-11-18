@@ -116,4 +116,20 @@ describe('expire()', () => {
     }
     expect((await temporal('f1')).valid_to).toBeNull();
   });
+
+  it('supersede() of an expired fact throws already_expired and preserves the archive date (D3b)', async () => {
+    await insert('f1');
+    await wiki.expire('e1', 'f1', { at: 500 });
+    await insert('v2');
+    await expect(wiki.supersede('e1', 'f1', 'v2')).rejects.toMatchObject({ name: 'WikiSupersedeError', reason: 'already_expired' });
+    expect((await temporal('f1')).valid_to).toBe(500);
+    expect((await temporal('f1')).superseded_by).toBeNull();
+  });
+
+  it('double-supersede regression: already_superseded still wins over already_expired', async () => {
+    await insert('v1');
+    const { newId: v2 } = await wiki.supersede('e1', 'v1', { title: 'v2', body: 'b' }, { validFrom: 200 });
+    await expect(wiki.supersede('e1', 'v1', { title: 'again', body: 'b' })).rejects.toMatchObject({ reason: 'already_superseded' });
+    expect((await temporal('v1')).superseded_by).toBe(v2);
+  });
 });
