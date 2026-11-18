@@ -104,6 +104,28 @@ export class TemporalService {
     return { newId };
   }
 
+  /**
+   * End `factId`'s validity without a replacement — an archive, not a
+   * deletion (INTENT rule 12, spec specs/expire). Sets `valid_to` only.
+   */
+  async expire(entityId: string, factId: string, options?: { at?: number }): Promise<void> {
+    const t = options?.at === undefined ? Date.now() : assertEpochMs('options.at', options.at);
+    await this.db.withTransactionAsync(async (tx) => {
+      const old = await this.entryRepo.findTemporalRow(factId, tx);
+      if (!old || old.deleted_at != null) throw new WikiSupersedeError('not_found', 'expire()');
+      if (old.entity_id !== entityId) throw new WikiSupersedeError('cross_entity', 'expire()');
+      if (old.superseded_by != null) throw new WikiSupersedeError('already_superseded', 'expire()');
+      if (old.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target', 'expire()');
+      if (old.valid_to != null) throw new WikiSupersedeError('already_expired', 'expire()');
+      const start = old.valid_from ?? old.created_at;
+      if (t <= start) throw new WikiSupersedeError('invalid_interval', 'expire()');
+      const changes = await this.entryRepo.setTemporal(factId, entityId, { valid_to: t }, tx);
+      if (changes === 0) throw new WikiSupersedeError('cross_entity', 'expire()');
+    });
+    await this.searchService.syncEntries(entityId, [factId]);
+    this.searchService.evictCache(entityId);
+  }
+
   async history(entityId: string, factId: string): Promise<WikiFact[]> {
     const start = await this.entryRepo.findTemporalRow(factId);
     if (!start || start.entity_id !== entityId || start.deleted_at != null) return [];

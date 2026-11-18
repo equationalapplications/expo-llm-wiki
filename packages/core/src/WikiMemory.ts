@@ -1185,6 +1185,18 @@ export class WikiMemory {
     return this.temporalService.supersede(entityId, oldId, replacement, options);
   }
 
+  /**
+   * End `factId`'s validity without a replacement — an archive, not a
+   * deletion (INTENT rule 12). Sets `valid_to` only: `superseded_by`,
+   * `superseded_at` and `deleted_at` stay untouched, and an `asOf` read at
+   * `T < valid_to` still returns the fact. Throws `WikiSupersedeError` for
+   * a missing, foreign, already superseded, immutable-document, or already
+   * expired target, and for an inverted or empty interval (`invalid_interval`).
+   */
+  async expire(entityId: string, factId: string, options?: { at?: number }): Promise<void> {
+    return this.temporalService.expire(entityId, factId, options);
+  }
+
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */
   async history(entityId: string, factId: string): Promise<WikiFact[]> {
     return this.temporalService.history(entityId, factId);
