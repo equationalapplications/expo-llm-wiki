@@ -69,11 +69,11 @@ try {
 
 ## Writer lease patterns
 
-The lease only has to guarantee two processes cannot hold it at once — but that guarantee holds **only if the lease outlives the request**: set the TTL above the worst-case hold time (including maintenance), or have the holder renew it. A request that outlasts the TTL lets a second writer in, which is exactly the failure this section exists to prevent. On push, check you still hold the lease (a fencing token or holder comparison) before writing. Three workable shapes:
+The lease only has to guarantee two processes cannot hold it at once — but that guarantee holds **only if the lease outlives the request**: set the TTL above the worst-case hold time (including maintenance), or have the holder renew it. A request that outlasts the TTL lets a second writer in, which is exactly the failure this section exists to prevent. On push, verify you still hold the lease (a fencing token or holder comparison) — this narrows the race window but does not close it; to close it, make the data-file push itself conditional on the lease (e.g. `PutObject` with `If-Match` on the ETag you pulled, so a writer that lost the lease cannot persist). Three workable shapes:
 
-- **DynamoDB conditional write.** `PutItem` with `ConditionExpression: attribute_not_exists(key) OR expires_at < :now`; hold for the request duration; release on push or let it expire on crash.
-- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; delete on push only if still yours (compare the holder value); renew before the TTL lapses on long requests.
-- **S3 conditional writes.** Take the lease with `PutObject` and `If-None-Match: *` (fails if a lease object already exists); renew or release with `If-Match: <etag>`. Store an `expires_at` in the object body — S3 does not expire it for you, so the *next* writer checks it and treats an expired lease as free.
+- **DynamoDB conditional write.** `PutItem` with `ConditionExpression: attribute_not_exists(key) OR expires_at < :now`; hold for the request duration; release or renew with `ConditionExpression: holder = :me` (a lost lease fails the condition instead of deleting someone else's).
+- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; release and renew via compare-and-delete (a Lua `GET`+compare+`DEL`, or `DELEX`/`IFEQ`-style ops where available) so a lapsed lease is never deleted after another writer took it; renew before the TTL lapses on long requests.
+- **S3 conditional writes.** Read the lease object first. Take it with `PutObject` and `If-None-Match: *` when absent; take over an **expired** lease with `PutObject` and `If-Match: <etag you just read>` after checking `expires_at` in the body (only one racer's write succeeds); renew or release with `If-Match: <etag>`. S3 does not expire the object for you — the next writer checks `expires_at` and treats an expired lease as free.
 
 ## Budget sizing
 
