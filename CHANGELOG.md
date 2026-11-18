@@ -1,3 +1,30 @@
+## [9.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.2.0...v9.3.0) (2026-11-18)
+
+### Features
+
+* **core:** 'erase' lock + universal fencing pre-check in JobManager (spec §2, ruling F) ([aa93ae8](https://github.com/equationalapplications/expo-llm-wiki/commit/aa93ae829d408144e1b93d90ae43511bacd19680))
+* **core:** always-on secure_delete=FULL pragma foundation (spec §1, ruling B) ([810726e](https://github.com/equationalapplications/expo-llm-wiki/commit/810726e9452bd148c69740357939171896541219))
+* **core:** chain forget — includeChain walk with truncation notice + dry-run lift (spec §3) ([99eb205](https://github.com/equationalapplications/expo-llm-wiki/commit/99eb205ee2f4e8e5268f79d5f335d89833cb2816))
+* **core:** erase() FTS surfaces — chained drain, retired-table reclaim + module-less fallback, optimize (spec §2) ([6ce445b](https://github.com/equationalapplications/expo-llm-wiki/commit/6ce445b2a9019399237b0b0efbbbc537fe4bab15))
+* **core:** erase() orchestration + honest report shape; public wiki.erase() (spec §2 composition) ([c681f7a](https://github.com/equationalapplications/expo-llm-wiki/commit/c681f7a6efdb0ab5778f0d41de8e5a0d1a695a1b))
+* **core:** erase() prune core — pragma verify, per-entity prune, store-wide tombstone sweep (spec §2, rulings A/B/G) ([b974204](https://github.com/equationalapplications/expo-llm-wiki/commit/b9742041fbb5db80a9e0a48556b6c69ee8944ee6))
+* **core:** erase() wrapped VACUUM + verified checkpoints + syncedIds tail (spec §2 steps 5/6/8) ([382945b](https://github.com/equationalapplications/expo-llm-wiki/commit/382945b8e7688b06b218c51f33817c461c3775cd))
+* **core:** GDPR additions — includeForgotten exports, getRetentionPolicy, tombstone-wins import (spec §8) ([152f55f](https://github.com/equationalapplications/expo-llm-wiki/commit/152f55f2e30eaa2d585d1f041ea1432896fc471f))
+
+### Bug Fixes
+
+* **core:** fold CodeRabbit r1 — task tombstone-wins, fact-cache deleted_at, erase no-cutoff walk + step-9 tombstone gate, chain depth cap, step wraps, spread loops ([90f8aa5](https://github.com/equationalapplications/expo-llm-wiki/commit/90f8aa53adc6a8d145b10593a767174adbcb40b4))
+* **core:** fold CodeRabbit r2 — replace-wipe exemption consumed on first accepted row (facts+tasks); docs truthfulness round 2 ([a7e7753](https://github.com/equationalapplications/expo-llm-wiki/commit/a7e7753e1b29a12b306a5f94edfcb32597e8ceb8))
+* **core:** fold CodeRabbit r3 — embed only facts whose final accepted row is live ([6a16e45](https://github.com/equationalapplications/expo-llm-wiki/commit/6a16e450ef6434bfc499f2874798d61b9a97e606))
+* **core:** fold Fable r1 — orphaned-FTS-content refusal, import/auto-heal erase fence, docs truthfulness (F-MAJOR-1/2, F-MINOR-1..7) ([d502452](https://github.com/equationalapplications/expo-llm-wiki/commit/d5024527e18d825afe02449dc35d331fc0ace465))
+* **core:** fold Opus CR-r1 — step-9 gate documented everywhere, outbox payload stamps real deleted_at, docs precision round 3 ([7f4d127](https://github.com/equationalapplications/expo-llm-wiki/commit/7f4d1274402c9d72f64bd257beabf0591ca8a155)), closes [#278](https://github.com/equationalapplications/expo-llm-wiki/issues/278)
+* **core:** fold Opus delta r2 — passages optimize on rebuild, unavailable-strategy drain guard, step naming, leftover check, test coverage, spec status (N1-N5, P1-P3) ([78907a0](https://github.com/equationalapplications/expo-llm-wiki/commit/78907a054947e6406ed3d551f02391df20f00c6e))
+* **core:** fold Opus r1 whole-PR review — module-less reclaim, verified-on-holds, dual-ledger drain, rebuild ordering, checkpoint-restart safety, exports, docs (F1-F11) ([97b74b6](https://github.com/equationalapplications/expo-llm-wiki/commit/97b74b649073c756521ac9d43816e8d5250a6b40))
+* **core:** fold Opus xHigh r1 — true no-cutoff erase walk (M1), embed per accepted row with accepted tags, failure-path tests ([caeb15b](https://github.com/equationalapplications/expo-llm-wiki/commit/caeb15b3fdb8ea75f9ad97ff6fd3091f2212d507))
+* **core:** fold Sonnet delta r2 nits — emit erase_retired_read_failed diagnostic, finish == null normalization, LEDGER hash pin ([9c25e8f](https://github.com/equationalapplications/expo-llm-wiki/commit/9c25e8f957499e8f5654a7260d845c22eb0a3dc1))
+* **core:** fold Sonnet xHigh r1 — gate failure-path test, WikiTransactionError docs contract, retired-read code split, report steps entry, guard normalization ([933c7f5](https://github.com/equationalapplications/expo-llm-wiki/commit/933c7f5cb935b00ea4d5a23e85a1b610795eb943))
+* **core:** register erase_retired_remaining diagnostic (typed slug + detail.tables) — replaces T6's as-any emission ([c0e76b4](https://github.com/equationalapplications/expo-llm-wiki/commit/c0e76b4d7364184ee761bfdd32067470216e801f))
+
 ## [9.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.1.0...v9.2.0) (2026-11-16)
 
 ### Features
