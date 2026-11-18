@@ -65,8 +65,7 @@ non-finite `at` throws a `TypeError`.
   with the supersede time;
 - is an `immutable_document` fact (re-ingest the document instead),
 - belongs to another entity,
-- is already superseded,
-- is already expired (its `valid_to` has passed — an archived fact), or
+- is already superseded, or
 - would create a cycle.
 
 ## Record when events really happened
