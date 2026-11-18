@@ -67,9 +67,9 @@ The default verb in `WikiSupersedeError` is `'supersede()'`, so the
 constructor call needs no second argument. The math matches expire()'s D1
 exactly: the lower bound is `created_at` only when `valid_from` is absent,
 `==` rejects (half-open liveness makes `t == start` an empty interval),
-and `t < start` rejects as inverted. A past `t` stays legal — retro-active
-supersede is meaningful, as long as `t` is strictly after the fact's own
-start.
+and `t < start` rejects as inverted. A `t` after the start but before the
+current time stays legal — retro-active supersede is meaningful, as long
+as `t` is strictly after the fact's own start.
 
 ### D2 — guard order
 
@@ -111,12 +111,18 @@ The check changes behavior for existing callers in four documented ways:
    policy change is visible.
 4. Librarian ops change outcome. `applyOps` derives a SUPERSEDE time
    from the model's `valid_from` or the candidate event's time
-   (`extract.ts:116`). An op whose time lands at or before the target's
-   start used to link the pair with an inverted window, which dropped
-   the old fact from reads. It now surfaces as a `librarian_op_rejected`
-   diagnostic with reason `invalid_interval`, and both facts stay live
-   and retrievable (D2, ops path). `applyOps` handling of
-   `invalid_interval` stays unchanged.
+   (`packages/core/src/services/librarian/ops/extract.ts:116`). An op
+   whose time lands at or before the target's start used to link the
+   pair with an inverted window, which dropped the old fact from all
+   reads, `asOf` reads included. It now surfaces as a
+   `librarian_op_rejected` diagnostic with reason `invalid_interval`,
+   and both facts stay live and retrievable (D2, ops path). This
+   outcome is the path's established rejection semantics, not a new
+   pattern: every `WikiSupersedeError` reason already leaves the
+   replacement live and unlinked next to a live target. The pre-fix
+   outcome was worse — a silent temporal rewrite that hid the old fact
+   everywhere. `applyOps` handling of `invalid_interval` stays
+   unchanged.
 
 The `docs` guide states consequences 1, 2 and 3 in the supersede rules
 section; consequence 4 is pinned by an `opsLibrarian` test and covered
@@ -126,7 +132,7 @@ by the diagnostics table entry the guide already carries.
 
 `packages/core/src/WikiMemory.ts` — the `supersede()` JSDoc (:1174-1178)
 gains `invalid_interval` in its throws sentence, worded like the
-`expire()` JSDoc (:1188-1199).
+`expire()` JSDoc (:1188-1196).
 
 `apps/docs/src/content/docs/guides/temporal-facts.md` — the "## Rules"
 section gains one bullet: `supersede()` rejects a `validFrom` at or
@@ -176,7 +182,9 @@ already carries the supersede guard suite. The `insert()` helper defaults
     at or before the target's start surfaces one
     `librarian_op_rejected` diagnostic with reason `invalid_interval`;
     the old row keeps its window and the replacement stays live and
-    unlinked (mirror the `already_expired` ops test's assertions).
+    unlinked (mirror the `already_expired` ops test's assertions). The
+    read path is pinned too: a default read and an `asOf` read inside
+    the old window both return both facts.
 11. Full `packages/core` suite green; typecheck green; docs build green.
 
 ## Rejected alternatives
@@ -198,7 +206,9 @@ already carries the supersede guard suite. The `insert()` helper defaults
   time, or skip the replacement insert) — a librarian-path behavior
   redesign outside a guard-mirror lane. Option (a) matches how the path
   already treats `already_expired`: swallow into a diagnostic, keep both
-  facts live, pin with an ops test.
+  facts live, pin with an ops test. Keeping both facts live is also the
+  truthful outcome: the correction failed, and the pre-fix alternative
+  hid the old fact from all reads, `asOf` included.
 - **Repair rows already carrying zero-width intervals** — a data
   migration with its own scan and policy. Out of scope; file a follow-up
   if a corrupted store surfaces.
