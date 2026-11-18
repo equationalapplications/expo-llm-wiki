@@ -6,6 +6,9 @@
  * step is driven directly against the services.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { WikiMemory } from '../src/index';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
@@ -170,9 +173,12 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
       // _data gets the real shape (id PK) — the preserve rule keeps ids 1 and 10.
+      // _config is preserved entirely: realistic option rows, no text.
       sfx === '_data'
-        ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_data (id INTEGER, block TEXT); INSERT INTO ${P}entries_fts_data VALUES (1, 'structure'), (10, 'config'), (11, 'CANARY-forgotten-text');`)
-        : await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-forgotten-text');`);
+        ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_data (id INTEGER, block TEXT); INSERT INTO ${P}entries_fts_data VALUES (1, 'averages'), (10, 'structure'), (11, 'CANARY-forgotten-text');`)
+        : sfx === '_config'
+          ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_config (key TEXT, value TEXT); INSERT INTO ${P}entries_fts_config VALUES ('version', '4');`)
+          : await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-forgotten-text');`);
     }
     const report = newReport();
     await maint(t.wiki)._eraseDrainPassages(report);
@@ -222,8 +228,10 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
       CREATE TABLE ${P}entries_fts (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts VALUES (1, 'CANARY-vtab');`);
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
       sfx === '_data'
-        ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_data (id INTEGER, block TEXT); INSERT INTO ${P}entries_fts_data VALUES (1, 'structure'), (10, 'config'), (11, 'CANARY-secret');`)
-        : await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-secret');`);
+        ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_data (id INTEGER, block TEXT); INSERT INTO ${P}entries_fts_data VALUES (1, 'averages'), (10, 'structure'), (11, 'CANARY-secret');`)
+        : sfx === '_config'
+          ? await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_config (key TEXT, value TEXT); INSERT INTO ${P}entries_fts_config VALUES ('tokenize', 'porter unicode61');`)
+          : await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-secret');`);
     }
     await t.raw.execAsync(`CREATE TABLE ${P}source_passages_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}source_passages_fts_content VALUES (1, 'CANARY-passage');`);
     await t.raw.runAsync(`INSERT INTO ${P}fts_pending (entity_id, id) VALUES ('e1', 'r0')`);
@@ -302,6 +310,28 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(report.ftsOrphansCleared).toContain(`${P}entries_fts`);
     expect(report.failedStep).toBeNull();
     expect(diagnostics.some((d) => d.code === 'erase_fts_orphan_cleared')).toBe(true);
+  });
+
+  it('Path B gates on the configured strategy: a pre-setup placeholder over a healthy FTS5 store drops nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'erase-preSetup-'));
+    try {
+      const file = join(dir, 'w.db');
+      const raw1 = openTestDatabase(file);
+      const wiki1 = new WikiMemory(raw1, { llmProvider: llm } as WikiOptions);
+      await wiki1.setup(); // capable FTS5 store with live vtabs
+      const raw2 = openTestDatabase(file);
+      const wiki2 = new WikiMemory(raw2, { llmProvider: llm } as WikiOptions); // never set up: placeholder strategy
+      vi.spyOn(search(wiki2), 'hasStrictDrain').mockReturnValue(false);
+      let thrown: any;
+      try { await maint(wiki2).erase(); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(EraseStepError);
+      expect(thrown.code).toBe('erase_fts_index_unavailable');
+      expect(thrown.report.failedStep).toBe('index_sync');
+      const vtabs = (await raw2.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name = '${P}entries_fts'`)).map((r) => r.name);
+      expect(vtabs).toEqual([`${P}entries_fts`]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('Unavailable honesty: duck-typed unavailable strategy with orphan surfaces refuses to touch tables (AC4)', async () => {

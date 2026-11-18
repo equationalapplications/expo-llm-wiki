@@ -814,18 +814,20 @@ export class MaintenanceService {
           }
         }
         if (vtabExists && !moduleLess) {
-          if (!this.searchService.usesMiniSearchIndex()) {
+          if (this.options.config?.indexStrategy !== 'minisearch') {
             report.failedStep = 'index_sync';
-            throw new EraseStepError('erase_fts_index_unavailable', `erase stopped at step 3: ${surface} is live and queryable but the strategy cannot DROP it; erasure is unverified`, report);
+            throw new EraseStepError('erase_fts_index_unavailable', `erase stopped at step 3: ${surface} is live and queryable but MiniSearch is not the configured strategy; erasure is unverified`, report);
           }
           pathBTargets.push(surface); // Path B: defer DROPs to after the per-surface loop
           continue;
         }
         // Path A / Path C: the shadows are plain tables here. The text-bearing
-        // rows go; fts5's structure/config state stays (%_data ids 1 and 10, and
-        // the %_config table with its version row — deleting it is what makes the
-        // vtab unreadable), so a capable re-open's retire path works instead of
-        // hitting an unreadable vtab (specs/erase-fts-remediation AC2 canary).
+        // rows go; fts5's structural state stays: %_data ids 1 (AVERAGES record)
+        // and 10 (STRUCTURE record) hold no text, and the %_config table with its
+        // version row stays too — deleting it is what makes the vtab unreadable.
+        // The kept structure record points at deleted segments, so a capable
+        // re-open's retire path must never read segment data; the AC2 canary
+        // proves that holds today (specs/erase-fts-remediation).
         const cleared: string[] = [];
         for (const name of shadows) {
           if (name.endsWith('_config')) continue;
@@ -836,7 +838,7 @@ export class MaintenanceService {
         }
         for (const name of cleared) {
           if (!report.ftsOrphansCleared.includes(name)) report.ftsOrphansCleared.push(name);
-          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '' });
+          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: name } });
         }
       }
       if (!remediationRequired) return;
@@ -845,14 +847,14 @@ export class MaintenanceService {
         if (await this.sourceTableExists(companion)) {
           await this.db.runAsync(`DELETE FROM ${companion}`);
           if (!report.ftsOrphansCleared.includes(companion)) report.ftsOrphansCleared.push(companion);
-          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '' });
+          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: companion } });
         }
       }
       // Path B body (after the surface loop, D4): DROP the queryable vtabs and
       // the FTS triggers, mirroring detachFts5's effects.
       for (const surface of pathBTargets) {
         await this.db.execAsync(`DROP TABLE IF EXISTS ${surface}`);
-        emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '' });
+        emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: surface } });
         if (!report.ftsOrphansCleared.includes(surface)) report.ftsOrphansCleared.push(surface);
       }
       if (pathBTargets.length > 0) {

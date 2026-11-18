@@ -917,6 +917,8 @@ export type WikiDiagnosticTrigger = 'call' | 'auto';
 
 /** Identifiers only — never titles, bodies, quotes, LLM output, provider messages, or hashes of content. */
 export interface WikiDiagnosticDetail {
+  /** The FTS5 surface the diagnostic names. */
+  table?: string;
   factId?: string;
   sourceRef?: string;
   chunkIndex?: number;

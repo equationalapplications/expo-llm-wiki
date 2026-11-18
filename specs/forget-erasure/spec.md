@@ -314,9 +314,10 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    undrained text, which cannot be claimed erased. A runtime that never had FTS5 at all
    detaches with the ledgers dropped (nothing to drain). A module-less runtime that earlier ran
    FTS5 keeps the orphaned `entries_fts`/`source_passages_fts` content tables, whose stored text
-   erase does not reach. Erase now **fails unverified** with `erase_orphaned_fts_content`
-   (`failedStep: 'index_sync'`) when those orphaned content tables are present;
-   remediation (clearing them) remains tracked in issue #407. (superseded by specs/erase-fts-remediation — erase now clears the orphaned surfaces itself; see that spec's D3.)
+   erase does not reach. Erase **failed unverified** with `erase_orphaned_fts_content`
+   (`failedStep: 'index_sync'`) when those orphaned content tables were present; superseded
+   by specs/erase-fts-remediation — erase now clears the orphaned surfaces itself (see that
+   spec's D3).
 4. **Retired-table reclaim to completion** — `DROP` + delist for every
    `entries_fts_retired_N` and its shadow tables, **no deadline**, failures surfaced (today
    reclamation is deadline-bounded best-effort, `Fts5IndexStrategy.ts:410-452`; a retired

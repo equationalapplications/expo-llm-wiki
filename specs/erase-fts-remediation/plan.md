@@ -597,16 +597,20 @@ structure/config rows during Path A.** The original writable_schema
 surgery is impossible: better-sqlite3 (and SQLite 3.53 CLI) refuse
 sqlite_schema DML. Instead — and this is what the canary empirically
 proves — the unreadable-vtab state came from deleting fts5's internal
-structure (`%_data` ids 1 and 10) and config (the `%_config` table)
-rows. Neither holds user text (option keys/values and segment-map
-blobs only), so Path A now deletes the text-bearing rows only:
+structure (`%_data` id 10, the STRUCTURE record; id 1 is the AVERAGES
+record) and config (the `%_config` table) rows. None holds user text
+(option keys/values and segment-map blobs only); the kept structure
+record points at deleted segments, so the re-open's retire path must
+never read segment data, so Path A now deletes the text-bearing rows only:
 
 ```ts
         // Path A / Path C: the shadows are plain tables here. The text-bearing
-        // rows go; fts5's structure/config state stays (%_data ids 1 and 10, and
-        // the %_config table with its version row — deleting it is what makes the
-        // vtab unreadable), so a capable re-open's retire path works instead of
-        // hitting an unreadable vtab (specs/erase-fts-remediation AC2 canary).
+        // rows go; fts5's structural state stays: %_data ids 1 (AVERAGES record)
+        // and 10 (STRUCTURE record) hold no text, and the %_config table with its
+        // version row stays too — deleting it is what makes the vtab unreadable.
+        // The kept structure record points at deleted segments, so a capable
+        // re-open's retire path must never read segment data; the AC2 canary
+        // proves that holds today (specs/erase-fts-remediation).
         const cleared: string[] = [];
         for (const name of shadows) {
           if (name.endsWith('_config')) continue;
