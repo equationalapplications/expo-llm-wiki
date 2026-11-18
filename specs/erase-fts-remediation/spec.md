@@ -77,7 +77,9 @@ uses (`MaintenanceService.ts:840`):
   `${prefix}source_passages_fts_pending`,
   `${prefix}source_passages_fts_map` (`fts5Sql.ts:57-62`; each gated on
   `sourceTableExists` — a properly detached store has none of them, since
-  `detachFts5` drops them, `createIndexStrategy.ts:66-73`). Then ensure
+  `detachFts5` drops them: the entries-side companions via
+  `fts5LedgerDropSql`, `fts5Sql.ts:157-163`, the passage map/pending via
+  `createIndexStrategy.ts:66-73`). Then ensure
   `FTS5_STATE_KEY = 'detached'` in metadata (idempotent; normally already
   set by `detachFts5`) so the next capable open takes the **deterministic**
   rename-retire + rebuild path (`Fts5IndexStrategy.ts:245`
@@ -154,10 +156,11 @@ cleared by the remediation itself, so test 8's "cleared under Path A, no
 check re-runs and still throws `erase_index_sync_failed` /
 `erase_passage_drain_failed` for any rows that remain (honesty for states
 the remediation does not cover, e.g. the `UnavailableIndexStrategy`
-failure above). **Dispatch order, stated once:** strategy check
-(`instanceof`) → per-surface existence gate → vtab probe → path body
-(clears incl. companions) → `FTS5_STATE_KEY` write → pending-ledger
-re-check. The strict-drain (FTS5) branch is untouched, and its
+failure above). **Dispatch order, stated once:** per-surface existence
+gate → strategy check (`instanceof`, consulted only for surfaces the gate
+flags for remediation) → vtab probe → path body (clears incl.
+companions) → `FTS5_STATE_KEY` write → pending-ledger re-check. The
+strict-drain (FTS5) branch is untouched, and its
 erasure behavior is unchanged byte-for-byte; the
 `canReclaimRetired()` retired-table machinery is untouched.
 
