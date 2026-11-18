@@ -182,7 +182,7 @@ describe('remember(): plays with the rest of the fact API', () => {
   it('can be superseded, shows in history, and can be forgotten', async () => {
     const fact = await wiki.remember('e1', { title: 'Lives in Seattle', body: 'Since 2020.' });
     expect((await wiki.history('e1', fact.id)).map((f) => f.id)).toEqual([fact.id]);
-    const { newId } = await wiki.supersede('e1', fact.id, { title: 'Lives in SF', body: 'Moved.' }, { validFrom: Date.now() + 1000 });
+    const { newId } = await wiki.supersede('e1', fact.id, { title: 'Lives in SF', body: 'Moved.' }, { validFrom: fact.created_at + 1 });
     expect((await wiki.history('e1', fact.id)).map((f) => f.id)).toEqual([fact.id, newId]);
     const result = await wiki.forget('e1', { entryId: newId });
     expect(result.deleted.entries).toBe(1);
