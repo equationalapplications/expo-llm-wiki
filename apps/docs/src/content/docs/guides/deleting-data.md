@@ -100,11 +100,14 @@ marked unverified — never a false success.
 When FTS5 init fails on an open and the engine falls back to its unavailable-strategy mode
 (FTS tables still present), `erase()` refuses (unverified) until the pending FTS ledgers
 (`fts_pending` and `source_passages_fts_pending`) are empty, because text the engine could not
-drain from the full-text index cannot be claimed erased.
+drain from the full-text index cannot be claimed erased. Likewise, if the index strategy is
+unavailable (init failed) and FTS surfaces remain, `erase()` refuses with
+`erase_fts_index_unavailable` even when the ledgers are empty.
 
 On runtimes without the FTS5 module, or with `indexStrategy: 'minisearch'`, a store that earlier
 ran FTS5 keeps orphaned full-text tables. `erase()` clears them itself, lists every cleared table
-in `report.ftsOrphansCleared`, and completes verified. If it cannot, the step fails honestly with
+in `report.ftsOrphansCleared`, and makes erasure verifiable — provided no external-removal
+holds remain (holds still yield `verified: false`). If it cannot, the step fails honestly with
 `erase_fts_orphan_probe_failed` (the orphan probe errored), `erase_fts_orphan_clear` (a clear
 failed), or `erase_fts_index_unavailable` (the index is unavailable, so the tables are left
 untouched).

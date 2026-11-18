@@ -195,7 +195,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(blobs.includes('CANARY-forgotten-text')).toBe(false);
     expect(report.ftsOrphansCleared).toEqual([
       `${P}entries_fts_content`, `${P}entries_fts_data`, `${P}entries_fts_idx`, `${P}entries_fts_docsize`,
-      `${P}fts_pending`, `${P}fts_map`, `${P}source_passages_fts_pending`, `${P}source_passages_fts_map`,
+      // empty companions delete 0 rows, so they are not reported (F3)
     ]);
     expect(report.failedStep).toBeNull();
     expect(t.diagnostics.some((d) => d.code === 'erase_fts_orphan_cleared')).toBe(true);
@@ -306,9 +306,9 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     await raw.execAsync(`CREATE VIRTUAL TABLE ${P}entries_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tags, tokenize = 'porter unicode61'); INSERT INTO ${P}entries_fts (id, entity_id, title, body, tags) VALUES ('x', 'e1', 'CANARY', 'CANARY-body', '[]');`);
     await raw.execAsync(`CREATE VIRTUAL TABLE ${P}source_passages_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tokenize = 'porter unicode61');`);
     expect(search(wiki).usesMiniSearchIndex()).toBe(true);
-    const report = newReport();
-    await maint(wiki)._eraseDrainPassages(report);
-    const names = (await raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('${P}entries_fts', '${P}source_passages_fts')`)).map((r) => r.name);
+    const report = await maint(wiki).erase();
+    expect(report.verified).toBe(true);
+    const names =(await raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('${P}entries_fts', '${P}source_passages_fts')`)).map((r) => r.name);
     expect(names).toEqual([]);
     const meta = new MetadataRepository(raw, P);
     expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
@@ -319,12 +319,15 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
 
   it('Path B gates on the configured strategy: a pre-setup placeholder over a healthy FTS5 store drops nothing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'erase-preSetup-'));
+    const opened: Array<{ closeAsync: () => Promise<void> }> = [];
     try {
       const file = join(dir, 'w.db');
       const raw1 = openTestDatabase(file);
+      opened.push(raw1);
       const wiki1 = new WikiMemory(raw1, { llmProvider: llm } as WikiOptions);
       await wiki1.setup(); // capable FTS5 store with live vtabs
       const raw2 = openTestDatabase(file);
+      opened.push(raw2);
       const wiki2 = new WikiMemory(raw2, { llmProvider: llm } as WikiOptions); // never set up: placeholder strategy
       vi.spyOn(search(wiki2), 'hasStrictDrain').mockReturnValue(false);
       let thrown: any;
@@ -335,6 +338,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
       const vtabs = (await raw2.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name = '${P}entries_fts'`)).map((r) => r.name);
       expect(vtabs).toEqual([`${P}entries_fts`]);
     } finally {
+      for (const d of opened) await d.closeAsync().catch(() => undefined);
       rmSync(dir, { recursive: true, force: true });
     }
   });

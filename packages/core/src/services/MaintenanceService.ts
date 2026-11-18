@@ -806,7 +806,16 @@ export class MaintenanceService {
           try {
             await this.db.getFirstAsync(`SELECT 1 AS x FROM ${surface} LIMIT 1`);
           } catch (err) {
-            if (!/no such module/i.test(err instanceof Error ? err.message : String(err))) {
+            // Mirror createIndexStrategy's probe: some adapters wrap the SQLite message in a cause chain.
+            let absent = false;
+            let cur: unknown = err;
+            for (let depth = 0; depth < 3 && cur != null && !absent; depth++) {
+              let msg = '';
+              try { msg = String((cur as { message?: unknown }).message ?? cur); } catch { break; }
+              absent = /no such module/i.test(msg);
+              try { cur = (cur as { cause?: unknown }).cause; } catch { break; }
+            }
+            if (!absent) {
               report.failedStep = 'index_sync';
               throw new EraseStepError('erase_fts_orphan_probe_failed', `erase stopped at step 3: could not classify orphaned vtab ${surface}`, report, err);
             }
@@ -831,10 +840,10 @@ export class MaintenanceService {
         const cleared: string[] = [];
         for (const name of shadows) {
           if (name.endsWith('_config')) continue;
-          await this.db.runAsync(name.endsWith('_data')
+          const res = await this.db.runAsync(name.endsWith('_data')
             ? `DELETE FROM ${name} WHERE id NOT IN (1, 10)`
             : `DELETE FROM ${name}`);
-          cleared.push(name);
+          if ((res?.changes ?? 0) > 0) cleared.push(name);
         }
         for (const name of cleared) {
           if (!report.ftsOrphansCleared.includes(name)) report.ftsOrphansCleared.push(name);
@@ -843,11 +852,15 @@ export class MaintenanceService {
       }
       if (!remediationRequired) return;
       // Plain companions that can hold text and have no drain on this runtime (D1, existence-gated).
+      // One transaction for the whole tail (D4): companions, Path B drops, state write.
+      await this.db.withTransactionAsync(async (tx) => {
       for (const companion of [`${this.prefix}fts_pending`, `${this.prefix}fts_map`, `${this.prefix}source_passages_fts_pending`, `${this.prefix}source_passages_fts_map`] as const) {
         if (await this.sourceTableExists(companion)) {
-          await this.db.runAsync(`DELETE FROM ${companion}`);
-          if (!report.ftsOrphansCleared.includes(companion)) report.ftsOrphansCleared.push(companion);
-          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: companion } });
+          const res = await tx.runAsync(`DELETE FROM ${companion}`);
+          if ((res?.changes ?? 0) > 0) {
+            if (!report.ftsOrphansCleared.includes(companion)) report.ftsOrphansCleared.push(companion);
+            emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: companion } });
+          }
         }
       }
       // Path B body (after the surface loop, D4): DROP the queryable vtabs and
@@ -855,20 +868,17 @@ export class MaintenanceService {
       // detachFts5 DROPs the tables — harmless: the next capable init re-creates
       // them (CREATE IF NOT EXISTS), matching ensurePassageObjects' re-seed.
       for (const surface of pathBTargets) {
-        await this.db.execAsync(`DROP TABLE IF EXISTS ${surface}`);
+        await tx.execAsync(`DROP TABLE IF EXISTS ${surface}`);
         emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: surface } });
         if (!report.ftsOrphansCleared.includes(surface)) report.ftsOrphansCleared.push(surface);
       }
       if (pathBTargets.length > 0) {
         const [ai, ad] = passageFtsTriggerNames(this.prefix);
-        await this.db.execAsync(fts5LedgerDropSql(this.prefix) + `\nDROP TRIGGER IF EXISTS ${ai};\nDROP TRIGGER IF EXISTS ${ad};`);
+        await tx.execAsync(fts5LedgerDropSql(this.prefix) + `\nDROP TRIGGER IF EXISTS ${ai};\nDROP TRIGGER IF EXISTS ${ad};`);
       }
       // Deterministic state (D1/D5): the next capable open must take resetAndRearm, not a corruption path.
-      if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY)) !== 'detached') {
-        await this.db.withTransactionAsync(async (tx) => {
-          await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'detached', tx);
-        });
-      }
+      await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'detached', tx);
+      });
       report.steps.push({ step: 'fts_orphan_clear', outcome: 'ok' });
     } catch (err) {
       if (err instanceof EraseStepError) throw err;

@@ -2,6 +2,19 @@
 > impossible (better-sqlite3 and the SQLite 3.53 CLI refuse sqlite_schema DML), so Path A now
 > preserves `%_data` ids 1 (AVERAGES) and 10 (STRUCTURE) and the `%_config` table; the canary
 > (`canary-ac2.test.ts`, this dir) asserts the repaired behavior and passes.
+>
+> Passage surface (round 2, 2026-11-18): after Path A the passage vtab kept its structure record
+> but lost its segments, so a capable re-open's `searchPassages` threw `fts5: corruption found
+> reading blob 137438953473`. Cause: `ensurePassageObjects`' bootstrap cleared stale content with
+> `DELETE FROM source_passages_fts`, which walks `%_content` (already empty) and never touches the
+> hollow segments. Fix: the bootstrap now also runs fts5 `'rebuild'` (discards index data without
+> reading segments). The canary asserts the passage index is readable, the pre-erase passage is
+> unretrievable, and a freshly stored source is retrievable. Removing the rebuild line re-fails it.
+>
+> Path C fixture note (E6 ruling): the stand-in tests create plain shadow tables without a vtab
+> row, which blocks a capable CREATE. A real module-less runtime cannot lose the vtab row, so
+> CodeRabbit's Path C re-creation concern (round 2) is the same unreachable-fixture class. No
+> code change. (`plan.md` was deleted in the Step 8 cleanup, so this is the only place it is recorded.)
 
 # Pre-repair finding (historical) — AC2 manual canary, 2026-11-18 (controller-run)
 

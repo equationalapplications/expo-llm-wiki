@@ -217,9 +217,10 @@ shadow stand-ins with a canary row; F1 (`:88-109`) — a real
    module-less slot) to prove the runtime classification end-to-end. [V]
 2. **Path A determinism:** after Path A erase, `FTS5_STATE_KEY` reads
    `'detached'`; a subsequent FTS5-capable open rebuilds via
-   `resetAndRearm` and serves queries. [V] manually verified 2026-11-18
-   (module-less sqlite3 CLI), see canary-ac2.test.ts + canary-evidence.md —
-   not executable in CI
+   `resetAndRearm` and serves queries. [V] AC1's stand-in tests verify only
+   the classification/clear SQL; AC2's recovery is proven by the committed
+   canary (module-less CLI + capable re-open), manually verified 2026-11-18,
+   see canary-ac2.test.ts + canary-evidence.md — not executable in CI
 3. **Path B:** capable runtime, orphaned **queryable** vtabs present, and
    the strategy positively a `MiniSearchIndexStrategy` (construct via a
    real config-minisearch store, or an `instanceof`-real stub — the N2
