@@ -9,6 +9,7 @@ import type {
   IndexStrategy,
   PassageHit,
 } from './search/IndexStrategy';
+import { MiniSearchIndexStrategy } from './search/MiniSearchIndexStrategy';
 import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
 import type { SQLiteAdapter } from '../types';
 
@@ -363,6 +364,16 @@ export class SearchService {
     const work = this.syncChain.then(fn);
     this.syncChain = work.then(() => undefined, () => undefined);
     return work;
+  }
+
+  /** True when the active strategy is positively the config-chosen MiniSearch one (erase orphan remediation, specs/erase-fts-remediation D1). */
+  usesMiniSearchIndex(): boolean {
+    return this.indexStrategy instanceof MiniSearchIndexStrategy;
+  }
+
+  /** True when the active strategy is the transient outage placeholder (erase orphan remediation, D1: never drop under it). */
+  isIndexUnavailable(): boolean {
+    return this.indexStrategy instanceof UnavailableIndexStrategy;
   }
 
   /** True when the active strategy has both strict erase drains (FTS5); false for MiniSearch / Unavailable. */

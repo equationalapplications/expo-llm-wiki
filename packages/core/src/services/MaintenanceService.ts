@@ -30,7 +30,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
-import { FTS5_RETIRED_TABLES_KEY, isRetiredTableName } from './search/fts5Sql';
+import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5LedgerDropSql, passageFtsTriggerNames } from './search/fts5Sql';
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
@@ -240,7 +240,9 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | null;
+  /** FTS5 orphan surfaces cleared by the step-3 remediation (specs/erase-fts-remediation D3). Each name is pushed only after that surface fully clears. */
+  ftsOrphansCleared: string[];
+  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | 'fts_orphan_clear' | null;
   /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */
   runtime: string;
   /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds, or was skipped by design (`registry_sweep` on a pre-v9 store; `tombstone_gate` when holds/skips already account for surviving rows). */
@@ -563,7 +565,7 @@ export class MaintenanceService {
     this.jobManager.acquireLock('erase', '*');
     const report: EraseReport = {
       verified: false, secureDelete: null, sqliteVersion: '', entities: [], holds: [],
-      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], failedStep: null,
+      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], ftsOrphansCleared: [], failedStep: null,
       runtime: eraseRuntime(), steps: [],
     };
     const ok = (step: string, outcome: 'ok' | 'partial' = 'ok') => { report.steps.push({ step, outcome }); };
