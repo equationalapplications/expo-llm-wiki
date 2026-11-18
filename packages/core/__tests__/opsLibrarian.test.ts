@@ -137,17 +137,19 @@ describe('ops librarian end to end', () => {
     // after resolve picks it and before the op applies. The test adapter runs
     // statements synchronously, so the UPDATE lands inside this callback.
     let expireTarget = () => {};
+    let pending: Promise<unknown> = Promise.resolve();
     const { db, wiki, diagnostics } = mk([
       () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
       () => { expireTarget(); return { ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] }; },
     ]);
-    expireTarget = () => { void db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50 WHERE id = 'seattle'`); };
+    expireTarget = () => { pending = db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50 WHERE id = 'seattle'`); };
     await wiki.setup();
     await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
       VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1)`);
     await wiki.runReembed();
     await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
     await wiki.runLibrarian('u');
+    await pending;
     const rejected = ofCode(diagnostics, 'librarian_op_rejected');
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as any).detail.reason).toBe('already_expired');
@@ -159,6 +161,23 @@ describe('ops librarian end to end', () => {
     expect(fresh.superseded_by).toBeNull();
     // Observed: the insert stamps valid_from (event time, 100) before the link is rejected.
     expect(fresh.valid_from).toBe(100);
+  });
+
+  it('SUPERSEDE of a fact with a future-dated valid_to succeeds and overwrites the end', async () => {
+    const { db, wiki, diagnostics } = mk([
+      () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
+      () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] }),
+    ]);
+    await wiki.setup();
+    await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at, valid_to)
+      VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1,4000000000000)`);
+    await wiki.runReembed();
+    await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
+    await wiki.runLibrarian('u');
+    expect(ofCode(diagnostics, 'librarian_op_rejected')).toHaveLength(0);
+    const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by FROM llm_wiki_entries WHERE id='seattle'`);
+    expect(old.superseded_by).not.toBeNull();
+    expect(old.valid_to).toBe(100);
   });
 
   it('UPDATE on a librarian_inferred target edits title/body in place', async () => {

@@ -28,7 +28,7 @@ export class TemporalService {
     if (!old || old.deleted_at != null) throw new WikiSupersedeError('not_found');
     if (old.entity_id !== entityId) throw new WikiSupersedeError('cross_entity');
     if (old.superseded_by != null) throw new WikiSupersedeError('already_superseded');
-    if (old.valid_to != null) throw new WikiSupersedeError('already_expired');
+    if (old.valid_to != null && old.valid_to <= t) throw new WikiSupersedeError('already_expired');
     if (old.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target');
 
     if (newId === oldId) throw new WikiSupersedeError('cycle');
@@ -116,8 +116,8 @@ export class TemporalService {
       if (!old || old.deleted_at != null) throw new WikiSupersedeError('not_found', 'expire()');
       if (old.entity_id !== entityId) throw new WikiSupersedeError('cross_entity', 'expire()');
       if (old.superseded_by != null) throw new WikiSupersedeError('already_superseded', 'expire()');
-      if (old.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target', 'expire()');
       if (old.valid_to != null) throw new WikiSupersedeError('already_expired', 'expire()');
+      if (old.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target', 'expire()');
       const start = old.valid_from ?? old.created_at;
       if (t <= start) throw new WikiSupersedeError('invalid_interval', 'expire()');
       const changes = await this.entryRepo.setTemporal(factId, entityId, { valid_to: t }, tx);

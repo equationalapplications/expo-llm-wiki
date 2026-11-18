@@ -38,6 +38,9 @@ that applies retention to expired rows
 (`MaintenanceService.ts:340`, gated by `pruneSupersededAfter`, off by
 default).
 
+Evidence: the baseline `supersede()` gap is exercised by the #414
+reproduction and pinned by `opsLibrarian.test.ts`'s ended-archive case.
+
 ## The decisions
 
 **D1 — API shape.** `WikiMemory.expire(entityId, factId, options?: { at?:
@@ -56,13 +59,13 @@ the write — an expired row with an inverted interval reports
 (`COALESCE(valid_from, created_at) <= T < valid_to`,
 `utils/temporal.ts:6-7`), so `at == start` is an empty interval, not a
 point-in-time archive. Two documented consequences: a fact recorded today
-cannot be expired before its `created_at` (matches `asOf` semantics —
+cannot be expired before its `created_at` (the lower bound is `created_at` only when `valid_from` is absent; matches `asOf` semantics —
 "retro-active" reaches back only to the fact's own validity start), and a
 default `at` can reject on a fact whose `valid_from` is future-dated.
 `supersede()` has the same pre-existing gap
 (`TemporalService.ts:43` never checks `t` against the old row's start);
-that is a separate concern and is filed as its own issue at
-implementation time, not folded into this MINOR.
+that is a separate concern, filed as its own issue (#414), not folded
+into this MINOR.
 
 **D2 — semantics: one column, nothing else.** Inside a transaction, a single
 `setTemporal(id, entityId, { valid_to: t }, tx)` (the outbox UPDATE is
@@ -102,8 +105,12 @@ Today `supersedeInTx` has no `valid_to` guard, so superseding an expired
 fact passes and line 43 **overwrites the archived `valid_to`** with the
 new time — the archive date is lost without an error, contradicting this
 spec's rejection of silent temporal rewrites. `supersedeInTx` gains the
-guard: old row has `valid_to != null` → `WikiSupersedeError
-('already_expired')`. **Guard placement:** the check runs **after** the
+guard: old row already ENDED (`valid_to` set to a time at or before the
+supersede time) → `WikiSupersedeError('already_expired')`. A future-dated
+end stays supersable — supersede's normal semantics overwrite it — because
+rejecting it would strand a live, contradictory, unlinked replacement in
+the librarian (a double-live-fact failure). `expire()` keeps the broad
+re-expire guard (`valid_to != null`). **Guard placement:** the check runs **after** the
 existing `already_superseded` check (`TemporalService.ts:30`) — every
 superseded row also carries `valid_to` (line 43 writes it), so a
 misplaced check would turn every double-supersede into `already_expired`
@@ -165,12 +172,12 @@ section gains the expire rules and the new reasons).
 - `packages/core/src/types.ts` — `WikiSupersedeReason` gains
   `'already_expired'` and `'invalid_interval'`; `WikiSupersedeError` gains
   the verb parameter.
-- `packages/core/src/services/TemporalService.ts` — `expire()` (D1) and
-  the `supersedeInTx` `valid_to` guard (D3b).
+- (`TemporalService.ts` above also carries the `supersedeInTx` `valid_to`
+  guard, D3b.)
 - `INTENT.md` — one sentence: the spec-home line (:346-347) points at
   `specs/expire/` (D5). No rule wording changes.
-- `packages/core/__tests__/temporalRoundTrip.test.ts` (+ a focused new test
-  file if the suite style prefers it) — test plan below.
+- `packages/core/__tests__/expire.test.ts` and
+  `packages/core/__tests__/opsLibrarian.test.ts` — test plan below.
 - `apps/docs/src/content/docs/` — API page + guide (D7).
 
 Out of scope: react/expo wrappers (D6), schema/migrations (D6), prune or

@@ -1189,7 +1189,8 @@ export class WikiMemory {
    * End `factId`'s validity without a replacement — an archive, not a
    * deletion (INTENT rule 12). Sets `valid_to` only: `superseded_by`,
    * `superseded_at` and `deleted_at` stay untouched, and an `asOf` read at
-   * `T < valid_to` still returns the fact. Throws `WikiSupersedeError` for
+   * `T` with `COALESCE(valid_from, created_at) <= T < valid_to` still returns
+   * the fact. Throws `WikiSupersedeError` for
    * a missing, foreign, already superseded, immutable-document, or already
    * expired target, and for an inverted or empty interval (`invalid_interval`).
    */
