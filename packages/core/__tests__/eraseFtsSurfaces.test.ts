@@ -267,6 +267,41 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(report.ftsOrphansCleared).not.toContain(`${P}entries_fts_content`);
   });
 
+  it('Path B: minisearch store with queryable orphan vtabs drops them and forces detached (AC3)', async () => {
+    const raw = openTestDatabase();
+    const wiki = new WikiMemory(raw, { llmProvider: llm, config: { indexStrategy: 'minisearch' } } as WikiOptions);
+    await wiki.setup();
+    vi.spyOn(search(wiki), 'hasStrictDrain').mockReturnValue(false);
+    // Orphaned-but-queryable vtabs from an earlier FTS5 life:
+    await raw.execAsync(`CREATE VIRTUAL TABLE ${P}entries_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tags, tokenize = 'porter unicode61'); INSERT INTO ${P}entries_fts (id, entity_id, title, body, tags) VALUES ('x', 'e1', 'CANARY', 'CANARY-body', '[]');`);
+    await raw.execAsync(`CREATE VIRTUAL TABLE ${P}source_passages_fts USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tokenize = 'porter unicode61');`);
+    expect(search(wiki).usesMiniSearchIndex()).toBe(true);
+    const report = newReport();
+    await maint(wiki)._eraseDrainPassages(report);
+    const names = (await raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('${P}entries_fts', '${P}source_passages_fts')`)).map((r) => r.name);
+    expect(names).toEqual([]);
+    const meta = new MetadataRepository(raw, P);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
+    expect(report.ftsOrphansCleared).toContain(`${P}entries_fts`);
+    expect(report.failedStep).toBeNull();
+  });
+
+  it('Unavailable honesty: duck-typed unavailable strategy with orphan surfaces refuses to touch tables (AC4)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    vi.spyOn(search(t.wiki), 'isIndexUnavailable').mockReturnValue(true);
+    // Live vtab shadow names are reserved; drop the vtabs so plain tables can stand in (as Path A).
+    await t.raw.execAsync(`DROP TABLE ${P}entries_fts; DROP TABLE ${P}source_passages_fts;
+      CREATE TABLE ${P}entries_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts_content VALUES (1, 'CANARY');`);
+    const before = (await t.raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts%'`)).map((r) => r.name);
+    const report = newReport();
+    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_fts_index_unavailable' });
+    expect(report.failedStep).toBe('index_sync');
+    const after = (await t.raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts%'`)).map((r) => r.name);
+    expect(after).toEqual(before);
+    expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts_content`))!.n).toBe(1);
+  });
+
   it('step 7: optimize runs on both FTS tables', async () => {
     const t = await make();
     const spy = vi.spyOn(t.raw, 'execAsync');
