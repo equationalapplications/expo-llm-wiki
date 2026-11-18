@@ -1414,12 +1414,21 @@ export interface ForgetParams {
    * predecessor and successor reached by walking `superseded_by` links, capped
    * at 100 per direction). The walk is NOT the connected component: with
    * fan-in A→C←B, forgetting A reaches C but not B. The forward walk deletes
-   * the live current fact. Does not compose with other selectors.
+   * the live current fact. Does not compose with other selectors (including
+   * `eventId`).
    */
   includeChain?: boolean;
   taskId?: string;
   sourceRef?: string;
   sourceHash?: string;
+  /**
+   * Soft-delete every librarian fact whose `source_pointer` names this event
+   * id (entity-scoped; exact match, no normalization — event ids are
+   * engine-generated). Mutually exclusive with every other selector;
+   * `clearAll` excludes it. Removal reports through the return value and the
+   * per-row outbox DELETE events. See `specs/forget-by-event-id/` (issue #386).
+   */
+  eventId?: string;
   /** Soft-delete every fact and task of the entity, delete its edges, and delete its source-ref index rows. */
   clearAll?: boolean;
   /**

@@ -1152,14 +1152,23 @@ export class MaintenanceService {
     params: ForgetParams,
     opts?: { dryRun?: boolean },
   ): Promise<ForgetResult> {
-    if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
-      throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
+    if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined || params.eventId !== undefined)) {
+      throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, sourceHash, and eventId');
     }
     if (params.includeEvents && !params.clearAll) {
       throw new Error('forget() includeEvents requires clearAll: true');
     }
-    if (params.includeChain && (params.entryId === undefined || params.clearAll || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
+    if (params.includeChain && (params.entryId === undefined || params.clearAll || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined || params.eventId !== undefined)) {
       throw new Error('forget() includeChain composes only with entryId');
+    }
+    // eventId exclusivity + validation live HERE, before the dry-run dispatch:
+    // forgetDryRun runs outside any transaction and does not re-run the
+    // in-transaction selector-group checks (specs/forget-by-event-id §D7).
+    if (params.eventId !== undefined && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
+      throw new Error('forget() eventId is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
+    }
+    if (params.eventId !== undefined && (typeof params.eventId !== 'string' || params.eventId === '')) {
+      throw new Error('Invalid eventId');
     }
 
     // Dry-run: read-only, no lock, no outbox events, no embedding hooks.
@@ -1263,9 +1272,17 @@ export class MaintenanceService {
             for (const id of await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true)) deletedEntryIds.push(id);
           }
 
+          // specs/forget-by-event-id: the pointer selector enumerates its ids
+          // (live + tombstoned superset) and mutates with outbox parity, same
+          // shape as the by-source branch above.
+          if (params.eventId !== undefined) {
+            for (const id of await this.entryRepo.findIdsByPointerEvent(entityId, params.eventId, tx, true)) deletedEntryIds.push(id);
+          }
+
           const entryPromise = params.entryId ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0) : null;
           const taskDeletedPromise = params.taskId ? this.taskRepo.softDeleteById(params.taskId, entityId, tx).then(r => r.changes > 0) : null;
           const refPromise = (sourceRef || sourceHash) ? this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, sourceHash) : null;
+          const pointerPromise = params.eventId !== undefined ? this.entryRepo.softDeleteByPointerEvent(entityId, params.eventId, tx) : null;
           // Soft-delete the source_ref_index row so a re-ingest of this
           // sourceRef+hash can take ownership. The pre-check at the start of
           // ingestDocument will now see no live ref and proceed. No-op when
@@ -1275,10 +1292,11 @@ export class MaintenanceService {
             ? this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
             : null;
 
-          const [entryResult, taskResult, refResult] = await Promise.all([
+          const [entryResult, taskResult, refResult, pointerResult] = await Promise.all([
             entryPromise ?? Promise.resolve(false),
             taskDeletedPromise ?? Promise.resolve(false),
             refPromise ?? Promise.resolve(0),
+            pointerPromise ?? Promise.resolve(0),
             sourceRefIndexPromise ?? Promise.resolve(undefined),
           ]);
 
@@ -1288,6 +1306,7 @@ export class MaintenanceService {
           }
           if (taskResult) deletedTasks++;
           deletedEntries += refResult;
+          deletedEntries += pointerResult;
         }
         // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
         // the ledger existed get a row so a retry still sends them.
@@ -1463,7 +1482,7 @@ export class MaintenanceService {
       return out;
     }
     if (params.entryId !== undefined || params.taskId !== undefined) {
-      throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors (entryId is accepted only with includeChain); use sourceRef/sourceHash or clearAll');
+      throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors (entryId is accepted only with includeChain); use sourceRef/sourceHash, eventId, or clearAll');
     }
 
     if (params.clearAll) {
@@ -1474,6 +1493,14 @@ export class MaintenanceService {
         return { deleted: { entries, tasks, events }, metadataReset: true };
       }
       return { deleted: { entries, tasks }, metadataReset: true };
+    }
+
+    // Pointer selector: dispatched BEFORE the no-source-selector early return
+    // below, so a valid eventId dry run never silently reports zero
+    // (specs/forget-by-event-id §D7).
+    if (params.eventId !== undefined) {
+      const entries = await this.entryRepo.countLiveByPointerEvent(entityId, params.eventId);
+      return { deleted: { entries, tasks: 0 } };
     }
 
     const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;

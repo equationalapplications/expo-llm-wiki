@@ -638,6 +638,80 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Shared JSON match predicate for source_pointer event ids
+   * (specs/forget-by-event-id §D1). Every JSON call sits under the single
+   * `json_valid` guard: unguarded JSON functions RAISE on malformed text, and
+   * three-valued logic forces evaluation of AND operands after a NULL-guarded
+   * term — a two-term form is only as safe as the planner's term-splitting.
+   * The tombstone guard (`deleted_at IS NULL`) is added per-method.
+   */
+  static readonly POINTER_EVENT_MATCH_SQL = `CASE WHEN json_valid(source_pointer)
+    THEN json_type(source_pointer, '$.event_id') = 'text'
+         AND json_extract(source_pointer, '$.event_id') = ?
+    ELSE 0 END`;
+
+  /**
+   * IDs of the entity's entries whose source_pointer names the event id.
+   * `includeDeleted = true` returns live + tombstoned rows (the forget
+   * enumeration superset for index sync and the ledger backstop).
+   */
+  async findIdsByPointerEvent(
+    entityId: string,
+    eventId: string,
+    tx?: SQLiteAdapter,
+    includeDeleted = false,
+  ): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`;
+    const args: unknown[] = [entityId, eventId];
+    if (!includeDeleted) sql += ` AND deleted_at IS NULL`;
+    const rows = await executor.getAllAsync<{ id: string }>(sql, args);
+    return rows.map((r) => r.id);
+  }
+
+  /** Live-row count for the event id — dry-run only (a real call is idempotent over tombstones). */
+  async countLiveByPointerEvent(entityId: string, eventId: string, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
+      [entityId, eventId],
+    );
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Soft-delete the entity's entries whose source_pointer names the event id,
+   * within a transaction. Stages a DELETE outbox entry for each row that
+   * changed, in the same transaction (parity with softDeleteBySource — synced
+   * replicas learn of the tombstones through the outbox). The `deleted_at
+   * IS NULL` guard makes the call idempotent: already-tombstoned rows are
+   * no-op hits and are not counted. `tx` is REQUIRED.
+   * Returns the number of rows deleted.
+   */
+  async softDeleteByPointerEvent(entityId: string, eventId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
+      [entityId, eventId],
+    );
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
+      [now, now, entityId, eventId],
+    );
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result.changes;
+  }
+
+  /**
    * Fetch IDs + entity_ids of soft-deleted rows older than cutoff for a given entity.
    * Used by runPrune().
    */
