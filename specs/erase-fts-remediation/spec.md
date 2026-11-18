@@ -88,13 +88,19 @@ uses (`MaintenanceService.ts:840`):
   territory (investigation landmine 1) — but the module is present and the
   MiniSearch choice is a durable host decision, so **DROP the orphaned
   vtabs outright** (`DROP TABLE IF EXISTS ${prefix}entries_fts`, same for
-  passages), drop the passage triggers, and set
+  passages), drop the FTS **triggers — entries-side and passage-side**
+  (`fts5LedgerDropSql`, `fts5Sql.ts:157-163`), clear the same four plain
+  companions as Path A (existence-gated: `${prefix}fts_pending`,
+  `${prefix}fts_map`, `${prefix}source_passages_fts_pending`,
+  `${prefix}source_passages_fts_map`), and set
   `FTS5_STATE_KEY = 'detached'` (mirroring `detachFts5`'s effects) so no
   live-ledger writes dangle. If the host ever switches back to fts5, the
   next open sees `'detached'` and rebuilds via `resetAndRearm` — that
   rebuild is a documented consequence, not an accident. (Reachability
   note: on a real config-minisearch store `detachFts5` usually already
-  DROPped the vtab, so Path B covers the early-return and
+  DROPped the vtab and dropped these companions/triggers — the entries
+  companions via `fts5LedgerDropSql`, the passage map/pending via
+  `createIndexStrategy.ts:66-73` — so Path B covers the early-return and
   passage-ledger-gated edges, `createIndexStrategy.ts:66-79`.)
 - **Path C — shadows present, vtab row absent:** nothing to probe (the
   vtab cannot be queried or dropped without the module). The shadows are
@@ -129,7 +135,7 @@ and module-less `ALTER TABLE ... RENAME` of a vtab is not relied on.
 `'fts_orphan_clear'` — a deliberate split: probe failures keep the
 existing `index_sync` step (they are index-sync-class), while a failed
 clear is its own step so hosts can distinguish "could not look" from
-"could not clear"; the `failedStep` doc comment at
+"could not clear"; the bare `failedStep` union at
 `MaintenanceService.ts:243` gains the new member. Each surface is pushed
 to `ftsOrphansCleared` only **after** that surface fully clears; the
 step is recorded via the existing `ok()` helper and emits a new diagnostic
@@ -142,13 +148,16 @@ undeletable.
 **D4 — gate placement and ordering.** The remediation replaces the
 probe-and-throw blocks inside the existing `!hasStrictDrain()` branch
 (`MaintenanceService.ts:782-812`) and **runs before the pending-ledger
-throw loop** (`:783-798`): under Paths A/C the pending companions are
-cleared by the remediation itself, so test 7's "cleared under Path A, no
+throw loop** (`:783-798`): under Paths A/B/C the pending companions are
+cleared by the remediation itself, so test 8's "cleared under Path A, no
 `erase_index_sync_failed`" holds; after the remediation, the pending-ledger
 check re-runs and still throws `erase_index_sync_failed` /
 `erase_passage_drain_failed` for any rows that remain (honesty for states
 the remediation does not cover, e.g. the `UnavailableIndexStrategy`
-failure above). The strict-drain (FTS5) branch is untouched, and its
+failure above). **Dispatch order, stated once:** strategy check
+(`instanceof`) → per-surface existence gate → vtab probe → path body
+(clears incl. companions) → `FTS5_STATE_KEY` write → pending-ledger
+re-check. The strict-drain (FTS5) branch is untouched, and its
 erasure behavior is unchanged byte-for-byte; the
 `canReclaimRetired()` retired-table machinery is untouched.
 
