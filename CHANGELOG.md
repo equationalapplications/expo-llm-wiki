@@ -1,3 +1,10 @@
+## [9.4.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.1...v9.4.2) (2026-11-18)
+
+### Bug Fixes
+
+* **graphrag-core:** re-stamp proof example to schema 17 (review fold) ([333351c](https://github.com/equationalapplications/expo-llm-wiki/commit/333351c65ae228f8fdb37e512fa86da297eb1adc))
+* **graphrag-core:** REQUIRED_SCHEMA_VERSION pin 11 → 17, parity test keeps it in lockstep (issue [#387](https://github.com/equationalapplications/expo-llm-wiki/issues/387)) ([ba12dcb](https://github.com/equationalapplications/expo-llm-wiki/commit/ba12dcbde97e38209786ee5e717b083ffef6be9d))
+
 ## [9.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.3.0...v9.4.0) (2026-11-18)
 
 ### Features
