@@ -1,6 +1,6 @@
 # @equationalapplications/mcp-server
 
-SynapseTree memory for coding agents: an MCP server that lets Claude Code, Cursor, Windsurf, Claude Desktop, or any MCP client search, remember, supersede, ingest, log events, and walk the knowledge graph in your [SynapseTree](https://synapsetree.dev) database.
+Hosted cloud memory for coding agents: an MCP server that lets Claude Code, Cursor, Windsurf, Claude Desktop, or any MCP client search, remember, supersede, ingest, log events, and walk the knowledge graph in your [hosted cloud](https://synapsetree.dev) database.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fmcp-server?label=mcp-server)](https://www.npmjs.com/package/@equationalapplications/mcp-server)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -10,7 +10,7 @@ SynapseTree memory for coding agents: an MCP server that lets Claude Code, Curso
 
 ## What it is
 
-A small Node program your MCP client launches on your own machine over stdio. It exposes eight SynapseTree memory operations as tools and forwards each call to `https://api.synapsetree.dev` with your API key. It stores nothing but that key, a base URL, and a default namespace. It never runs in anyone's cloud, and it never sees your conversation with the model — only tool calls.
+A small Node program your MCP client launches on your own machine over stdio. It exposes eight hosted-memory operations as tools and forwards each call to `https://api.synapsetree.dev` with your API key. It stores nothing but that key, a base URL, and a default namespace. It never runs in anyone's cloud, and it never sees your conversation with the model — only tool calls.
 
 ## Install
 
@@ -51,7 +51,7 @@ read -rs SYNAPSETREE_API_KEY && export SYNAPSETREE_API_KEY
 synapsetree-mcp auth --email you@example.com
 ```
 
-A six-digit code is printed. SynapseTree emails you an approval link within about a minute; the page shows the same code. Approve only if the codes match. The link expires after 15 minutes. The first poll after approval receives the only copy of the key and stores it.
+A six-digit code is printed. The service emails you an approval link within about a minute; the page shows the same code. Approve only if the codes match. The link expires after 15 minutes. The first poll after approval receives the only copy of the key and stores it.
 
 The key is stored in `credentials.json` under your config directory with mode `0600` and is never printed again; `status` shows the last four characters.
 
@@ -86,7 +86,7 @@ Cursor (`.cursor/mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`), C
 | `memory_search` | Hybrid search over facts; also returns pending tasks and recent events. Keyword-only until the account owner registers an embeddings provider (`diagnostics.keyword_only`). |
 | `memory_remember` | Store one fact (title, body, tags, confidence, type). Works with no provider. |
 | `memory_supersede` | Replace a fact with a corrected one; history is kept. Never deletes. |
-| `memory_ingest` | Store a whole document and let SynapseTree extract facts. Needs an extraction provider registered in the dashboard (BYOK). |
+| `memory_ingest` | Store a whole document and let the service extract facts. Needs an extraction provider registered in the dashboard (BYOK). |
 | `memory_log_event` | Record an observation, decision, action, or outcome. |
 | `graph_traverse` | Walk the knowledge graph from a fact or node, up to three hops. |
 | `namespaces_list` | List namespaces, optionally by prefix. |
@@ -107,7 +107,7 @@ Default config directory: macOS `~/Library/Application Support/synapsetree`, Lin
 
 - Export, delete, or run maintenance on your memory. Those are owner actions in the dashboard, and this server does not expose them even if your key could.
 - Print your key, or the claim token used during email registration.
-- Run anywhere but your machine. Memories go only to SynapseTree; SynapseTree calls an inference provider only if the account owner registered one.
+- Run anywhere but your machine. Memories go only to the service; the service calls an inference provider only if the account owner registered one.
 
 ## Verify
 
@@ -118,7 +118,7 @@ npx @modelcontextprotocol/inspector synapsetree-mcp
 
 ## Release checklist (maintainers)
 
-Before publishing a version, run the whole sequence against the SynapseTree
+Before publishing a version, run the whole sequence against the service's
 **test** stage with a dashboard key and an isolated config directory, so no
 step can touch your real credentials:
 
@@ -139,7 +139,7 @@ pnpm build
 3. `npx @modelcontextprotocol/inspector node "$CLI" serve` and run one `memory_search`.
 4. `node "$CLI" auth --email …` once, approve the email, then `node "$CLI" auth --revoke`.
 
-The vendored contract in `contract/` is generated in the SynapseTree repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
+The vendored contract in `contract/` is generated upstream and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
 
 ## Monorepo Ecosystem
 
@@ -153,7 +153,7 @@ The vendored contract in `contract/` is generated in the SynapseTree repository 
 | [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. |
 | [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
 | [@equationalapplications/schema-software-org](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 21 node types, 42 edges, warm-agent superset, data-only |
-| [**@equationalapplications/mcp-server**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing SynapseTree memory tools to coding agents |
+| [**@equationalapplications/mcp-server**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing hosted cloud memory tools to coding agents |
 
 ---
 

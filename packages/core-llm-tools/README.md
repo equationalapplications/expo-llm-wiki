@@ -124,7 +124,7 @@ const response = await ai.models.generateContent({
 
 ### Memory manifests
 
-`ontology_get` (`ontologyGetManifest`), `graph_traverse` (`graphTraverseManifest`), and `instructions_get` (`instructionsGetManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `instructions_get` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The names follow SynapseTree's `<resource>_<verb>` convention, which the `@equationalapplications/mcp-server` tools also use.
+`ontology_get` (`ontologyGetManifest`), `graph_traverse` (`graphTraverseManifest`), and `instructions_get` (`instructionsGetManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `instructions_get` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The names follow the hosted service's `<resource>_<verb>` convention, which the `@equationalapplications/mcp-server` tools also use.
 
 ### Removed in 8.0.0: the `wiki_*` tool names
 
@@ -155,7 +155,7 @@ const response = await ai.models.generateContent({
 | [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. |
 | [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
 | [@equationalapplications/schema-software-org](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 21 node types, 42 edges, warm-agent superset, data-only |
-| [@equationalapplications/mcp-server](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing SynapseTree memory tools to coding agents |
+| [@equationalapplications/mcp-server](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing hosted cloud memory tools to coding agents |
 
 ---
 

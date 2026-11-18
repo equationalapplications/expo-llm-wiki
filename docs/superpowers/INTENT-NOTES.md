@@ -30,7 +30,7 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 | Rule 6 drafts, promoteDraft, lint, pendingSources, getInstructions | Built | `WikiMemory.ts:508,546,556,1166,1189` |
 | Rule 6 partial ingest returns result, total failure throws | Built | README "Ingest Document" (5.5.0 note) |
 | Rule 7 token budget, usage meter, estimated flag | Built | `packages/core/src/utils/usage.ts`; `types.ts:466,633,1444` |
-| Rule 7 deferred maintenance, llm_usage / read_budget diagnostics | Built (7.8.0) | `types.ts:373,384,821-833`; `docs/synapsetree-integration.md` §1–2; `CHANGELOG.md:131` |
+| Rule 7 deferred maintenance, llm_usage / read_budget diagnostics | Built (7.8.0) | `types.ts:373,384,821-833`; guides *Serverless & multi-tenant hosting* §Recommended config + §Request lifecycle (docs site; the former `docs/synapsetree-integration.md` §1–2 was removed under issue #405); `CHANGELOG.md:131` |
 | Rule 7 defaults remain legacy / auto | fact | `types.ts:374` ("Default `{ strategy: 'legacy' }`"); `types.ts:378-384` |
 | Rule 7 8.0.0 flip undecided | Open decision | `2026-09-29-competitive-memory-design.md:7-8,44` |
 | Rule 8 one 2026-09 spec says "zero runtime dependencies" | fact | `2026-09-29-competitive-memory-design.md:15` |

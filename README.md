@@ -75,7 +75,7 @@ Follow the quickstart for your platform to create `wiki`: [Expo](https://equatio
 | [`@equationalapplications/schema-org-llm-wiki`](packages/schema-org) | Curated schema.org ontology manifest (data only) | [ontologies](https://equationalapplications.github.io/expo-llm-wiki/packages/ontologies/) |
 | [`@equationalapplications/schema-software-org`](packages/schema-software-org) | Software-organization ontology manifest (data only) | [ontologies](https://equationalapplications.github.io/expo-llm-wiki/packages/ontologies/) |
 | [`@equationalapplications/prisma-outbox`](packages/prisma-outbox) | Sync SQLite outbox events to a Prisma database | [guide](https://equationalapplications.github.io/expo-llm-wiki/guides/prisma-outbox/) |
-| [`@equationalapplications/mcp-server`](packages/mcp-server) | MCP server giving coding agents a SynapseTree memory | [mcp-server](https://equationalapplications.github.io/expo-llm-wiki/packages/mcp-server/) |
+| [`@equationalapplications/mcp-server`](packages/mcp-server) | MCP server giving coding agents hosted cloud memory | [mcp-server](https://equationalapplications.github.io/expo-llm-wiki/packages/mcp-server/) |
 
 Not sure which one you need? See [Choose a package](https://equationalapplications.github.io/expo-llm-wiki/start/choose-a-package/).
 
@@ -91,7 +91,6 @@ Both run on sql.js with no backend. You bring your own LLM key.
 - [How memory works](https://equationalapplications.github.io/expo-llm-wiki/concepts/how-it-works/) · [Retrieval](https://equationalapplications.github.io/expo-llm-wiki/concepts/retrieval/) · [GraphRAG](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/) · [API reference](https://equationalapplications.github.io/expo-llm-wiki/reference/wiki-memory/)
 - [Security](https://equationalapplications.github.io/expo-llm-wiki/project/security/), including the prompt-injection trust boundary and GDPR deletion. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 - [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
-- [SynapseTree integration guide](docs/synapsetree-integration.md) for tenant-aware hosts
 - [Benchmarks](docs/benchmarks.md)
 - [Roadmap](docs/ROADMAP.md)
 
@@ -102,7 +101,7 @@ Built on Core LLM Wiki:
 - **[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts)**: a privacy-first desktop second brain (Tauri, React, Rust) with a built-in MCP server.
 - **[Curated Thoughts Integrations](https://github.com/equationalapplications/curated-thoughts-integrations)**: wires Curated Thoughts into Claude Code, OpenCode, Hermes, and other agent harnesses. A software agency in a box.
 - **[Curated Journal](https://github.com/equationalapplications/curated-journal)**: a fully offline Expo journal, and the reference app for `expo-llm-wiki`.
-- **[SynapseTree](https://synapsetree.dev)**: hosted cloud memory on the same engine. Its MCP server is [`@equationalapplications/mcp-server`](packages/mcp-server).
+- **[The hosted cloud service](https://synapsetree.dev)**: cloud memory on the same engine. Its MCP server is [`@equationalapplications/mcp-server`](packages/mcp-server).
 
 ## License
 

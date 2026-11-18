@@ -1,6 +1,6 @@
 ---
 title: MCP server
-description: A local stdio MCP server that gives coding agents SynapseTree-backed memory tools.
+description: A local stdio MCP server that gives coding agents hosted cloud memory tools.
 sidebar:
   order: 7
 ---

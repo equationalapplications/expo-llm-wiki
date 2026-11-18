@@ -7,8 +7,7 @@ sidebar:
 
 A common hosted pattern is **one SQLite file per tenant**, kept in object storage (S3, GCS, R2).
 Each request pulls the file, runs the engine in-process, and pushes the file back. This is how
-[SynapseTree](https://synapsetree.dev), the hosted Core LLM Wiki service, runs. If you'd rather not run
-this yourself, SynapseTree provides it as a service.
+the [hosted service](https://synapsetree.dev) runs; if you'd rather not run it yourself, use that.
 
 ## Recommended config
 
@@ -68,5 +67,27 @@ try {
 - **Never persist mid-maintenance** in `'auto'` mode. Use `'deferred'` (the default), or call `drain()` first.
 - **Entity IDs come from your auth layer**, never from request input you haven't checked.
 
-The full SynapseTree write-up, covering costs, the MCP surface, and the `entity_id` scheme, is in
-[`docs/synapsetree-integration.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/synapsetree-integration.md).
+## Writer lease patterns
+
+The lease only has to guarantee two processes cannot hold it at once — but that guarantee holds **only if the lease outlives the request**: set the TTL above the worst-case hold time (including maintenance), or have the holder renew it. A request that outlasts the TTL lets a second writer in, which is exactly the failure this section exists to prevent. On push, verify you still hold the lease (a fencing token or holder comparison) — this narrows the race window but does not close it. To close it, make the data-file push itself conditional on the version you pulled (`PutObject` with `If-Match` on the ETag you pulled): no push can overwrite a version it didn't pull, so no writer's update is silently lost — though whichever writer pushes first wins, lease or not. On a `412 Precondition Failed`, drop your result, re-pull, and retry — or fail the request. A tenant's **first** push has no ETag to match: create the file with `If-None-Match: *`, or two first writers can both create it and the second silently replaces the first. Three workable lease shapes:
+
+- **DynamoDB conditional write.** `PutItem` with `ConditionExpression: attribute_not_exists(key) OR expires_at < :now`; hold for the request duration; release or renew with `ConditionExpression: holder = :me` (a lost lease fails the condition instead of deleting someone else's). Keep a safety margin on `expires_at` bigger than the clock drift you expect between writers — the holder treats its lease as lost at `expires_at` minus the margin, because the condition trusts the checker's clock.
+- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; release via compare-and-delete (a Lua `GET`+compare+`DEL`, or `DELEX lease:<fileKey> IFEQ <holder>` on Redis 8.4+ — Valkey's equivalent is `DELIFEQ` in 9.0+) so a lapsed lease is never deleted after another writer took it; renew via compare-and-extend (a Lua `GET`+compare+`EXPIRE <ttl>` — it must be atomic like the release, or the lapsed lease gets extended after another writer took it — or `SET lease:<fileKey> <holder> IFEQ <holder> EX <ttl>` on Redis 8.4+/Valkey 8.1+, where `IFEQ` already implies the key exists, so no `XX`) before the TTL lapses on long requests.
+- **S3 conditional writes.** Read the lease object first. Take it with `PutObject` and `If-None-Match: *` when absent; take over an **expired** lease with `PutObject` and `If-Match: <etag you just read>` after checking `expires_at` in the body (only one racer's write succeeds) — and keep the same clock-drift safety margin on that check, with the holder treating its lease as lost at `expires_at` minus the margin. S3 does not expire the object for you; release with `DeleteObject` and `If-Match: <etag>` (supported on general-purpose buckets; on versioned buckets `DeleteObject` leaves a delete marker, which does not block a later `If-None-Match: *` takeover), or renew by writing the lease back with `If-Match: <etag>`.
+
+## Budget sizing
+
+`tokenBudget` on `runPendingMaintenance` covers text-generation tokens only; embedding calls are not counted. With `generateTextWithUsage` implemented, figures are provider-reported; otherwise the engine estimates at `chars ÷ 4` and sets `estimated: true`. Plan at the model's worst case: a single librarian pass holds every event since the watermark plus the manifest block, and a single heal pass holds the candidates and document anchors. If `stoppedReason.reason === 'budget_too_small'`, **one** event or one heal batch exceeds the whole budget — raise that run's budget, or split the work over multiple invocations.
+
+## Choosing `entity_id` partitioning
+
+`entity_id` is a free namespace; the engine accepts any string and enforces nothing. For one file per tenant, three partitions each with a clear trade-off:
+
+| Partition | Isolation | Cost |
+|---|---|---|
+| `<tenantId>:<userId>` — one entity per end-user | Strong: `read()` scoped per user, `traverseGraph` never crosses users, per-user `forget()`/`exportDump()` and token accounting | Entity count grows with users |
+| `<tenantId>:<workspaceId>` — one entity per workspace | Workspace-scoped reads are natural; per-workspace accounting and `forget()` | Users inside a workspace share memory |
+| `<tenantId>` — one constant entity per file | None inside the tenant | Simplest; per-user `forget()` degenerates to "delete the file" |
+
+Whatever the choice, the writer (your auth layer) picks the `entity_id` per request — see the hard rule above. Deletion and retention interplay: `forget({ clearAll: true, includeEvents: true })` hard-deletes every event of the entity immediately, read or not, and resets the librarian position — see [Deleting data](/expo-llm-wiki/guides/deleting-data/) and [Maintenance](/expo-llm-wiki/guides/maintenance/).
+
