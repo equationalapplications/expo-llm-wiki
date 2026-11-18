@@ -35,6 +35,19 @@ await wiki.history('user-123', seattleFactId);                                  
 
 To record a new fact that replaces nothing, use [`remember()`](/expo-llm-wiki/reference/wiki-memory/#remember) with an optional `valid_from`. It stores the fact directly, with no LLM call. `supersede()` is still the way to replace one.
 
+To end a fact's validity without a replacement — an archive, not a
+deletion — use `expire()`. It sets `valid_to` only: the fact stays in
+the store, `asOf` reads before that time still return it, and no
+supersession link is created.
+
+```ts
+await wiki.expire(entityId, factId, { at: validUntil });
+```
+
+It rejects a missing, foreign, already superseded, immutable-document,
+or already expired fact, and an `at` at or before the fact's validity
+start (`invalid_interval`).
+
 ## Rules
 
 `supersede()` throws `WikiSupersedeError` (with a `reason`) when the target:
