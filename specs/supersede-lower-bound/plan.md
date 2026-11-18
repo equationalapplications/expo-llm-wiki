@@ -74,7 +74,7 @@ it('rejects an inverted interval with invalid_interval (t < start)', async () =>
     .rejects.toMatchObject({ reason: 'invalid_interval' });
 });
 
-it('honors a lowered valid_from as the start', async () => {
+it('uses valid_from over created_at as the start', async () => {
   await insert('seattle'); // created_at 100
   await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 500 WHERE id = 'seattle'`);
   await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 400 }))
@@ -85,9 +85,16 @@ it('honors a lowered valid_from as the start', async () => {
   expect(t.superseded_by).toBe(newId);
 });
 
+it('reports already_expired before invalid_interval (guard order, spec D2)', async () => {
+  await insert('seattle'); // created_at 100
+  await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50 WHERE id = 'seattle'`);
+  await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 40 }))
+    .rejects.toMatchObject({ reason: 'already_expired' });
+});
+
 it('rejects a default validFrom on a future-dated fact until its start', async () => {
   await insert('seattle'); // created_at 100
-  await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 9_999_999_999_999 WHERE id = 'seattle'`);
+  await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 9999999999999 WHERE id = 'seattle'`);
   await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }))
     .rejects.toMatchObject({ reason: 'invalid_interval' });
 });
@@ -118,11 +125,13 @@ it('still allows an explicit early valid_from on the replacement (scope boundary
 
 ```ts
 it('SUPERSEDE whose time is at or before the target start is rejected as invalid_interval and leaves both facts live', async () => {
-  // Target recorded at t=1; the candidate event carries time 1 (not after
-  // the start), so the op must reject instead of linking an inverted window.
+  // Target created_at = 1; the candidate event carries time 1 (via its
+  // source_event label), so supersedeFrom = 1 == the target's start, and
+  // the op must reject instead of linking an empty window. Ops target the
+  // neighbour alias, not the raw row id — use 'n1' like every existing test.
   const { db, wiki, diagnostics } = mk([
     () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
-    () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'seattle', valid_from: 1 }] }),
+    () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] }),
   ]);
   await wiki.setup();
   await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
@@ -137,23 +146,25 @@ it('SUPERSEDE whose time is at or before the target start is rejected as invalid
   const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id='seattle'`);
   expect(old.valid_to).toBeNull();
   expect(old.superseded_by).toBeNull();
-  const fresh = await db.getFirstAsync<any>(`SELECT id, valid_to, superseded_by FROM llm_wiki_entries WHERE id != 'seattle'`);
+  const fresh = await db.getFirstAsync<any>(`SELECT id, valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id != 'seattle'`);
   expect(fresh.valid_to).toBeNull();
   expect(fresh.superseded_by).toBeNull();
+  expect(fresh.valid_from).toBe(1);
   const read = await wiki.read('u', 'where does the user live');
   expect(read.facts.length).toBe(2);
+  const asOfRead = await wiki.read('u', 'where does the user live', { asOf: 1 });
+  expect(asOfRead.facts.length).toBe(2);
 });
 ```
 
   **Executor note:** before writing this test, read the existing
   `already_expired` ops test (:135-170) and the `mk` helper, and mirror
-  their exact fixture mechanics — the `valid_from` op field name, event
-  insertion shape, and `ofCode` import must match the file's real
-  helpers. If `read()`'s result shape differs, assert on its actual
-  shape; the pin is "both facts come back", not a specific field list.
-  If `valid_from` on an op object is not the real field name in
-  `extract.ts`, use the mechanism the existing tests use to set the
-  event time.
+  their exact fixture mechanics — the event insertion shape, the
+  `ofCode` import, and how `source_event` maps the candidate's time via
+  `extract.ts:116` (the op object carries no `valid_from`; the event
+  time IS the supersede time). If `read()`'s result shape differs,
+  assert on its actual shape; the pin is "both facts come back, default
+  and asOf", not a specific field list.
 
 - [ ] **Step 3: Run the RED check**
 

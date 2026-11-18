@@ -135,7 +135,7 @@ gains `invalid_interval` in its throws sentence, worded like the
 `expire()` JSDoc (:1188-1196).
 
 `apps/docs/src/content/docs/guides/temporal-facts.md` — the "## Rules"
-section gains one bullet: `supersede()` rejects a `validFrom` at or
+section gains one paragraph: `supersede()` rejects a `validFrom` at or
 before the target's validity start (`invalid_interval`), a default
 `validFrom` applies the rule to the current time, a fact whose start
 is in the future rejects until that start, and an explicit early
