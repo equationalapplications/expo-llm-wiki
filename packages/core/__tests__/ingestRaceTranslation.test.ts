@@ -240,8 +240,11 @@ describe('IngestionService — UNIQUE violation translation', () => {
       await expect(
         wiki.ingestDocument('entity-1', { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' }),
       ).rejects.toBeInstanceOf(WikiDuplicateHashError);
-      // Pin the injection: exactly one transaction attempt, and the error it
-      // threw carried the expo primary-code shape (not a symbolic code).
+      // Pin the injection: exactly one transaction attempt. The message
+      // assertions are drift protection on the injected literal (a symbolic
+      // code here would silently change which translation path is exercised);
+      // the behavioral pins are txAttempts and the WikiDuplicateHashError
+      // rejection above.
       expect(txAttempts).toBe(1);
       expect(thrownMessage).toMatch(/^Error code 19: UNIQUE constraint failed/);
       expect(thrownMessage).not.toMatch(/SQLITE_/);

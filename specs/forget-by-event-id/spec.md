@@ -215,7 +215,8 @@ new result field.
 ### D7 — dryRun parity, with its exclusivity checks up front
 
 `forgetDryRun` runs outside any transaction and does not re-run the
-in-transaction selector-group checks (`MaintenanceService.ts:1465-1467`) —
+in-transaction selector-group checks (those live at
+`MaintenanceService.ts:1228-1233`) —
 so **all `eventId` exclusivity validation lives in public `forget()` beside
 the existing checks (~:1155-1163), before the dry-run dispatch**. Without
 this, a naive `eventId` + `sourceRef` dry run would fall through to the
