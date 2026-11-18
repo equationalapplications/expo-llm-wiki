@@ -29,6 +29,13 @@ new fact with no `valid_from`, `supersedeInTx` sets the replacement's
 before the fact it replaces, so `history()` orders the successor at or
 before its predecessor.
 
+The fix below covers this ordering symptom only for the no-`valid_from`
+path. A replacement created with an explicit early `valid_from`
+(`TemporalService.ts:85-93`) skips that write, so the same
+successor-before-predecessor ordering stays reachable and unchecked.
+This spec does not check that case; see the non-goal on overlap and gap
+policy.
+
 ## Root cause
 
 A pre-existing gap, deliberately deferred. `expire()` got its lower-bound
@@ -87,8 +94,13 @@ The check changes behavior for existing callers in two documented ways:
 2. A default `validFrom` (`t = now`) can throw on a fact whose
    `valid_from` is future-dated. The throw lasts until the fact's start.
    This mirrors expire()'s documented default-`at` consequence.
+3. An explicit early `valid_from` on a new replacement fact is not
+   checked — the successor can still start at or before the fact it
+   replaces (Problem section). A test pins this boundary so a later
+   policy change is visible.
 
-The `docs` guide states both consequences in the supersede rules section.
+The `docs` guide states all three consequences in the supersede rules
+section.
 
 ### D4 — docs updates
 
@@ -132,7 +144,11 @@ already carries the supersede guard suite. The `insert()` helper defaults
 8. The success path stays intact: a supersede strictly after the start
    still links both rows, and the replacement's `valid_from` equals `t`
    (existing "no gap" test must stay green untouched).
-9. Full `packages/core` suite green; typecheck green; docs build green.
+9. Scope boundary (D3 consequence 3): a replacement created with an
+   explicit `valid_from: 50` superseded at `validFrom: 200` onto a fact
+   with `created_at` 100 still succeeds — the current unchecked
+   ordering behavior is pinned, not blessed.
+10. Full `packages/core` suite green; typecheck green; docs build green.
 
 ## Rejected alternatives
 
@@ -163,7 +179,9 @@ change). No migration. Hosts that catch `WikiSupersedeError` see the new
 
 - No change to `expire()`; its guard shipped in PR #409.
 - No overlap or gap policy between the old row's `valid_to` and the
-  replacement's `valid_from` (rejected alternative above).
+  replacement's `valid_from` — including the explicit-`valid_from`
+  successor-ordering case the Problem section names (rejected
+  alternative above).
 - No repair of existing corrupted rows (rejected alternative above).
 - No wrapper exposure in react/expo; nothing forwards `supersede()`
   options today, and exposure is its own decision when a host asks.
