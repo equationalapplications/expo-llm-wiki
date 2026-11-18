@@ -105,7 +105,7 @@ unavailable (init failed) and FTS surfaces remain, `erase()` refuses with
 `erase_fts_index_unavailable` even when the ledgers are empty.
 
 On runtimes without the FTS5 module, or with `indexStrategy: 'minisearch'`, a store that earlier
-ran FTS5 keeps orphaned full-text tables. `erase()` clears them itself, lists every cleared table
+ran FTS5 keeps orphaned full-text tables. `erase()` clears them itself, lists every table that held rows
 in `report.ftsOrphansCleared`, and makes erasure verifiable — provided no external-removal
 holds remain (holds still yield `verified: false`). If it cannot, the step fails honestly with
 `erase_fts_orphan_probe_failed` (the orphan probe errored), `erase_fts_orphan_clear` (a clear

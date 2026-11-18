@@ -858,7 +858,7 @@ export class MaintenanceService {
       const tailCleared: string[] = [];
       await this.db.withTransactionAsync(async (tx) => {
       for (const companion of [`${this.prefix}fts_pending`, `${this.prefix}fts_map`, `${this.prefix}source_passages_fts_pending`, `${this.prefix}source_passages_fts_map`] as const) {
-        if (await this.sourceTableExists(companion)) {
+        if (await this.sourceTableExists(companion, tx)) {
           const res = await tx.runAsync(`DELETE FROM ${companion}`);
           if ((res?.changes ?? 0) > 0 && !tailCleared.includes(companion)) tailCleared.push(companion);
         }
@@ -979,8 +979,8 @@ export class MaintenanceService {
     return Array.isArray(raw) ? raw.filter((n): n is string => isRetiredTableName(this.prefix, n)) : [];
   }
 
-  private sourceTableExists(name: string): Promise<boolean> {
-    return this.metadataRepo.tableExists(name);
+  private sourceTableExists(name: string, tx?: SQLiteAdapter): Promise<boolean> {
+    return this.metadataRepo.tableExists(name, tx);
   }
 
   /** Step 6 sync: `syncEntries` resolving false means the ledger drain failed — a failed step. */

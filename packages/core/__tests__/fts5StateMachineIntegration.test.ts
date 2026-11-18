@@ -39,6 +39,41 @@ async function convergeByOpens(db: SQLiteAdapter, max = 100): Promise<WikiMemory
   return w;
 }
 
+describe('passage bootstrap rebuild guard', () => {
+  it("issues the fts5 'rebuild' command when passage map and ledger are both empty", async () => {
+    const db = openTestDatabase();
+    await open(db, 1500);
+    await db.runAsync(`DELETE FROM ${P}source_passages_fts_map`);
+    await db.runAsync(`DELETE FROM ${P}source_passages_fts_pending`);
+    const sql: string[] = [];
+    const spied: SQLiteAdapter = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'withTransactionAsync') {
+          return (fn: (tx: SQLiteAdapter) => Promise<void>) =>
+            target.withTransactionAsync((tx) =>
+              fn(new Proxy(tx, {
+                get(t, p, r) {
+                  const v = Reflect.get(t, p, r);
+                  if (p === 'runAsync' || p === 'execAsync') {
+                    return (s: string, ...rest: unknown[]) => {
+                      sql.push(s);
+                      return (v as (...a: unknown[]) => unknown).call(t, s, ...rest);
+                    };
+                  }
+                  return typeof v === 'function' ? v.bind(t) : v;
+                },
+              })),
+            );
+        }
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    await open(spied, 1500);
+    expect(sql).toContain(`INSERT INTO ${P}source_passages_fts(${P}source_passages_fts) VALUES('rebuild')`);
+  });
+});
+
 describe('FTS state machine, integration (#280 B7, ≥2k rows)', () => {
   it('7(g) marker + trigger loss: re-arm on open, triggers present after the transition and after a mid-rebuild resume', async () => {
     const db = await builtStore();

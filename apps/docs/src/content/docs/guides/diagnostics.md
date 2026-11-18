@@ -70,7 +70,8 @@ const wiki = createWiki(db, {
 | `erase_secure_delete_off` (`error`) | secure_delete could not be confirmed ON on the connection; erasure is unverified and the erase was stopped. See [Deleting data](/expo-llm-wiki/guides/deleting-data/#the-pragma-requirement) |
 | `erase_entity_skipped` (`warn`) | Erase skipped an entity because another operation held its prune lock |
 | `erase_registry_sweep_skipped` (`info`) | Erase skipped the source_ref_index tombstone sweep because the table does not exist (pre-v9 store) |
-| `erase_retired_vtab_undroppable` (`warn`) | A retired FTS table could not be dropped on a runtime without FTS5; its shadow tables were emptied and the name stays listed until an FTS5-capable open drops it |
+| `erase_retired_vtab_undroppable` (`warn`) | A retired FTS table could not be dropped on a runtime without FTS5; its shadow tables' text rows were emptied (the `%_config` and `%_data` rows with ids 1 and 10 are intentionally kept) and the name stays listed until an FTS5-capable open drops it |
+| `erase_fts_orphan_cleared` (`info`) | Erase cleared an orphaned FTS table left by a runtime that ran FTS5; the table is named in the detail |
 | `erase_retired_remaining` (`error`) | Erase stopped: retired FTS tables still exist after reclamation; the erase is incomplete |
 | `erase_tombstones_remaining` (`error`) | Erase stopped: soft-deleted rows remain in the database file after the erase pipeline (step 9 tombstone gate); the erase is incomplete and unverified. Re-run `erase()` after quiescing the store |
 | `erase_retired_read_failed` (`error`) | Erase stopped: the retired-FTS-table inventory read failed (step 4 re-run check); the erase is incomplete and unverified. Re-run `erase()` after quiescing the store |
