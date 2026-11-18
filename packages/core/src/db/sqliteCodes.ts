@@ -18,10 +18,9 @@ const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
   // 2067 = SQLITE_CONSTRAINT_UNIQUE — a UNIQUE index rejecting an INSERT/UPDATE.
   // better-sqlite3 / node:sqlite enable extended result codes and report it
   // directly. expo-sqlite never emits it (as of expo-sqlite 58.0.14, per
-  // #403): it leaves extended result codes off
-  // and surfaces the same failure as the primary code 19 with the
-  // "UNIQUE constraint failed" message text, which `extractSqliteCode` below
-  // refines back to this name (#403).
+  // #403): it leaves extended result codes off and surfaces the same failure
+  // as the primary code 19 with the "UNIQUE constraint failed" message text,
+  // which `extractSqliteCode` below refines back to this name (#403).
   2067: 'SQLITE_CONSTRAINT_UNIQUE',
   // 267 = SQLITE_CORRUPT_VTAB — a corrupt FTS5 shadow table (ftsCorruptionClass).
   267: 'SQLITE_CORRUPT_VTAB',

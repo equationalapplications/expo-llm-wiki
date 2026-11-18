@@ -1113,7 +1113,8 @@ export class WikiMemory {
   }
 
   /**
-   * Soft-delete facts and tasks by id, by source, or all of them (`clearAll`).
+   * Soft-delete facts and tasks by id, by source, by source-pointer event id,
+   * or all of them (`clearAll`).
    * `clearAll` also deletes the entity's edges and its source-ref index rows.
    * Add `includeEvents: true` to `clearAll` to hard-delete every event too,
    * read or not, and reset the librarian's position: without it a later
