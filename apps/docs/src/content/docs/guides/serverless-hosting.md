@@ -7,8 +7,7 @@ sidebar:
 
 A common hosted pattern is **one SQLite file per tenant**, kept in object storage (S3, GCS, R2).
 Each request pulls the file, runs the engine in-process, and pushes the file back. This is how
-[The hosted service](https://synapsetree.dev) runs the engine for you. If you'd rather not run
-this yourself, it is provided as a service.
+the [hosted service](https://synapsetree.dev) runs; if you'd rather not run it yourself, use that.
 
 ## Recommended config
 
@@ -67,4 +66,30 @@ try {
 - **Single writer per file.** In-process locks don't protect you across processes, so use a lease.
 - **Never persist mid-maintenance** in `'auto'` mode. Use `'deferred'` (the default), or call `drain()` first.
 - **Entity IDs come from your auth layer**, never from request input you haven't checked.
+
+## Writer lease patterns
+
+The lease only has to guarantee two processes cannot hold it at once. Three proven shapes:
+
+- **DynamoDB conditional write.** `PutItem` with `ConditionExpression: attribute_not_exists(key) OR expires_at < :now`; hold for the request duration; release on push or let it expire on crash.
+- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; delete on push (only if still yours), or let the TTL expire.
+- **S3 object lease.** Write a small lease object with an expiring retention policy next to the data file; its deletion/expiry releases the lease.
+
+Two concurrent pullers cannot both hold the lease. If a holder crashes mid-request, the expiry — not a cleanup step — is what unblocks the next writer.
+
+## Budget sizing
+
+`tokenBudget` on `runPendingMaintenance` covers text-generation tokens only; embedding calls are not counted. With `generateTextWithUsage` implemented, figures are provider-reported; otherwise the engine estimates at `chars ÷ 4` and sets `estimated: true`. Plan at the model's worst case: a single librarian pass holds every event since the watermark plus the manifest block, and a single heal pass holds the candidates and document anchors. If `stoppedReason.reason === 'budget_too_small'`, **one** event or one heal batch exceeds the whole budget — raise that run's budget, or split the work over multiple invocations.
+
+## Choosing `entity_id` partitioning
+
+`entity_id` is a free namespace; the engine accepts any string and enforces nothing. For one file per tenant, three partitions each with a clear trade-off:
+
+| Partition | Isolation | Cost |
+|---|---|---|
+| `<tenantId>:<userId>` — one entity per end-user | Strong: `read()` scoped per user, `traverseGraph` never crosses users, per-user `forget()`/`exportDump()` and token accounting | Entity count grows with users |
+| `<tenantId>:<workspaceId>` — one entity per workspace | Workspace-scoped reads are natural; per-workspace accounting and `forget()` | Users inside a workspace share memory |
+| `<tenantId>` — one constant entity per file | None inside the tenant | Simplest; per-user `forget()` degenerates to "delete the file" |
+
+Whatever the choice, the writer (your auth layer) picks the `entity_id` per request — see the hard rule above. Deletion and retention interplay: `forget({ clearAll: true, includeEvents: true })` also deletes read and unread events before `runPrune` — see [Deleting data](/expo-llm-wiki/guides/deleting-data/) and [Maintenance](/expo-llm-wiki/guides/maintenance/).
 

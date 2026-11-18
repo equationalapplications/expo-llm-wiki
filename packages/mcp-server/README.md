@@ -139,7 +139,7 @@ pnpm build
 3. `npx @modelcontextprotocol/inspector node "$CLI" serve` and run one `memory_search`.
 4. `node "$CLI" auth --email …` once, approve the email, then `node "$CLI" auth --revoke`.
 
-The vendored contract in `contract/` is generated upstream in the service's repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
+The vendored contract in `contract/` is generated upstream and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
 
 ## Monorepo Ecosystem
 

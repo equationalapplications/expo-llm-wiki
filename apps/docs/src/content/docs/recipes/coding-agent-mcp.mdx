@@ -1,6 +1,6 @@
 ---
 title: Memory for coding agents (MCP)
-description: Give Claude Code, Cursor, OpenCode, and other agents persistent memory — locally with Curated Thoughts today, or in the cloud with SynapseTree.
+description: Give Claude Code, Cursor, OpenCode, and other agents persistent memory — locally with Curated Thoughts today, or in the cloud with the hosted cloud service.
 sidebar:
   order: 6
 ---
@@ -11,7 +11,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 There are two ways to do it, both built on Core LLM Wiki:
 
-| | **Local: Curated Thoughts** | **Cloud: SynapseTree** |
+| | **Local: Curated Thoughts** | **Cloud: hosted cloud service** |
 |---|---|---|
 | Where memory lives | `brain.db` on your machine | [synapsetree.dev](https://synapsetree.dev) |
 | Status | **Available now** | **Available now** (`@equationalapplications/mcp-server`) |
@@ -44,8 +44,8 @@ There are two ways to do it, both built on Core LLM Wiki:
     See its [MCP Agent Server docs](https://github.com/equationalapplications/curated-thoughts#-mcp-agent-server).
     </Aside>
   </TabItem>
-  <TabItem label="Cloud · SynapseTree">
-    Install the [SynapseTree MCP server](/expo-llm-wiki/packages/mcp-server/) (Node 20+):
+  <TabItem label="Cloud · hosted service">
+    Install the [hosted-cloud MCP server](/expo-llm-wiki/packages/mcp-server/) (Node 20+):
 
     ```bash
     npm install -g @equationalapplications/mcp-server
