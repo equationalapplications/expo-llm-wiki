@@ -2,7 +2,7 @@
 
 One checkbox per plan task. Tick only after that task's verification passes.
 
-- [ ] E1 — report shape + strategy introspection (`EraseReport.ftsOrphansCleared`, `SearchService` getters)
+- [x] E1 — report shape + strategy introspection (`EraseReport.ftsOrphansCleared`, `SearchService` getters) — `86cc97c9`, controller-verified 2026-11-18
 - [ ] E2 — `_eraseClearFtsOrphans` implementation + `_eraseDrainPassages` rewire (D1–D4)
 - [ ] E3 — Path C tests + F-MAJOR-1 flip + never-FTS clean (AC9)
 - [ ] E4 — Path A tests + probe/clear honesty branches (AC1, AC4–AC6)
