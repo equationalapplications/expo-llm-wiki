@@ -43,6 +43,8 @@ export class TemporalService {
     if (repl.superseded_by != null) throw new WikiSupersedeError('already_superseded');
     const { predecessors } = await this.entryRepo.findSupersessionChainIds(entityId, oldId, HISTORY_MAX_DEPTH, tx);
     if (predecessors.some((r) => r.id === newId)) throw new WikiSupersedeError('cycle');
+    const start = old.valid_from ?? old.created_at;
+    if (t <= start) throw new WikiSupersedeError('invalid_interval');
 
     await this.entryRepo.setTemporal(oldId, entityId, { valid_to: t, superseded_by: newId, superseded_at: now }, tx);
     if (repl.valid_from == null) {

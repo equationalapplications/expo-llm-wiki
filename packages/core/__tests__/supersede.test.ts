@@ -47,9 +47,9 @@ describe('supersede()', () => {
     await insert('a');
     await insert('b');
     await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 42 WHERE id = 'b'`);
-    await wiki.supersede('e1', 'a', 'b', { validFrom: 99 });
+    await wiki.supersede('e1', 'a', 'b', { validFrom: 200 });
     expect((await temporal('b')).valid_from).toBe(42);
-    expect((await temporal('a')).valid_to).toBe(99);
+    expect((await temporal('a')).valid_to).toBe(200);
   });
 
   it.each([
