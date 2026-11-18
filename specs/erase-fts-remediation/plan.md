@@ -466,6 +466,15 @@ child report. Do NOT force the fixture.
   it('AC2: after Path A the next capable open rebuilds via resetAndRearm and serves queries', async () => {
     const t = await make();
     vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    // Module-capable builds protect a LIVE vtab's shadow tables, and the probe
+    // only throws no-such-module when the module is absent (in which case the
+    // shadows are plain tables) — so mirror the other Path A fixtures: drop the
+    // vtab, create plain-table stand-ins with canary text, keep the entries row.
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-stale');`);
+    }
     await t.raw.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES ('r0', 'e1', 'cedar', 'body', '[]', 1, 1)`);
     const meta = new MetadataRepository(t.raw, P);
     const realGet = t.raw.getFirstAsync.bind(t.raw);
