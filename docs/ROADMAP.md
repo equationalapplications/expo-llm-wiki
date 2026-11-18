@@ -24,7 +24,7 @@
 **Steps are ordered by gates, not by calendar.** Each step names the gate
 that opens it. A step with an open gate is not late; it is waiting.
 
-**Each step carries a promise class**, the same three the SynapseTree and
+**Each step carries a promise class**, the same three the hosted-service and
 Curated Journal roadmaps use:
 
 - **BINDING** — ruled: it will be built, in this order.
@@ -164,7 +164,7 @@ Curated Thoughts already keeps its own source text, so the first three
 steps deliver without it.
 
 *Who follows:* the hosts that hand documents to the engine each carry a
-roadmap entry of their own: SynapseTree, clanker and Curated Journal.
+roadmap entry of their own: the hosted cloud service, clanker and Curated Journal.
 Curated Thoughts needs no change.
 
 ## Exploratory — named so nobody builds them by accident

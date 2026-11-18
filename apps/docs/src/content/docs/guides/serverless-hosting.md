@@ -7,8 +7,8 @@ sidebar:
 
 A common hosted pattern is **one SQLite file per tenant**, kept in object storage (S3, GCS, R2).
 Each request pulls the file, runs the engine in-process, and pushes the file back. This is how
-[SynapseTree](https://synapsetree.dev), the hosted Core LLM Wiki service, runs. If you'd rather not run
-this yourself, SynapseTree provides it as a service.
+[The hosted service](https://synapsetree.dev) runs the engine for you. If you'd rather not run
+this yourself, it is provided as a service.
 
 ## Recommended config
 
@@ -68,5 +68,3 @@ try {
 - **Never persist mid-maintenance** in `'auto'` mode. Use `'deferred'` (the default), or call `drain()` first.
 - **Entity IDs come from your auth layer**, never from request input you haven't checked.
 
-The full SynapseTree write-up, covering costs, the MCP surface, and the `entity_id` scheme, is in
-[`docs/synapsetree-integration.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/synapsetree-integration.md).
