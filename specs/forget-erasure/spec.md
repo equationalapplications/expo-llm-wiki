@@ -15,6 +15,10 @@ erase() throughout (H). INTENT alignment: rule 5 already names every leaving pat
 rule-5 amendment is needed; the GC alternative is rejected, not deferred.**  
 **Issue:** equationalapplications/expo-llm-wiki#401 · **Investigation:** [`investigation.md`](./investigation.md) (rev 12, converged)
 
+**Post-implementation note (2026-11-18):** `erase_orphaned_fts_content` was retired by
+specs/erase-fts-remediation (PR #411) — erase clears the orphaned surfaces itself; see
+that spec's D3.
+
 ## Problem
 
 A `forget()` call does not erase. Facts are soft-deleted and hard-delete only through

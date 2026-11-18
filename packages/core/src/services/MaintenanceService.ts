@@ -240,7 +240,7 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  /** FTS5 orphan surfaces cleared by the step-3 remediation (specs/erase-fts-remediation D3). Each name is pushed only after that surface fully clears. */
+  /** FTS5 orphan surfaces cleared (Path A/C) or dropped (Path B) by the step-3 remediation (specs/erase-fts-remediation D3). Names are recorded only after the owning transaction commits. */
   ftsOrphansCleared: string[];
   failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | 'fts_orphan_clear' | null;
   /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */

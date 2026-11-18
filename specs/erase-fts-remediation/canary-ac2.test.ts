@@ -72,6 +72,11 @@ describe.skipIf(!hasModuleLessCli())('AC2 canary — module-less erase then capa
       await wiki.remember('e1', { title: 'Canary fact', body: `secret ${CANARY} token`, tags: [] });
       await wiki.remember('e1', { title: 'Keeper', body: 'stays searchable cedar', tags: [] });
       await wiki.storeSource('e1', { sourceRef: 's1', sourceHash: 'b5c1f2d3a4b5c6d7e8f90a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d', text: `${CANARY} passage text` } as never);
+      // Retired-table scenario: a REAL retired vtab (canary rows), listed in metadata —
+      // the state a prior module-less erase leaves behind for later reclaim.
+      await db.execAsync(`CREATE VIRTUAL TABLE ${P}entries_fts_retired_1 USING fts5(id UNINDEXED, entity_id UNINDEXED, title, body, tags, tokenize='porter unicode61')`);
+      await db.execAsync(`INSERT INTO ${P}entries_fts_retired_1 VALUES ('rr1', 'e1', 'retired canary', '${CANARY} retired text', '[]')`);
+      await db.execAsync(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('fts5_retired_tables', '[\"${P}entries_fts_retired_1\"]');`);
       const before = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts`);
       expect(before!.n).toBeGreaterThan(0);
       await db.closeAsync();
@@ -106,6 +111,13 @@ describe.skipIf(!hasModuleLessCli())('AC2 canary — module-less erase then capa
           if (sfx === '_data') expect(n, name).toBe('2');
           else expect(n, name).toBe('0');
         }
+      }
+      // Retired-table clear with the preserve rule (_eraseReclaimRetired's module-less branch):
+      // text rows go, %_data ids 1/10 and %_config stay — the retired vtab must stay READABLE.
+      const retired = `${P}entries_fts_retired_1`;
+      for (const sfx of shadows) {
+        if (sfx === '_config') continue;
+        must(`DELETE FROM ${retired}${sfx}${sfx === '_data' ? ' WHERE id NOT IN (1, 10)' : ''};`);
       }
       must(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('fts5_index_state', 'detached');`);
       expect(sh(`SELECT value FROM ${P}meta WHERE key='fts5_index_state';`).trim()).toBe('detached');
@@ -146,6 +158,12 @@ describe.skipIf(!hasModuleLessCli())('AC2 canary — module-less erase then capa
       await strat.drainPassages();
       const freshPassages = await strat.searchPassages('quokka', { entityIds: ['e1'], limit: 10 });
       expect(freshPassages.length).toBeGreaterThan(0);
+      // Retired-table reclaim on the capable runtime (the canary's retired-table proof):
+      // with the preserve rule the retired vtab is READABLE, so its reclaim DROP
+      // must succeed instead of failing with invalid fts5 file format.
+      await strat.reclaimRetiredToCompletion();
+      const retiredLeft = await db2.getFirstAsync(`SELECT name FROM sqlite_master WHERE name='${P}entries_fts_retired_1'`);
+      expect(retiredLeft).toBeNull();
     } finally {
       for (const d of opened) await d.closeAsync().catch(() => undefined);
       rmSync(dir, { recursive: true, force: true });
