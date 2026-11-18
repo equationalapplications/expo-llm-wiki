@@ -1,6 +1,6 @@
 # supersede(): reject an inverted or empty validity interval (lower-bound check)
 
-**Status: Reviewed — owner ratified the design 2026-11-18 (msg `1572645718122954859`); plan.md + LEDGER.md on the PR**  
+**Status: Implemented — owner ratified the design 2026-11-18 (msg `1572645718122954859`); shipped on this PR (supersede guard + tests + docs). Line cites below are pre-fix positions.**  
 **Anchor:** issue #414, filed from `specs/expire/spec.md` D1's note. The expire
 lane deliberately deferred this fix to its own issue ("its own issue at
 implementation time"). This spec is that issue's lane.  
