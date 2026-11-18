@@ -38,7 +38,8 @@ export class ImportExportService {
     private prefix?: string,
   ) {}
 
-  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
+  async exportDump(entityIds?: string[], opts?: { includeForgotten?: boolean }): Promise<MemoryDump> {
+    const includeForgotten = opts?.includeForgotten === true;
     let ids: string[];
     if (entityIds && entityIds.length > 0) {
       ids = Array.from(new Set(entityIds));
@@ -61,7 +62,7 @@ export class ImportExportService {
       const batchResults = await Promise.all(
         batch.map(
           async (id): Promise<[string, MemoryDumpEntity]> => {
-            const bundle = await this.getFullBundle(id, { includeBlobs: true });
+            const bundle = await this.getFullBundle(id, { includeBlobs: true, includeForgotten });
             const storedSources = await this.exportStoredSources(id);
             return [id, storedSources.length > 0 ? { ...bundle, storedSources } : bundle];
           },
@@ -191,15 +192,16 @@ export class ImportExportService {
 
   async getFullBundle(
     entityId: string,
-    opts?: { maxEvents?: number; includeBlobs?: boolean },
+    opts?: { maxEvents?: number; includeBlobs?: boolean; includeForgotten?: boolean },
   ): Promise<MemoryBundle> {
+    const incl = opts?.includeForgotten ? { includeDeleted: true } : undefined;
     // Read first: the watermark must not be newer than the events exported with it.
     const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
     const [factsRaw, tasks, events, edges, summaryValue] = await Promise.all([
       opts?.includeBlobs
-        ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
-        : this.entryRepo.findAllByEntityId(entityId),
-      this.taskRepo.findAllByEntityId(entityId),
+        ? this.entryRepo.findAllByEntityIdWithBlobs(entityId, undefined, incl)
+        : this.entryRepo.findAllByEntityId(entityId, undefined, incl),
+      this.taskRepo.findAllByEntityId(entityId, undefined, incl),
       this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
       this.edgeRepo.getByEntityId(entityId),
       this.metadataRepo.getMeta(entitySummaryMetaKey(entityId)),
@@ -251,12 +253,19 @@ export class ImportExportService {
     const skippedSources: ImportDumpResult['skippedSources'] = [];
     const refusalDiagnostics: Parameters<typeof emitDiagnostic>[1][] = [];
     const upsertedFactIds = new Set<string>();
+    // Ids whose FINAL accepted row is live — the embed loop's eligibility set.
+    // `upsertedFactIds` alone is not enough: a dump can carry [tombstone, live]
+    // for one id, and the rejected live row must not have its text sent to
+    // llmProvider.embed just because an earlier row for the id was accepted.
+    const liveEmbedFactIds = new Set<string>();
     const upsertedDeletedFactIds = new Set<string>();
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
     const preservedBlobDims = new Set<number>();
     const softDeletedFactIds: string[] = [];
-    const clippedTextByFactId = new Map<string, { title: string; body: string }>();
+    const softDeletedTaskIds: string[] = [];
+    const clippedTextByFactId = new Map<string, { title: string; body: string; tags: string[] }>();
     let clampedEvents = 0;
+    let tombstoneSkipped = 0;
     const restamped = { behind_watermark: 0, invalid: 0 };
 
     await this.db.withTransactionAsync(async (tx) => {
@@ -268,8 +277,9 @@ export class ImportExportService {
           tx,
           false,
         );
-        softDeletedFactIds.push(...deletedLiveFactIds);
+        for (const fid of deletedLiveFactIds) softDeletedFactIds.push(fid);
         await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+        for (const t of await this.taskRepo.findAllByEntityId(entityId, tx)) softDeletedTaskIds.push(t.id);
         await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
         await this.edgeRepo.bulkDeleteByEntityId(entityId, tx);
         await this.metadataRepo.deleteCheckpoint(entityId, tx);
@@ -281,10 +291,12 @@ export class ImportExportService {
         await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
       }
 
+      const wipedByThisImport = new Set(softDeletedFactIds);
+      const wipedTasksByThisImport = new Set(softDeletedTaskIds);
       const factIds = bundle.facts.map((fact) => fact.id);
       const existingFactsById = new Map<
         string,
-        { id: string; entity_id: string; updated_at: number }
+        { id: string; entity_id: string; updated_at: number; deleted_at?: number | null }
       >();
       const existingFacts = await this.entryRepo.findExistingMetadataByIds(
         factIds,
@@ -378,12 +390,29 @@ export class ImportExportService {
             );
             continue;
           }
-          if (merge && safeUpdatedAt <= existing.updated_at) continue;
+          // Spec §8 tombstone-wins: forget beats re-ingest. A local tombstone is
+          // never resurrected by a live dump row, and a dump tombstone applies
+          // even when the merge recency check would otherwise skip the row.
+          // (Rows the replace-import wipe above just tombstoned are not forgets.)
+          // Comparisons are `== null`/`!= null`, never truthiness: a crafted
+          // `deleted_at: 0` is a tombstone, not a live row.
+          if (
+            existing.deleted_at != null &&
+            fact.deleted_at == null &&
+            !wipedByThisImport.has(fact.id)
+          ) {
+            tombstoneSkipped++;
+            continue;
+          }
+          if (merge && safeUpdatedAt <= existing.updated_at && fact.deleted_at == null) continue;
         }
 
         const safeTitle = clip(String(fact.title ?? ''), IMPORT_TITLE_MAX);
         const safeBody = clip(String(fact.body ?? ''), IMPORT_BODY_MAX);
-        clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody });
+        // Tags are part of the embedded text, so the ACCEPTED row's tags are
+        // captured here — a later rejected row's tags must never ride along.
+        const safeTags = Array.isArray(fact.tags) ? fact.tags : [];
+        clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody, tags: safeTags });
 
         // Normalize source_ref using the same rules as ingestDocument and the
         // startup migration. Persisting the raw value would let a later re-ingest
@@ -484,22 +513,33 @@ export class ImportExportService {
 
         if (blobData != null) {
           factsWithPreservedBlob.set(fact.id, blobData);
-          if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
+          if (fact.deleted_at == null) preservedBlobDims.add(blobData.byteLength / 4);
         }
 
         existingFactsById.set(fact.id, {
           id: fact.id,
           entity_id: entityId,
           updated_at: safeUpdatedAt,
+          deleted_at: fact.deleted_at ?? null,
         });
+        // Consume the replace-wipe exemption on the first accepted row for this
+        // id: after an explicit dump row is stored, later rows for the same id
+        // face the tombstone guard like any other row — a dump carrying
+        // [tombstone, live] for a wiped id must not resurrect via the exemption.
+        wipedByThisImport.delete(fact.id);
         upsertedFactIds.add(fact.id);
-        if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
+        if (fact.deleted_at != null) {
+          upsertedDeletedFactIds.add(fact.id);
+          liveEmbedFactIds.delete(fact.id);
+        } else {
+          liveEmbedFactIds.add(fact.id);
+        }
       }
 
       const taskIds = bundle.tasks.map((task) => task.id);
       const existingTasksById = new Map<
         string,
-        { id: string; entity_id: string; updated_at: number }
+        { id: string; entity_id: string; updated_at: number; deleted_at?: number | null }
       >();
       const existingTasks = await this.taskRepo.findExistingMetadataByIds(
         taskIds,
@@ -526,7 +566,20 @@ export class ImportExportService {
             );
             continue;
           }
-          if (merge && safeUpdatedAt <= existing.updated_at) continue;
+          // Spec §8 tombstone-wins for tasks: mirrors the fact branch above.
+          // A local tombstone is never resurrected by a live dump task, and a
+          // dump tombstone applies even when the merge recency check would
+          // otherwise skip the row. (Rows the replace-import wipe above just
+          // tombstoned are not forgets.)
+          if (
+            existing.deleted_at != null &&
+            task.deleted_at == null &&
+            !wipedTasksByThisImport.has(task.id)
+          ) {
+            tombstoneSkipped++;
+            continue;
+          }
+          if (merge && safeUpdatedAt <= existing.updated_at && task.deleted_at == null) continue;
         }
 
         await this.taskRepo.upsertForImport(
@@ -562,7 +615,12 @@ export class ImportExportService {
           id: task.id,
           entity_id: entityId,
           updated_at: safeUpdatedAt,
+          deleted_at: task.deleted_at ?? null,
         });
+        // Consume the replace-wipe exemption after an accepted row (mirrors the
+        // fact branch above): an explicit dump tombstone must not be revocable
+        // by its own later live row through the exemption.
+        wipedTasksByThisImport.delete(task.id);
       }
 
       // created_at means "when stored". Three kinds of value break that: a
@@ -623,6 +681,12 @@ export class ImportExportService {
     // Committed: only now may the host hear about refusals (a failed commit emits nothing).
     for (const d of refusalDiagnostics) emitDiagnostic(this.options, d);
 
+    if (tombstoneSkipped > 0) {
+      emitDiagnostic(this.options, {
+        code: 'import_tombstone_skipped', operation: 'importDump', trigger: 'call', entityId,
+        detail: { count: tombstoneSkipped },
+      });
+    }
     if (clampedEvents > 0) {
       emitDiagnostic(this.options, {
         code: 'event_created_at_clamped', operation: 'importDump', trigger: 'call', entityId,
@@ -650,36 +714,33 @@ export class ImportExportService {
       await this.searchService.sync(entityId, { ids: [...new Set([...upsertedFactIds, ...softDeletedFactIds])] });
     }
 
-    for (const fact of bundle.facts) {
-      if (
-        !fact.deleted_at &&
-        upsertedFactIds.has(fact.id) &&
-        !factsWithPreservedBlob.has(fact.id)
-      ) {
-        const clipped = clippedTextByFactId.get(fact.id);
+    // One embed per UNIQUE live id, built from the ACCEPTED row's clipped
+    // text and tags. Iterating bundle.facts instead would embed once per dump
+    // row — a duplicate call for the same id, and a rejected row's tags could
+    // ride along on the accepted row's text.
+    for (const id of liveEmbedFactIds) {
+      if (!factsWithPreservedBlob.has(id)) {
+        const clipped = clippedTextByFactId.get(id);
         const embedded = await this.embeddingService.embedFact({
-          id: fact.id,
+          id,
           entity_id: entityId,
-          title: clipped?.title ?? fact.title,
-          body: clipped?.body ?? fact.body,
-          tags:
-            Array.isArray(fact.tags) || typeof fact.tags === 'string'
-              ? fact.tags
-              : [],
+          title: clipped?.title ?? '',
+          body: clipped?.body ?? '',
+          tags: clipped?.tags ?? [],
         }, { operation: 'importDump', trigger: 'call' });
         // Under forceDeleteIgnoreRankerHook the index is decommissioned: no removal calls.
         if (!embedded && this.options.forceDeleteIgnoreRankerHook !== true) {
           try {
-            await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
+            await this.embeddingService.notifyEmbeddingPersisted(entityId, id, null);
           } catch (hookErr) {
             console.warn(
-              `[WikiMemory] onEmbeddingPersisted hook failed for unembedded fact ${fact.id}:`,
+              `[WikiMemory] onEmbeddingPersisted hook failed for unembedded fact ${id}:`,
               hookErr,
             );
             this.embeddingService.reportHookFailed(
               { operation: 'importDump', trigger: 'call' },
               entityId,
-              fact.id,
+              id,
             );
           }
         }
@@ -688,7 +749,7 @@ export class ImportExportService {
 
     for (const fact of bundle.facts) {
       const blobData = factsWithPreservedBlob.get(fact.id);
-      if (blobData && !fact.deleted_at && upsertedFactIds.has(fact.id)) {
+      if (blobData && fact.deleted_at == null && liveEmbedFactIds.has(fact.id)) {
         try {
           const float32Vector = new Float32Array(
             blobData.buffer,

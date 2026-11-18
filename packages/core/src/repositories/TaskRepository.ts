@@ -77,18 +77,23 @@ export class TaskRepository extends BaseRepository {
   async findExistingMetadataByIds(
     ids: readonly string[],
     tx?: SQLiteAdapter,
-  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }>> {
     const executor = this.getExecutor(tx);
-    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    const rows: Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }> = [];
     const chunkSize = 500;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       const chunkRows = await executor.getAllAsync<any>(
-        `SELECT id, entity_id, updated_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+        `SELECT id, entity_id, updated_at, deleted_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
         chunk,
       );
-      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+      rows.push(...chunkRows.map((row) => ({
+        id: row.id,
+        entity_id: row.entity_id,
+        updated_at: Number(row.updated_at),
+        deleted_at: row.deleted_at == null ? null : Number(row.deleted_at),
+      })));
     }
     return rows;
   }
@@ -278,10 +283,11 @@ export class TaskRepository extends BaseRepository {
    * Fetch all non-deleted tasks for an entity, ordered by priority DESC, created_at ASC.
    * Used by _getFullBundle().
    */
-  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiTask[]> {
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiTask[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+      `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ?${live} ORDER BY priority DESC, created_at ASC`,
       [entityId],
     );
     return rows.map(mapRowToTask);
@@ -295,17 +301,23 @@ export class TaskRepository extends BaseRepository {
     entityId: string,
     cutoff: number,
     tx: SQLiteAdapter,
+    opts?: { noCutoff?: boolean },
   ): Promise<number> {
     const executor = this.getExecutor(tx);
+    // noCutoff (erase): every soft-deleted row, no timestamp predicate — a
+    // nanosecond-epoch or TEXT-valued deleted_at never matches `<= cutoff`.
+    const cutoffPredicate = opts?.noCutoff ? '' : ' AND deleted_at <= ?';
+    const selectArgs: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     const rowsToDelete = await executor.getAllAsync<{ id: string; deleted_at: number }>(
-      `SELECT id, deleted_at FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+      `SELECT id, deleted_at FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      selectArgs,
     );
     if (rowsToDelete.length === 0) return 0;
 
+    const deleteArgs: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     const result = await executor.runAsync(
-      `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+      `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      deleteArgs,
     );
 
     for (const row of rowsToDelete) {

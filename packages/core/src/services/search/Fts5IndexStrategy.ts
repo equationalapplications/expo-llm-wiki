@@ -406,6 +406,60 @@ export class Fts5IndexStrategy implements IndexStrategy {
     }
   }
 
+  /** Listed retired table names (erase step 4 / module-less fallback). */
+  async retiredTables(): Promise<string[]> {
+    return this.retiredList();
+  }
+
+  /**
+   * Erase step 4: reclaim every retired table to completion (DROP + delist), no
+   * deadline. Failures surface (unlike the best-effort quantum path); the
+   * SQLITE_CORRUPT_VTAB hollowed-shell exit inside reclaimRetired is designed.
+   */
+  async reclaimRetiredToCompletion(): Promise<void> {
+    await this.reclaimRetired(Number.POSITIVE_INFINITY);
+  }
+
+  /**
+   * Erase step 3: surfaced passage drain, no deadline. Fails only when passage
+   * init was disabled AND the ledger still has rows; otherwise warns and continues.
+   */
+  async drainPassagesStrict(): Promise<void> {
+    if (this.passagesDisabled) {
+      const p = this.prefix;
+      const pending = (await this.metadataRepo.tableExists(`${p}source_passages_fts_pending`))
+        && (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}source_passages_fts_pending LIMIT 1`)) !== null;
+      if (pending) throw new Error('passage index disabled with pending ledger rows');
+      console.warn('[WikiMemory] erase: passage index disabled; nothing pending, continuing');
+      return;
+    }
+    await this.drainPassages({});
+  }
+
+  /**
+   * Erase step 3 (entries side): drain the trigger-fed `fts_pending` ledger store-wide to
+   * empty, no deadline, errors surfaced; throws if rows remain afterwards.
+   */
+  async drainEntriesLedgerStrict(): Promise<void> {
+    while (await this.drainLedgerChunk());
+    const left = await this.db.getFirstAsync(`SELECT 1 AS x FROM ${this.prefix}fts_pending LIMIT 1`);
+    if (left !== null && left !== undefined) throw new Error('entries FTS ledger still has pending rows after drain');
+  }
+
+  /** Erase step 7: FTS 'optimize' on each FTS table that exists. */
+  async optimizeFts(): Promise<void> {
+    const p = this.prefix;
+    for (const t of [`${p}entries_fts`, `${p}source_passages_fts`]) {
+      if (!(await this.metadataRepo.tableExists(t))) continue;
+      await this.db.runAsync(`INSERT INTO ${t}(${t}) VALUES('optimize')`);
+    }
+  }
+
+  /** `erase({ rebuild: true })` surface: retire + recreate the entries index and re-arm the rebuild. */
+  async rebuildForErase(): Promise<void> {
+    await this.resetAndRearm();
+  }
+
   /** Bounded reclamation steps, each its own tx, until the deadline or nothing is retired. */
   private async reclaimRetired(deadline: number): Promise<void> {
     while (monotonicNow() < deadline) {

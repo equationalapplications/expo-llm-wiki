@@ -54,6 +54,7 @@ interface WikiEvent {
 ```ts
 interface MemoryBundle {
   facts: WikiFact[];
+  sources?: SourcePassage[];           // present only when read() got the sources option
   tasks: WikiTask[];
   events: WikiEvent[];
   edges?: WikiEdge[];
@@ -69,7 +70,15 @@ interface MemoryBundle {
 }
 ```
 
-`librarian_watermark` is the source store's librarian position, set by `exportDump()` and `getMemoryBundle()` when the entity has one. A merge import trusts events at or before it as already consolidated at the source and keeps their dates.
+`librarian_watermark` is the exporting database's librarian position, set by `exportDump()` and
+`getMemoryBundle()` when the entity has one. A merge import trusts events at or before it as
+already consolidated at the source and keeps their dates. Events dated *after* the watermark
+are not trusted that way: if such an event's date would sort behind the local librarian
+position, the import re-dates it just after the current time — or just after the librarian
+position, if that is later — keeping its order, and reports `event_created_at_restamped`.
+(An unusable date is re-dated the same way regardless of the watermark, in merge and replace
+imports alike.) **The watermark is not the source text store** —
+it tracks the librarian, not stored text.
 
 ## `WikiEdge`
 
@@ -98,6 +107,7 @@ type OntologyMode = 'off' | 'strict' | 'emergent';
 
 ```ts
 interface ReadOptions {
+  sources?: { query: string; maxPassages?: number; charBudget?: number }; // stored-source passages
   maxResults?: number;
   preFilterLimit?: number | null;   // null disables a config-level value
   hybridWeight?: number;
@@ -120,4 +130,58 @@ interface ReadOptions {
   truncated: boolean;       // a hard split happened
   parseFailures?: ChunkFailure[]; // present when failedChunks > 0
 }
+```
+
+## Source text store
+
+Added in 9.2.0. See [Source text store](/expo-llm-wiki/guides/source-store/).
+
+```ts
+type StoreSourceResult =
+  | { stored: true; sourceRef: string; sourceHash: string;
+      charCount: number; passageCount: number; storedAt: number }
+  | { stored: false; diagnostics: WikiDiagnostic[] };
+
+interface StoredSource {          // getStoredSource()
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  charCount: number;
+  storedAt: number;
+}
+
+interface StoredSourceSummary {   // one entry of listStoredSources()
+  sourceRef: string;
+  sourceHash: string;
+  charCount: number;
+  passageCount: number;
+  storedAt: number;
+}
+
+interface SourcePassage {         // one windowed passage in a read() sources group
+  entityId: string;
+  sourceRef: string;
+  sourceHash: string;
+  seq: number;
+  startOffset: number;            // UTF-16 offset into the stored text, inclusive
+  endOffset: number;              // UTF-16 offset, exclusive
+  truncated: boolean;             // the window was cut from a larger passage
+  text: string;
+}
+
+interface StoredSourceDump {      // one stored source in a MemoryDump
+  sourceRef: string;
+  sourceHash: string;
+  text: string;
+  textHash: string;
+  charCount: number;
+  storedAt: number;
+  passages: Array<{ seq: number; startOffset: number; endOffset: number }>; // fidelity only
+}
+
+interface ImportDumpResult {
+  skippedSources: Array<{ sourceRef: string; code: WikiDiagnosticCode }>;
+}
+
+type MemoryDumpEntity = MemoryBundle & { storedSources?: StoredSourceDump[] };
 ```

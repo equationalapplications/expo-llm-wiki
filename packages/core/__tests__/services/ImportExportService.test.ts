@@ -119,8 +119,8 @@ describe('ImportExportService', () => {
       await importExportService.exportDump();
 
       expect(mockMetadataRepo.getDistinctEntityIds).toHaveBeenCalledTimes(1);
-      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_1');
-      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_2');
+      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_1', undefined, undefined);
+      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_2', undefined, undefined);
     });
   });
 

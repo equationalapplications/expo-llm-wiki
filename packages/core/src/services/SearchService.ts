@@ -358,6 +358,65 @@ export class SearchService {
     return work;
   }
 
+  /** Run `fn` on the sync chain; the caller sees its rejection, the chain never rejects. */
+  private chainSurfaced<T>(fn: () => Promise<T>): Promise<T> {
+    const work = this.syncChain.then(fn);
+    this.syncChain = work.then(() => undefined, () => undefined);
+    return work;
+  }
+
+  /** True when the active strategy has both strict erase drains (FTS5); false for MiniSearch / Unavailable. */
+  hasStrictDrain(): boolean {
+    const s = this.indexStrategy as unknown as { drainPassagesStrict?: unknown; drainEntriesLedgerStrict?: unknown };
+    return typeof s.drainPassagesStrict === 'function' && typeof s.drainEntriesLedgerStrict === 'function';
+  }
+
+  /** Erase step 3: chained passage drain, no deadline, errors surfaced. */
+  drainPassagesSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { drainPassagesStrict?: () => Promise<void> };
+    if (!s.drainPassagesStrict) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.drainPassagesStrict!());
+  }
+
+  /** Erase step 4: listed retired FTS tables (empty for strategies without any). */
+  async retiredTables(): Promise<string[]> {
+    const s = this.indexStrategy as unknown as { retiredTables?: () => Promise<string[]> };
+    return s.retiredTables ? s.retiredTables() : [];
+  }
+
+  /** True when the active strategy can DROP retired tables (FTS5); false for MiniSearch / Unavailable. */
+  canReclaimRetired(): boolean {
+    return typeof (this.indexStrategy as unknown as { reclaimRetiredToCompletion?: unknown }).reclaimRetiredToCompletion === 'function';
+  }
+
+  /** Erase step 3: store-wide entries-side fts_pending drain on the sync chain, no deadline, errors surfaced. */
+  drainEntriesLedgerSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { drainEntriesLedgerStrict?: () => Promise<void> };
+    if (!s.drainEntriesLedgerStrict) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.drainEntriesLedgerStrict!());
+  }
+
+  /** Erase step 4: reclaim retired tables to completion; errors surfaced. */
+  reclaimRetiredSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { reclaimRetiredToCompletion?: () => Promise<void> };
+    if (!s.reclaimRetiredToCompletion) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.reclaimRetiredToCompletion!());
+  }
+
+  /** Erase step 7: FTS optimize on every FTS table that exists. */
+  optimizeSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { optimizeFts?: () => Promise<void> };
+    if (!s.optimizeFts) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.optimizeFts!());
+  }
+
+  /** `erase({ rebuild: true })` wiring point; the orchestration (T6) calls it. */
+  rebuildSurfaced(): Promise<void> {
+    const s = this.indexStrategy as unknown as { rebuildForErase?: () => Promise<void> };
+    if (!s.rebuildForErase) return this.chainSurfaced(async () => {});
+    return this.chainSurfaced(() => s.rebuildForErase!());
+  }
+
   /**
    * Stored-source passage search for ONE entity (spec source-store section 7:
    * ranking and caps are per entity). Rides the active strategy; a strategy

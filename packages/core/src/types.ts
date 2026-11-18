@@ -884,6 +884,15 @@ export type WikiDiagnosticCode =
   | 'resolve_failed'
   | 'read_budget'
   | 'event_retention_held'
+  | 'prune_checkpoint_incomplete'
+  | 'erase_secure_delete_off'
+  | 'erase_entity_skipped'
+  | 'erase_retired_vtab_undroppable'
+  | 'erase_retired_remaining'
+  | 'erase_tombstones_remaining'
+  | 'erase_retired_read_failed'
+  | 'erase_registry_sweep_skipped'
+  | 'import_tombstone_skipped'
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
   | 'external_deletion_pending'
@@ -900,7 +909,7 @@ export type WikiDiagnosticCode =
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion' | 'sourceStore' | 'erase';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -949,6 +958,8 @@ export interface WikiDiagnosticDetail {
   guidanceLength?: number;
   /** guidance_too_long only: which configured value was refused. */
   guidanceSource?: 'per_entity' | 'default';
+  /** `erase_retired_remaining` only: retired FTS table names still present after reclamation. */
+  tables?: string[];
 }
 
 export interface WikiDiagnostic {
@@ -1205,6 +1216,10 @@ export interface EntityStatus {
  * and `'forget'` were added in v3.0. `'ontologyBackfill'` was added afterward.
  * Exhaustive `switch` / narrowing on this type must be updated (or given a
  * `default` arm) to compile without errors.
+ *
+ * `'erase'` was added by a MINOR release (forget-erasure spec §2, ruling F).
+ * Exhaustive switches over this type must add a `default` arm; widening this
+ * union rides the MINOR by policy and does not recur as a breaking change.
  */
 export type WikiBusyOperation =
   | 'ingest'
@@ -1215,7 +1230,8 @@ export type WikiBusyOperation =
   | 'import'
   | 'forget'
   | 'ontologyBackfill'
-  | 'store';
+  | 'store'
+  | 'erase';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.
@@ -1390,6 +1406,14 @@ export class WikiTransactionError extends Error {
 /** Selectors for {@link WikiMemory.forget}. `clearAll` excludes the other selectors. */
 export interface ForgetParams {
   entryId?: string;
+  /**
+   * With `entryId` only: also forget the entry's supersession chain (every
+   * predecessor and successor reached by walking `superseded_by` links, capped
+   * at 100 per direction). The walk is NOT the connected component: with
+   * fan-in A→C←B, forgetting A reaches C but not B. The forward walk deletes
+   * the live current fact. Does not compose with other selectors.
+   */
+  includeChain?: boolean;
   taskId?: string;
   sourceRef?: string;
   sourceHash?: string;
@@ -1407,6 +1431,12 @@ export interface ForgetParams {
 export interface ForgetResult {
   deleted: { entries: number; tasks: number; events?: number };
   metadataReset?: boolean;
+  /** With `includeChain`: the chain ids forgotten alongside `entryId` (excludes `entryId`). */
+  chainEntryIds?: string[];
+  /** With `includeChain`: true when the walk hit the depth cap and the chain was cut short. */
+  truncated?: boolean;
+  /** Present with `truncated`: the depth-cap notice. */
+  notice?: string;
 }
 
 /**

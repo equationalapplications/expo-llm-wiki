@@ -26,6 +26,11 @@ export type LibrarianWatermark = { at: number; id: string };
  */
 export const START_OF_LOG_WATERMARK: LibrarianWatermark = Object.freeze({ at: Number.MIN_SAFE_INTEGER, id: '' }) as LibrarianWatermark;
 
+/** A `wal_checkpoint(TRUNCATE)` that did not fully drain the WAL (erase step 5/8). */
+export class CheckpointIncompleteError extends Error {
+  readonly code = 'erase_checkpoint_incomplete';
+}
+
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 
@@ -169,9 +174,27 @@ export class MetadataRepository extends BaseRepository {
     return row?.sql ?? null;
   }
 
+  /**
+   * `PRAGMA wal_checkpoint(TRUNCATE)`, verified: `busy !== 0` or
+   * `log !== checkpointed` means frames survive in the WAL, so a deleted
+   * row's bytes may still be on disk. Non-WAL reports (0,-1,-1) = complete.
+   */
+  async checkpointTruncateVerified(): Promise<void> {
+    const row = await this.db.getFirstAsync<{ busy: number; log: number; checkpointed: number }>(
+      `PRAGMA wal_checkpoint(TRUNCATE)`,
+    );
+    // SQLite always returns a row; an adapter that returns none has nothing to verify.
+    if (row && (row.busy !== 0 || row.log !== row.checkpointed)) {
+      throw new CheckpointIncompleteError(
+        `wal_checkpoint(TRUNCATE) incomplete (busy=${row?.busy}, log=${row?.log}, checkpointed=${row?.checkpointed})`,
+      );
+    }
+  }
+
   async vacuum(): Promise<void> {
-    await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
+    await this.checkpointTruncateVerified();
     await this.db.execAsync(`VACUUM`);
+    await this.checkpointTruncateVerified();
   }
 
   /**
@@ -182,9 +205,40 @@ export class MetadataRepository extends BaseRepository {
    * soft-deleted, so the host's maintenance sweep can visit such
    * "decommissioned-scope" namespaces and reap the soft-deleted rows. Sorting
    * is `entity_id COLLATE BINARY` for stable, locale-independent ordering.
+   *
+   * With `opts.softDeletedAtOrBefore` the walk is narrowed to entities holding
+   * at least one soft-deleted entry or task with `deleted_at` at or before
+   * that cutoff (erase's hard-delete walk, forget-erasure spec §2). Without
+   * the option the host-facing semantics above are unchanged.
    */
-  async getDistinctEntityIds(tx?: SQLiteAdapter): Promise<string[]> {
+  async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number; softDeletedAll?: boolean }): Promise<string[]> {
     const executor = this.getExecutor(tx);
+    if (opts?.softDeletedAll) {
+      // Erase's walk: EVERY soft-deleted row, no timestamp predicate at all. A
+      // numeric cutoff (even MAX_SAFE_INTEGER) is still a cutoff — a tombstone
+      // above it (nanosecond-epoch exports) or a TEXT-valued one (SQLite ranks
+      // TEXT above INTEGER, so `<= number` never matches) would escape.
+      const rows = await executor.getAllAsync<{ entity_id: string }>(
+        `SELECT DISTINCT entity_id FROM (
+           SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL
+           UNION
+           SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL
+         ) ORDER BY entity_id COLLATE BINARY`,
+      );
+      return rows.map(r => r.entity_id);
+    }
+    if (opts?.softDeletedAtOrBefore !== undefined) {
+      const cutoff = opts.softDeletedAtOrBefore;
+      const rows = await executor.getAllAsync<{ entity_id: string }>(
+        `SELECT DISTINCT entity_id FROM (
+           SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+           UNION
+           SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+         ) ORDER BY entity_id COLLATE BINARY`,
+        [cutoff, cutoff],
+      );
+      return rows.map(r => r.entity_id);
+    }
     const rows = await executor.getAllAsync<{ entity_id: string }>(
       `SELECT DISTINCT entity_id FROM (
          SELECT entity_id FROM ${this.prefix}entries

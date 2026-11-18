@@ -64,6 +64,7 @@ createWiki(db, {
 | `chunkOverlap` | `400` | Characters of overlap |
 | `chunkConcurrency` | `1` | Parallel LLM calls per ingest |
 | `grounding` | `{ mode: 'off' }` | [Grounding](/expo-llm-wiki/guides/drafts-and-grounding/#grounding) |
+| `sourceStore` | `{ maxCharsPerSource: 200_000, maxTotalChars: 5_000_000 }` | Source text store limits in UTF-16 code units ([guide](/expo-llm-wiki/guides/source-store/#limits)). Refusal guards, not targets: exceeding a cap refuses the `storeSource` call — nothing already stored is clipped. Added in 9.2.0 |
 
 ## Maintenance
 
