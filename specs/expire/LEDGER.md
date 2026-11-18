@@ -9,4 +9,4 @@ One checkbox per plan task. Tick only after that task's verification passes.
 - [x] T5 — supersede-after-expire guard (D3b, AC2b) — `96f405ef`, controller-verified 2026-11-18
 - [x] T6 — outbox, events, search, prune (AC4, AC5, AC7) — `8f73690c`, controller-verified 2026-11-18 (3 test-side folds: options under `config`; AC5 pinned behaviorally — FTS retains non-deleted rows by design, liveness is query-time)
 - [x] T7 — INTENT sentence, docs, supersede-gap issue (D1 note, D5, D7, AC9) — `7331676d`, controller-verified 2026-11-18 (issue = #414, filed by controller; docs build green)
-- [ ] T8 — full gate (typecheck, build, tests, docs build)
+- [x] T8 — full gate (typecheck, build, tests, docs build) — controller-verified 2026-11-18: typecheck/build/docs green, core suite 2670 tests / 232 files passed (`b143732a`); worktree clean, branch pushed
