@@ -821,10 +821,17 @@ export class MaintenanceService {
           pathBTargets.push(surface); // Path B: defer DROPs to after the per-surface loop
           continue;
         }
-        // Path A / Path C: the shadows are plain tables here — empty them.
+        // Path A / Path C: the shadows are plain tables here. The text-bearing
+        // rows go; fts5's structure/config state stays (%_data ids 1 and 10, and
+        // the %_config table with its version row — deleting it is what makes the
+        // vtab unreadable), so a capable re-open's retire path works instead of
+        // hitting an unreadable vtab (specs/erase-fts-remediation AC2 canary).
         const cleared: string[] = [];
         for (const name of shadows) {
-          await this.db.runAsync(`DELETE FROM ${name}`);
+          if (name.endsWith('_config')) continue;
+          await this.db.runAsync(name.endsWith('_data')
+            ? `DELETE FROM ${name} WHERE id NOT IN (1, 10)`
+            : `DELETE FROM ${name}`);
           cleared.push(name);
         }
         for (const name of cleared) {

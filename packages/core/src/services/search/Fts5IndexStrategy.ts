@@ -327,26 +327,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
       // autocommit one by one. Fail the reset whole instead (#284 review).
       if (isTransientOrTxFatal(err)) throw err;
       // Shadow tables too damaged to rename: today's DROP, with its measured floor, for this case only.
-      try {
-        await tx.execAsync(`DROP TABLE ${p}entries_fts`);
-      } catch (dropErr) {
-        // A vtab whose fts5 structure rows were deleted under it (the module-less
-        // erase end state, specs/erase-fts-remediation AC2) is unreadable: both
-        // RENAME and DROP fail. Unregister it via the documented writable_schema
-        // emergency procedure; the freed shadow tables then drop as plain tables
-        // and the rearm's CREATE builds a fresh index. Corruption only: a
-        // transient error is NOT handled here (fail the reset whole, #284).
-        if (ftsCorruptionClass(dropErr) == null) throw dropErr;
-        await tx.execAsync('PRAGMA writable_schema = ON');
-        try {
-          await tx.execAsync(`DELETE FROM sqlite_schema WHERE type = 'table' AND name = '${p}entries_fts'`);
-        } finally {
-          await tx.execAsync('PRAGMA writable_schema = OFF');
-        }
-        for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config'] as const) {
-          await tx.execAsync(`DROP TABLE IF EXISTS ${p}entries_fts${sfx}`);
-        }
-      }
+      await tx.execAsync(`DROP TABLE ${p}entries_fts`);
       return;
     }
     await this.metadataRepo.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify([...(await this.retiredList(tx)), name]), tx);

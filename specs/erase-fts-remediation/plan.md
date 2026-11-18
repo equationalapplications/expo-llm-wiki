@@ -592,43 +592,38 @@ fts5's internal structure rows, so the vtab is unreadable — `retireFtsTable`'s
 RENAME throws `invalid fts5 file format`, the DROP fallback throws the same
 error (DROP reads the corrupt vtab), and init falls back to Unavailable:
 keyword search permanently dead on that store. This repairs the D5 promise
-this spec owns. **In `packages/core/src/services/Fts5IndexStrategy.ts`,
-`retireFtsTable`'s catch** — wrap the existing DROP:
+this spec owns. **Final approach (canary-driven, 2026-11-18): preserve fts5's
+structure/config rows during Path A.** The original writable_schema
+surgery is impossible: better-sqlite3 (and SQLite 3.53 CLI) refuse
+sqlite_schema DML. Instead — and this is what the canary empirically
+proves — the unreadable-vtab state came from deleting fts5's internal
+structure (`%_data` ids 1 and 10) and config (the `%_config` table)
+rows. Neither holds user text (option keys/values and segment-map
+blobs only), so Path A now deletes the text-bearing rows only:
 
 ```ts
-    try {
-      await tx.execAsync(`ALTER TABLE ${p}entries_fts RENAME TO ${name}`);
-    } catch (err) {
-      if (isTransientOrTxFatal(err)) throw err;
-      // Shadow tables too damaged to rename: today's DROP, with its measured floor, for this case only.
-      try {
-        await tx.execAsync(`DROP TABLE ${p}entries_fts`);
-      } catch (dropErr) {
-        // A vtab whose fts5 structure rows were deleted under it (the module-less
-        // erase end state, specs/erase-fts-remediation AC2) is unreadable: both
-        // RENAME and DROP fail. Unregister it via the documented writable_schema
-        // emergency procedure; the freed shadow tables then drop as plain tables
-        // and the rearm's CREATE builds a fresh index. Corruption only: a
-        // transient error is NOT handled here (fail the reset whole, #284).
-        if (ftsCorruptionClass(dropErr) == null) throw dropErr;
-        await tx.execAsync('PRAGMA writable_schema = ON');
-        try {
-          await tx.execAsync(`DELETE FROM sqlite_schema WHERE type = 'table' AND name = '${p}entries_fts'`);
-        } finally {
-          await tx.execAsync('PRAGMA writable_schema = OFF');
+        // Path A / Path C: the shadows are plain tables here. The text-bearing
+        // rows go; fts5's structure/config state stays (%_data ids 1 and 10, and
+        // the %_config table with its version row — deleting it is what makes the
+        // vtab unreadable), so a capable re-open's retire path works instead of
+        // hitting an unreadable vtab (specs/erase-fts-remediation AC2 canary).
+        const cleared: string[] = [];
+        for (const name of shadows) {
+          if (name.endsWith('_config')) continue;
+          await this.db.runAsync(name.endsWith('_data')
+            ? `DELETE FROM ${name} WHERE id NOT IN (1, 10)`
+            : `DELETE FROM ${name}`);
+          cleared.push(name);
         }
-        for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config'] as const) {
-          await tx.execAsync(`DROP TABLE IF EXISTS ${p}entries_fts${sfx}`);
-        }
-      }
-      return;
-    }
 ```
 
-Verification: the retired-reclaim path already has its own designed
-corrupt exit (hollowed-shell delist) — do NOT touch it. The automated
-fixture for the erased state remains unbuildable (see the E6 ruling), so
-verification is: (a) full gates green, (b) the manual canary re-run —
-phase 3 must now complete: init succeeds, state `live`, canary MATCHes
-empty, keeper served. Record the canary outcome in the PR body.
-**Commit:** `fix(core): retire an unreadable post-erase vtab via writable_schema so a capable re-open rebuilds (specs/erase-fts-remediation AC2)`.
+(canary assertions updated accordingly: %_data retains ids 1,10 with no
+canary bytes; %_config untouched; text-bearing surfaces empty.)
+
+Verification: full gates green; surfaces suite 24/24 (fixtures give
+`_data` the real id-PK shape); the MANUAL CANARY passes end-to-end —
+real module-less erase (system sqlite3 CLI, no fts5 module) → capable
+re-open via the repo's real `Fts5IndexStrategy.init()`: no unreadable
+vtab, rebuild completes to `live`, canary token unretrievable, nothing
+resurrected. The canary script and evidence live in the SDD dir
+(gitignored).
