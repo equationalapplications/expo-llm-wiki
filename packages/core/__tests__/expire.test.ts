@@ -132,4 +132,48 @@ describe('expire()', () => {
     await expect(wiki.supersede('e1', 'v1', { title: 'again', body: 'b' })).rejects.toMatchObject({ reason: 'already_superseded' });
     expect((await temporal('v1')).superseded_by).toBe(v2);
   });
+
+  it('stages exactly one UPDATE outbox row carrying id, entity_id, valid_to (AC4)', async () => {
+    const raw = openTestDatabase();
+    const w = new WikiMemory(raw, { llmProvider: { generateText: async () => '{}' }, config: { enableOutbox: true } });
+    await w.setup();
+    await raw.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at) VALUES ('f1', 'e1', 't', 'body', 'user_stated', 'certain', 100, 100)`);
+    await w.expire('e1', 'f1', { at: 5_000 });
+    const rows = await raw.getAllAsync<any>(`SELECT operation, payload FROM llm_wiki_outbox WHERE record_id = 'f1'`);
+    expect(rows.length).toBe(1);
+    expect(rows[0].operation).toBe('UPDATE');
+    expect(JSON.parse(rows[0].payload)).toMatchObject({ id: 'f1', entity_id: 'e1', valid_to: 5_000 });
+  });
+
+  it('does not append to the events table (events are librarian input)', async () => {
+    await insert('f1');
+    await wiki.expire('e1', 'f1', { at: 5_000 });
+    expect((await db.getAllAsync(`SELECT 1 FROM llm_wiki_events`)).length).toBe(0);
+  });
+
+  it('search no longer returns the expired fact (AC5)', async () => {
+    await insert('f1');
+    await wiki.syncSearchIndex('e1');
+    const search = async () => (await wiki.read('e1', 'title')).facts.map((f) => f.id);
+    expect(await search()).toEqual(['f1']);
+    await wiki.expire('e1', 'f1', { at: 5_000 });
+    expect(await search()).toEqual([]);
+  });
+
+  it('runPrune soft-deletes the expired row after the retention window (AC7)', async () => {
+    const raw = openTestDatabase();
+    const w = new WikiMemory(raw, { llmProvider: { generateText: async () => '{}' }, config: { pruneSupersededAfter: 1 } });
+    await w.setup();
+    await raw.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at) VALUES ('f1', 'e1', 't', 'body', 'user_stated', 'certain', 100, 100)`);
+    await w.expire('e1', 'f1', { at: Date.now() - 2 * 86_400_000 });
+    await w.runPrune('e1');
+    expect((await raw.getFirstAsync<any>(`SELECT deleted_at FROM llm_wiki_entries WHERE id = 'f1'`)).deleted_at).not.toBeNull();
+  });
+
+  it('runPrune leaves the expired row alone with the default retention (D5: host policy)', async () => {
+    await insert('f1');
+    await wiki.expire('e1', 'f1', { at: 5_000 });
+    await wiki.runPrune('e1');
+    expect((await db.getFirstAsync<any>(`SELECT deleted_at FROM llm_wiki_entries WHERE id = 'f1'`)).deleted_at).toBeNull();
+  });
 });
