@@ -582,3 +582,53 @@ agree with.
 5. The step-3 remediation runs BEFORE the pending-ledger throw loop (D4
    order), so leftovers still throw honestly — the loop is retained
    unchanged.
+
+
+## E9 — corrupt-vtab re-open repair (owner-approved fold, 2026-11-18)
+
+The manual canary (SDD `canary-evidence.md`) proved the real
+module-less→capable transition fails: Path A's shadow-row DELETE removes
+fts5's internal structure rows, so the vtab is unreadable — `retireFtsTable`'s
+RENAME throws `invalid fts5 file format`, the DROP fallback throws the same
+error (DROP reads the corrupt vtab), and init falls back to Unavailable:
+keyword search permanently dead on that store. This repairs the D5 promise
+this spec owns. **In `packages/core/src/services/Fts5IndexStrategy.ts`,
+`retireFtsTable`'s catch** — wrap the existing DROP:
+
+```ts
+    try {
+      await tx.execAsync(`ALTER TABLE ${p}entries_fts RENAME TO ${name}`);
+    } catch (err) {
+      if (isTransientOrTxFatal(err)) throw err;
+      // Shadow tables too damaged to rename: today's DROP, with its measured floor, for this case only.
+      try {
+        await tx.execAsync(`DROP TABLE ${p}entries_fts`);
+      } catch (dropErr) {
+        // A vtab whose fts5 structure rows were deleted under it (the module-less
+        // erase end state, specs/erase-fts-remediation AC2) is unreadable: both
+        // RENAME and DROP fail. Unregister it via the documented writable_schema
+        // emergency procedure; the freed shadow tables then drop as plain tables
+        // and the rearm's CREATE builds a fresh index. Corruption only: a
+        // transient error is NOT handled here (fail the reset whole, #284).
+        if (ftsCorruptionClass(dropErr) == null) throw dropErr;
+        await tx.execAsync('PRAGMA writable_schema = ON');
+        try {
+          await tx.execAsync(`DELETE FROM sqlite_schema WHERE type = 'table' AND name = '${p}entries_fts'`);
+        } finally {
+          await tx.execAsync('PRAGMA writable_schema = OFF');
+        }
+        for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config'] as const) {
+          await tx.execAsync(`DROP TABLE IF EXISTS ${p}entries_fts${sfx}`);
+        }
+      }
+      return;
+    }
+```
+
+Verification: the retired-reclaim path already has its own designed
+corrupt exit (hollowed-shell delist) — do NOT touch it. The automated
+fixture for the erased state remains unbuildable (see the E6 ruling), so
+verification is: (a) full gates green, (b) the manual canary re-run —
+phase 3 must now complete: init succeeds, state `live`, canary MATCHes
+empty, keeper served. Record the canary outcome in the PR body.
+**Commit:** `fix(core): retire an unreadable post-erase vtab via writable_schema so a capable re-open rebuilds (specs/erase-fts-remediation AC2)`.
