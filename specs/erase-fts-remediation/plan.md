@@ -100,6 +100,14 @@ In `erase()`'s report literal (~:571) add `ftsOrphansCleared: [],` after
 import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5LedgerDropSql, passageFtsTriggerNames } from './search/fts5Sql';
 ```
 
+**Impl 2b** — `packages/core/src/types.ts`, `WikiDiagnosticCode` union
+(~:890, next to `erase_retired_vtab_undroppable`) — the new diagnostic
+code must be a member or `emitDiagnostic` fails to typecheck:
+
+```ts
+  | 'erase_fts_orphan_cleared'
+```
+
 **Impl 3** — `packages/core/src/services/SearchService.ts`, add two
 public introspection methods next to `hasStrictDrain()`:
 
