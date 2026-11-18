@@ -28,7 +28,9 @@ export class TemporalService {
     if (!old || old.deleted_at != null) throw new WikiSupersedeError('not_found');
     if (old.entity_id !== entityId) throw new WikiSupersedeError('cross_entity');
     if (old.superseded_by != null) throw new WikiSupersedeError('already_superseded');
-    if (old.valid_to != null && old.valid_to <= now) throw new WikiSupersedeError('already_expired');
+    // The serialized adapter may queue this callback past `now`; read a fresh
+    // clock for the guard (CodeRabbit) — `now` still stamps `superseded_at`.
+    if (old.valid_to != null && old.valid_to <= Math.max(now, Date.now())) throw new WikiSupersedeError('already_expired');
     if (old.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target');
 
     if (newId === oldId) throw new WikiSupersedeError('cycle');

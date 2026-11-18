@@ -48,8 +48,10 @@ await wiki.expire(entityId, factId, { at: validUntil });
 
 It rejects a missing, foreign, already superseded, immutable-document,
 or already expired fact, and an `at` at or before the fact's validity
-start (`invalid_interval`). A fact whose validity starts in the future
-rejects with `invalid_interval` until that start. A negative or
+start (`invalid_interval`) — the chosen `at` must be strictly later than
+that start, and an omitted `at` applies the same rule to the current
+time. A fact whose validity starts in the future rejects with
+`invalid_interval` until that start. A negative or
 non-finite `at` throws a `TypeError`.
 
 ## Rules
