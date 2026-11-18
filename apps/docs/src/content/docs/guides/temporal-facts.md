@@ -58,6 +58,11 @@ non-finite `at` throws a `TypeError`.
 
 `supersede()` throws `WikiSupersedeError` (with a `reason`) when the target:
 
+- has already ENDED — its `valid_to` is set to a time at or before now
+  (an archived fact is protected from supersede, including a back-dated
+  `validFrom`); superseding a fact whose scheduled end is still in the
+  future is allowed, and that supersede overwrites the scheduled end
+  with the supersede time;
 - is an `immutable_document` fact (re-ingest the document instead),
 - belongs to another entity,
 - is already superseded,

@@ -98,7 +98,8 @@ report the same reason for the same row:
   chain, not a second verb);
 - `already_expired` — `valid_to != null` (no silent overwrite; the host
   decides). Future-dated expiries are included: a `valid_to` still in the
-  future is a scheduled end of validity, and correcting it is out of scope
+  future is a scheduled end of validity, and correcting it is out of
+  scope (non-goals).
 - `immutable_target` — `source_type === 'immutable_document'` (same rule as
   supersede: documents are host property, never verb-mutated);
   (Non-goals).

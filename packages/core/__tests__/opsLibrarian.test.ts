@@ -134,8 +134,9 @@ describe('ops librarian end to end', () => {
 
   it('SUPERSEDE of an expired target is rejected as already_expired and leaves the replacement live and unlinked', async () => {
     // Expired facts are not retrieved as candidates, so the target must expire
-    // after resolve picks it and before the op applies. The test adapter runs
-    // statements synchronously, so the UPDATE lands inside this callback.
+    // after resolve picks it and before the op applies. The UPDATE is stored as
+    // a promise and awaited below: the assertion only holds if it landed before
+    // applyOps ran, and the precondition check after runLibrarian() pins that.
     let expireTarget = () => {};
     let pending: Promise<unknown> = Promise.resolve();
     const { db, wiki, diagnostics } = mk([
