@@ -191,7 +191,10 @@ describe('ops librarian end to end', () => {
     const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id='seattle'`);
     expect(old.valid_to).toBeNull();
     expect(old.superseded_by).toBeNull();
-    const fresh = await db.getFirstAsync<any>(`SELECT id, valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id != 'seattle'`);
+    const all = await db.getAllAsync<any>(`SELECT id, title, valid_to, superseded_by, valid_from FROM llm_wiki_entries`);
+    expect(all).toHaveLength(2);
+    const fresh = all.find((r) => r.id !== 'seattle');
+    expect(fresh.title).toBe('User lives in San Francisco now');
     expect(fresh.valid_to).toBeNull();
     expect(fresh.superseded_by).toBeNull();
     expect(fresh.valid_from).toBe(1);
