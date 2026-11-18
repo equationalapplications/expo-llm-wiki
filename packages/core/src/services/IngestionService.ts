@@ -433,10 +433,10 @@ export class IngestionService {
         // transaction (the edges UNIQUE is insert-OR-IGNORE, and the
         // entries-level one went away in migration v9), so a UNIQUE violation
         // means another writer claimed this hash first. The transaction rolled
-        // back, but the LLM pass already ran for every chunk and the host paid
-        // for it — emit the diagnostics that describe that work, and drop the
-        // ones tied to the aborted write, which carry `factId`s that were
-        // never committed (#221).
+        // rolled back, but the LLM pass already ran for every chunk and the
+        // host paid for it — emit the diagnostics that describe that work,
+        // and drop the ones tied to the aborted write, which carry `factId`s
+        // that were never committed (#221).
         //
         // This sits ABOVE the canonical lookup on purpose. Whether we can
         // still name the winner below does not change what the LLM pass did,
@@ -444,6 +444,10 @@ export class IngestionService {
         // the same flush.
         diagBuffer.flushOnly(this.options, LLM_PASS_DIAGNOSTIC_CODES);
 
+        // Caveat (#403, sqliteCodes.ts): on expo a PRIMARY KEY clash also
+        // surfaces as SQLITE_CONSTRAINT_UNIQUE (the message text cannot
+        // distinguish the two), while Node drivers report 1555 and re-raise
+        // past this check. Unreachable in practice — ids are random.
         const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
         // No other live ref holds this hash any more — the racing writer's own
         // row was rolled back or soft-deleted in the meantime. We cannot name

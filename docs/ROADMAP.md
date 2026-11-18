@@ -110,17 +110,17 @@ sorts the kinds dependably.
 ### Step 3 — A source pointer on every librarian fact — PLANNED
 
 Done — merged 2026-11-14, PR #385, spec [source-pointers](../specs/source-pointers/spec.md)
+
 Follow-up done — merged 2026-11-18, PR #422, spec [forget-by-event-id](../specs/forget-by-event-id/spec.md) (issue #386)
 
 Ops facts the librarian writes can carry a pointer to where they came
 from: the source event and, when grounding permits, the verified quote
 (`ref` and `position` slots exist with no producer; heal and legacy
 facts carry no pointer — the accepted gap). Verified quotes survive
-prune inside the fact's own record (owner ruling, 2026-11-14). Today a
-host hides a quote by forgetting its fact by entry id,
-`forget({ entryId })` — reads and exports drop it immediately, and prune
-purges the row; deleting quotes by event id, `forget({ eventId })`,
-is specified in
+prune inside the fact's own record (owner ruling, 2026-11-14). A host
+hides a quote by forgetting its fact by entry id, `forget({ entryId })`
+— reads and exports drop it immediately, and prune purges the row;
+deleting quotes by event id, `forget({ eventId })`, ships in
 [`specs/forget-by-event-id/`](../specs/forget-by-event-id/spec.md)
 (issue
 [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)). Issue

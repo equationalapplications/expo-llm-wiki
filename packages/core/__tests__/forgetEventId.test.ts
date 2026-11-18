@@ -223,6 +223,13 @@ describe('forget({ eventId }) — validation and exclusivity (test 9)', () => {
     await expect(t.wiki.forget('e1', params as any)).rejects.toThrow(pattern);
   });
 
+  it('rejects includeEvents without clearAll (pre-existing guard, pinned for the new selector row)', async () => {
+    const t = await make();
+    await expect(t.wiki.forget('e1', { eventId: 'E1', includeEvents: true })).rejects.toThrow(
+      /^forget\(\) includeEvents requires clearAll: true$/,
+    );
+  });
+
   it('dry-run rejection message names eventId', async () => {
     const t = await make();
     await expect(t.wiki.forget('e1', { entryId: 'a' }, { dryRun: true })).rejects.toThrow(
@@ -245,6 +252,9 @@ describe('forget({ eventId }) — dry run (test 12)', () => {
     // The real call then reports tombstone idempotence for the pre-tombstoned row.
     const real = await t.wiki.forget('e1', { eventId: 'E1' });
     expect(real.deleted.entries).toBe(2);
+    // The all-tombstoned case: the dry run counts what a real call would still delete — zero.
+    const zero = await t.wiki.forget('e1', { eventId: 'E1' }, { dryRun: true });
+    expect(zero).toEqual({ deleted: { entries: 0, tasks: 0 } });
   });
 });
 
