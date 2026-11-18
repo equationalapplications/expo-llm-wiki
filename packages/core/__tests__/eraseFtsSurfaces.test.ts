@@ -217,6 +217,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
       await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-secret');`);
     }
+    await t.raw.execAsync(`CREATE TABLE ${P}source_passages_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}source_passages_fts_content VALUES (1, 'CANARY-passage');`);
     await t.raw.runAsync(`INSERT INTO ${P}fts_pending (entity_id, id) VALUES ('e1', 'r0')`);
     // The vtab probe rejects as module-less; sourceTableExists (sqlite_master) is untouched.
     const probeError = new Error('no such module: fts5');
@@ -230,6 +231,8 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
       expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts${sfx}`))!.n, sfx).toBe(0);
     }
+    expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages_fts_content`))!.n).toBe(0);
+    expect(report.ftsOrphansCleared).toContain(`${P}source_passages_fts_content`);
     expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}fts_pending`))!.n).toBe(0);
     const meta = new MetadataRepository(t.raw, P);
     expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
@@ -308,7 +311,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts_content`))!.n).toBe(1);
   });
 
-  it('AC8: pending rows clear under Path A before the pending throw re-runs; uncovered leftovers still throw', async () => {
+  it('AC8: pending rows clear under Path C before the pending throw re-runs', async () => {
     const t = await make();
     vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
     await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
@@ -319,6 +322,23 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     await maint(t.wiki)._eraseDrainPassages(report);
     expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}fts_pending`))!.n).toBe(0);
     expect(report.failedStep).toBeNull();
+  });
+
+  it('AC8b: a leftover the remediation cannot cover still fails the step honestly', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts_content VALUES (1, 'CANARY');`);
+    await t.raw.runAsync(`INSERT INTO ${P}fts_pending (entity_id, id) VALUES ('e1', 'r0')`);
+    const realRun = t.raw.runAsync.bind(t.raw);
+    vi.spyOn(t.raw, 'runAsync').mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith(`DELETE FROM ${P}fts_pending`)) return { changes: 0, lastInsertRowId: 0 } as never;
+      return realRun(sql as never, params as never);
+    });
+    const report = newReport();
+    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_index_sync_failed' });
+    expect(report.failedStep).toBe('index_sync');
   });
 
   it('step 7: optimize runs on both FTS tables', async () => {

@@ -100,12 +100,14 @@ marked unverified — never a false success.
 When FTS5 init fails on an open and the engine falls back to its unavailable-strategy mode
 (FTS tables still present), `erase()` refuses (unverified) until the pending FTS ledgers
 (`fts_pending` and `source_passages_fts_pending`) are empty, because text the engine could not
-drain from the full-text index cannot be claimed erased. A module-less runtime that earlier ran
-FTS5 keeps orphaned full-text content tables whose stored text `erase()` does not reach; on
-such runtimes erase refuses with `erase_orphaned_fts_content` until the orphaned content tables
-are removed (remediation is tracked in
-[issue #407](https://github.com/equationalapplications/expo-llm-wiki/issues/407)).
-On runtimes without FTS5, erase() now clears the orphaned index tables itself and completes verified.
+drain from the full-text index cannot be claimed erased.
+
+On runtimes without the FTS5 module, or with `indexStrategy: 'minisearch'`, a store that earlier
+ran FTS5 keeps orphaned full-text tables. `erase()` clears them itself, lists every cleared table
+in `report.ftsOrphansCleared`, and completes verified. If it cannot, the step fails honestly with
+`erase_fts_orphan_probe_failed` (the orphan probe errored), `erase_fts_orphan_clear` (a clear
+failed), or `erase_fts_index_unavailable` (the index is unavailable, so the tables are left
+untouched).
 
 Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
 opt-out.
