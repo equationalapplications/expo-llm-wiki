@@ -1,3 +1,9 @@
+## [9.4.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.2...v9.4.3) (2026-11-18)
+
+### Bug Fixes
+
+* **core:** map expo-sqlite primary-code UNIQUE violations to SQLITE_CONSTRAINT_UNIQUE (issue [#403](https://github.com/equationalapplications/expo-llm-wiki/issues/403)) ([9424961](https://github.com/equationalapplications/expo-llm-wiki/commit/9424961f7017f1eef96f9c09d34c2c660bd95b1a))
+
 ## [9.4.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.1...v9.4.2) (2026-11-18)
 
 ### Bug Fixes
