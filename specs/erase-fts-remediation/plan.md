@@ -559,3 +559,26 @@ loop (Step 7), the Step 8 flip (`**Status:**` → Implemented, delete
 `plan.md` + `LEDGER.md` in the same cleanup commit, BEFORE merge), and
 the PR body update ("Fixes #407"; links spec + plan; notes the
 manual canary outcome from E4 honestly).
+
+
+## Review notes — pre-adjudicated dispositions (Tier-1.5 implementation ladder, 2026-11-18)
+
+Reviewer instruction: weigh each disposition below and flag ONLY if you
+DISAGREE (with file:line + suggested fix). Do not re-litigate what you
+agree with.
+
+1. The automated AC2 test was removed (E6): the module-less erased state
+   keeps the vtab ROW with emptied plain shadows — a state a
+   module-capable build cannot hold — so AC2 is verified by the manual
+   canary against the real module-less `sqlite3` CLI. N2 variant (E5)
+   skipped per the plan's explicit conditional.
+2. The F-MAJOR-1 flip (E3) is sanctioned by this spec — the old
+   probe-and-throw block it replaced is gone by design.
+3. Diagnostic-table entries for `erase_fts_orphan_cleared` were added in
+   `src/utils/diagnostics.ts` (severity + message records) — part of E2's
+   union work, not scope creep.
+4. Companion tables are cleared AND listed in `ftsOrphansCleared` (E3
+   ruling): D1 clears them, D3 lists every cleared table.
+5. The step-3 remediation runs BEFORE the pending-ledger throw loop (D4
+   order), so leftovers still throw honestly — the loop is retained
+   unchanged.
