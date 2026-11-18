@@ -93,4 +93,27 @@ describe('expire()', () => {
     expect(await db.getFirstAsync<any>(`SELECT * FROM llm_wiki_entries WHERE id = 'x'`)).toEqual(before);
     expect((await db.getAllAsync(`SELECT 1 FROM llm_wiki_outbox WHERE record_id = 'x'`)).length).toBe(0);
   });
+
+  it('rejects an empty or inverted interval with invalid_interval (at == start included)', async () => {
+    await insert('f1'); // created_at 100
+    await expect(wiki.expire('e1', 'f1', { at: 100 })).rejects.toMatchObject({ reason: 'invalid_interval' });
+    await expect(wiki.expire('e1', 'f1', { at: 99 })).rejects.toMatchObject({ reason: 'invalid_interval' });
+    expect((await temporal('f1')).valid_to).toBeNull();
+  });
+
+  it('uses valid_from over created_at as the interval start', async () => {
+    await insert('f1');
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 300 WHERE id = 'f1'`);
+    await expect(wiki.expire('e1', 'f1', { at: 200 })).rejects.toMatchObject({ reason: 'invalid_interval' });
+    await wiki.expire('e1', 'f1', { at: 301 });
+    expect((await temporal('f1')).valid_to).toBe(301);
+  });
+
+  it('rejects a non-finite or negative at with TypeError', async () => {
+    await insert('f1');
+    for (const bad of [-1, NaN, Infinity]) {
+      await expect(wiki.expire('e1', 'f1', { at: bad })).rejects.toBeInstanceOf(TypeError);
+    }
+    expect((await temporal('f1')).valid_to).toBeNull();
+  });
 });
