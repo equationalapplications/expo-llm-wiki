@@ -100,10 +100,16 @@ fact passes and line 43 **overwrites the archived `valid_to`** with the
 new time — the archive date is lost without an error, contradicting this
 spec's rejection of silent temporal rewrites. `supersedeInTx` gains the
 guard: old row has `valid_to != null` → `WikiSupersedeError
-('already_expired')`. The librarian path shares the function
+('already_expired')`. **Guard placement:** the check runs **after** the
+existing `already_superseded` check (`TemporalService.ts:30`) — every
+superseded row also carries `valid_to` (line 43 writes it), so a
+misplaced check would turn every double-supersede into `already_expired`
+and break the existing expectations (`supersede.test.ts:64-70`). The
+librarian path shares the function
 (`apply.ts:204`), so the guard covers it too; a host that wants a
 replacement for an archived fact supersedes the **successor** fact, not
-the archived one. Test plan item 2b pins this.
+the archived one. Test plan item 2b pins this, including the
+double-supersede regression case.
 
 The `WikiSupersedeReason` union gains `'already_expired'` and
 `'invalid_interval'`; the class constructor grows an optional verb
@@ -131,7 +137,9 @@ rule 12's "turn superseded into forgotten" already covers them, and the
 engine documents the expired-or-superseded pairing
 (`packages/core/src/types.ts:309-311`). The only INTENT.md edit in this
 PR: the stale sentence "expire() is ratified and needs a spec home before
-it is built" (:346-347) becomes "expire()'s spec home is `specs/expire/`".
+it is built" (:346-347) becomes "expire()'s spec home is `specs/expire/`"
+— committed on this PR's branch at implementation time, before merge (the
+draft phase carries only `specs/expire/`).
 No prune code changes.
 
 **D6 — exposure: core only.** The react/expo wrappers do not forward
@@ -179,7 +187,10 @@ retention changes (D5), `forget`/`erase` behavior.
    (guard order mirrors `supersedeInTx`). [V]
 2b. **Supersede-after-expire rejected** (D3b): `supersede()` on a fact
    with `valid_to != null` throws `already_expired` and the row is
-   unchanged — the archived `valid_to` is never rewritten. [V]
+   unchanged — the archived `valid_to` is never rewritten; a
+   double-supersede (superseded row) still reports `already_superseded`
+   (guard runs after the existing check — regression case pinned, D3b).
+   [V]
 3. Default `at` = now; explicit past `at` honored; non-epoch `at` throws
    `TypeError` (assertEpochMs); `at <= (valid_from ?? created_at)` throws
    `WikiSupersedeError('invalid_interval')` — including `at == start`
