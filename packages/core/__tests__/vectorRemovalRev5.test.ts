@@ -63,7 +63,9 @@ describe('revision 5', () => {
     const f = await t.wiki.remember('e1', { title: 'a', body: 'b' });
     const live = await t.wiki.exportDump(['e1']);
     await t.wiki.forget('e1', { entryId: f.id });
-    await t.wiki.importDump(live);
+    // Spec §8 tombstone-wins: an import can no longer resurrect a forgotten row,
+    // so the "restored fact" is restored host-side (raw) for this ledger scenario.
+    await raw.runAsync(`UPDATE ${P}entries SET deleted_at = NULL, updated_at = updated_at + 1 WHERE id = ?`, [f.id]);
     const tomb = JSON.parse(JSON.stringify(live));
     const restoredAt = (await raw.getFirstAsync(`SELECT updated_at FROM ${P}entries WHERE id = ?`, [f.id])).updated_at;
     const tombAt = Math.max(Date.now(), restoredAt + 1); // strictly newer, so merge applies it

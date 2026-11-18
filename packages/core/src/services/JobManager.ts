@@ -11,7 +11,8 @@ export type OperationType =
   | 'global_import'
   | 'forget'
   | 'ontologyBackfill'
-  | 'store';
+  | 'store'
+  | 'erase';
 
 export class JobManager {
   private activeMaintenanceJobs = new Set<string>();
@@ -87,6 +88,7 @@ export class JobManager {
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _eraseKey() { return `${this.prefix}:erase`; }
   private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
   private _globalImportKey() { return `${this.prefix}:import`; }
   private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
@@ -97,12 +99,12 @@ export class JobManager {
 
   /**
    * Lookup table for acquireLock/releaseLock's dynamic-dispatch branch.
-   * Excludes 'ingest' | 'global_reembed' | 'global_import', which those
+   * Excludes 'ingest' | 'global_reembed' | 'global_import' | 'erase', which those
    * methods already handle via explicit if/else branches before reaching
    * this table.
    */
   private readonly lockKeyFns: Record<
-    Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>,
+    Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import' | 'erase'>,
     (entityId: string) => string
   > = {
     prune: (id) => this._pruneKey(id),
@@ -187,11 +189,31 @@ export class JobManager {
     return this.activeIngestJobs.has(entityId);
   }
 
-  acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void {
+  /**
+   * `owner` is the fourth parameter (the third, `sourceRef`, is ingest-only).
+   * `'erase'` marks the erase() pipeline's own per-entity prune, the only
+   * operation exempt from the universal erase pre-check below.
+   */
+  acquireLock(
+    operation: OperationType,
+    entityId: string,
+    sourceRef?: string,
+    owner: 'host' | 'erase' = 'host',
+  ): void {
     let blockingOperation: WikiBusyOperation | null = null;
 
     if (operation !== 'global_import' && this.activeMaintenanceJobs.has(this._globalImportKey())) {
       throw new WikiBusyError('import', '*');
+    }
+
+    // Universal erase fence: while erase holds its lock, nothing else may
+    // acquire — except erase's own per-entity prune.
+    if (
+      operation !== 'erase' &&
+      !(operation === 'prune' && owner === 'erase') &&
+      this.activeMaintenanceJobs.has(this._eraseKey())
+    ) {
+      throw new WikiBusyError('erase', '*');
     }
 
     switch (operation) {
@@ -235,6 +257,22 @@ export class JobManager {
 
       case 'global_reembed':
         if (this.activeMaintenanceJobs.has(this._globalReembedKey())) blockingOperation = 'reembed';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) blockingOperation = 'reembed';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':prune')) blockingOperation = 'prune';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) blockingOperation = 'librarian';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':heal')) blockingOperation = 'heal';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':ontologyBackfill')) blockingOperation = 'ontologyBackfill';
+        else if (this.activeIngestJobs.size > 0) blockingOperation = 'ingest';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':import')) blockingOperation = 'import';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':forget')) blockingOperation = 'forget';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':store')) blockingOperation = 'store';
+        break;
+
+      case 'erase':
+        // Self-check first: a second concurrent erase is refused as 'erase'.
+        // The ':reembed' suffix scan subsumes the global re-embed key
+        // (`${prefix}:reembed` ends in ':reembed'), so no separate check.
+        if (this.activeMaintenanceJobs.has(this._eraseKey())) blockingOperation = 'erase';
         else if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) blockingOperation = 'reembed';
         else if (this._isAnyMaintenanceActiveWithSuffix(':prune')) blockingOperation = 'prune';
         else if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) blockingOperation = 'librarian';
@@ -294,7 +332,7 @@ export class JobManager {
     if (blockingOperation) {
       throw new WikiBusyError(
         blockingOperation,
-        operation === 'global_reembed' || operation === 'global_import' ? '*' : entityId
+        operation === 'global_reembed' || operation === 'global_import' || operation === 'erase' ? '*' : entityId
       );
     }
 
@@ -304,8 +342,10 @@ export class JobManager {
       this.activeMaintenanceJobs.add(this._globalReembedKey());
     } else if (operation === 'global_import') {
       this.activeMaintenanceJobs.add(this._globalImportKey());
+    } else if (operation === 'erase') {
+      this.activeMaintenanceJobs.add(this._eraseKey());
     } else {
-      this.activeMaintenanceJobs.add(this.lockKeyFns[operation as Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>](entityId));
+      this.activeMaintenanceJobs.add(this.lockKeyFns[operation](entityId));
     }
 
     this._notifyStatusSubscribers(entityId);
@@ -318,8 +358,10 @@ export class JobManager {
       this.activeMaintenanceJobs.delete(this._globalReembedKey());
     } else if (operation === 'global_import') {
       this.activeMaintenanceJobs.delete(this._globalImportKey());
+    } else if (operation === 'erase') {
+      this.activeMaintenanceJobs.delete(this._eraseKey());
     } else {
-      this.activeMaintenanceJobs.delete(this.lockKeyFns[operation as Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>](entityId));
+      this.activeMaintenanceJobs.delete(this.lockKeyFns[operation](entityId));
     }
 
     this._notifyStatusSubscribers(entityId);
@@ -331,8 +373,20 @@ export class JobManager {
    */
   isBlocked(operation: OperationType, entityId: string): boolean {
     if (operation !== 'global_import' && this.activeMaintenanceJobs.has(this._globalImportKey())) return true;
+    if (operation !== 'erase' && this.activeMaintenanceJobs.has(this._eraseKey())) return true;
 
     switch (operation) {
+      case 'erase':
+        return this.activeMaintenanceJobs.has(this._eraseKey()) ||
+               this._isAnyMaintenanceActiveWithSuffix(':reembed') ||
+               this._isAnyMaintenanceActiveWithSuffix(':prune') ||
+               this._isAnyMaintenanceActiveWithSuffix(':librarian') ||
+               this._isAnyMaintenanceActiveWithSuffix(':heal') ||
+               this._isAnyMaintenanceActiveWithSuffix(':ontologyBackfill') ||
+               this.activeIngestJobs.size > 0 ||
+               this._isAnyMaintenanceActiveWithSuffix(':import') ||
+               this._isAnyMaintenanceActiveWithSuffix(':forget') ||
+               this._isAnyMaintenanceActiveWithSuffix(':store');
       case 'librarian':
       case 'heal':
       case 'ontologyBackfill':
@@ -430,6 +484,7 @@ export class JobManager {
     // A refused pass is not lost work: WriteService.maybeRunHeal holds its
     // checkpoint back, so the next write retries.
     if (this.isAnyReembedActive()) return false;
+    if (this.activeMaintenanceJobs.has(this._eraseKey())) return false;
 
     const healKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(healKey)) return false;
@@ -480,6 +535,7 @@ export class JobManager {
    * Validates all entities before acquiring any lock (same as current importDump semantics).
    */
   acquireImportLocks(entityIds: string[]): void {
+    if (this.activeMaintenanceJobs.has(this._eraseKey())) throw new WikiBusyError('erase', '*');
     for (const entityId of entityIds) {
       if (this.activeMaintenanceJobs.has(this._importKey(entityId))) throw new WikiBusyError('import', entityId);
       if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) throw new WikiBusyError('librarian', entityId);

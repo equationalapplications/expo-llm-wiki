@@ -72,7 +72,7 @@ describe('statement kinds — scripted classification plumbing (spec test plan i
     expect(hood.nodes.find((n) => n.id === stmt.id)?.okf_type).toBe('rule');
     expect(hood.edges.some((e) => e.source_id === stmt.id && e.target_id === app.id && e.edge_type === 'about')).toBe(true);
 
-    const { newId } = await wiki.supersede('e1', stmt.id, { title: 'Always pin versions v2', body: 'Pin exact versions.' });
+    const { newId } = await wiki.supersede('e1', stmt.id, { title: 'Always pin versions v2', body: 'Pin exact versions.' }, { validFrom: stmt.created_at + 1 });
     const [old] = (await wiki.history('e1', stmt.id)).filter((f) => f.id === stmt.id);
     expect(old.superseded_by).toBe(newId);
     expect(old.valid_to).toEqual(expect.any(Number));

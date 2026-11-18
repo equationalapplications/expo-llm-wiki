@@ -25,7 +25,7 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 | Rule 3 dangling cross-entity edge does not leak | Built | native spec line 66 citing isolation spec §6 (entity-bound joins) |
 | Rule 3 custom VectorRanker must filter by entity (host duty) | fact | `SECURITY.md` "Entity Isolation" section |
 | Rule 4 dimension mismatch detection, fallback, callback, reembed | Built | `RetrievalService.ts:154-172`; `EmbeddingService.ts:39,95`; `EntryRepository.ts:753`; `WikiMemory.ts:727` `runReembed`; README `onRetrievalFallback` |
-| Rule 5 `immutable_document` written by ingest; never superseded | Built | `IngestionService.ts:637,999`; `TemporalService.ts:31` throws `immutable_target`; `librarian/ops/apply.ts:151` |
+| Rule 5 `immutable_document` written by ingest; never superseded | Built | `IngestionService.ts:637,999`; ``supersedeInTx` (TemporalService.ts)` throws `immutable_target`; `librarian/ops/apply.ts:151` |
 | Rule 6 content-free diagnostics | Built | `types.ts:967`; README "Diagnostics" |
 | Rule 6 drafts, promoteDraft, lint, pendingSources, getInstructions | Built | `WikiMemory.ts:508,546,556,1166,1189` |
 | Rule 6 partial ingest returns result, total failure throws | Built | README "Ingest Document" (5.5.0 note) |

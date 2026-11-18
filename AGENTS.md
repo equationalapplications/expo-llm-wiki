@@ -5,8 +5,9 @@
 Every spec must be checked against `INTENT.md` before implementation work
 begins. If a spec contradicts `INTENT.md` *on intent*, the spec is wrong
 until `INTENT.md` is amended: INTENT wins on *intent* (what we are trying
-to do), specs win on *detail* (exactly how). `INTENT.md` itself defers to
-the SynapseTree founding charter; never re-rule a charter promise here.
+to do), specs win on *detail* (exactly how). `INTENT.md` is the top
+authority in this repo; hosts that need behavior it lacks file an issue
+here.
 
 ## Operational landmines (read before touching the tree)
 
@@ -38,7 +39,8 @@ the SynapseTree founding charter; never re-rule a charter promise here.
   planned work and its gates. Add a step's one-line done mark in the PR
   that completes it — or, for a mark a completing PR failed to write,
   in a later PR that says so and cites the issue tracking the omission.
-  Rule status stays in `INTENT.md`; spec status stays in the spec.
+  Rule status stays out of `INTENT.md` (it is never a status ledger);
+  spec status stays in the spec.
 - **Spec folders and ledgers.** New work is one folder under `specs/<name>/`
   with `spec.md`, `plan.md`, `LEDGER.md` (`specs/README.md`). Tick a
   ledger box only after that task's verification passes. At session start,

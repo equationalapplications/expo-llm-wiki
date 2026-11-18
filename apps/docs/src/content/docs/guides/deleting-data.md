@@ -40,7 +40,132 @@ await wiki.runPrune('user-123', { retainSoftDeletedFor: 0, vacuum: true });
 ```
 
 `vacuum: true` rewrites the database file so the freed pages are actually released. It can be
-slow on mobile.
+slow on mobile. With `vacuum: true`, an incomplete post-VACUUM checkpoint throws
+`CheckpointIncompleteError` after the deletes land; persistent reader connections make this
+routine.
+
+## Erase: verified erasure
+
+`forget()` removes facts from recall, and `runPrune()` removes the rows from the table. Neither
+guarantees the bytes are gone from the database *file* — SQLite marks freed pages for reuse
+without overwriting them, so deleted text can linger until the pages happen to be reused.
+`erase()` closes that gap. On the connection it runs on, deleted content left in the database
+*file* is overwritten with zeros (`secure_delete` is verified `ON` before any step), and after a
+successful final checkpoint the WAL is truncated to zero bytes. Each step's outcome is verified
+from the pragma state, the checkpoint result and the step's own completion, and the erasure
+report names each step's outcome, skipped entities and holds, and whether erasure is verified.
+What this guarantee does **not** cover: storage-level remnants outside the database file and its
+WAL — unlinked rollback journals, `VACUUM` temporary copies on disk, filesystem snapshots and
+backups. Nothing in this document claims the bytes are unrecoverable at the storage layer.
+
+```ts
+await wiki.forget('user-123', { entryId: 'fact_abc' });
+await wiki.erase();
+```
+
+A failed erase throws `EraseStepError` carrying the report with `verified: false`; it, the `EraseReport` type and `CheckpointIncompleteError` are importable from the package. A hold (an external removal that could not be confirmed) also leaves `verified: false`. Failures *before* the pipeline starts — `erase()` refusing because another operation holds a conflicting lock — throw a plain `WikiBusyError` with no report.
+
+That is the whole recipe. **Do not add a standalone `runPrune()` step.** `erase()`'s first step
+already prunes the facts it is about to erase with `retainSoftDeletedFor: 0` and
+`retainEventsFor: null` — so erase keeps every event. A standalone prune with default options
+would delete events older than 30 days first, contradicting that.
+
+### Erasure happens at erase time, not forget time
+
+`forget()` is an instruction, not destruction: the fact leaves recall immediately, but the
+guaranteed erasure is what `erase()` delivers. One consequence of the timing: facts that
+step-1 prune *soft-deletes during this erase* (for example, rows caught by
+`pruneSupersededAfter`) are hard-deleted at your **next** `erase()`, not this one — and only
+for entities that erase enumerated. Run erase again if you need those rows gone in the same
+session.
+
+### Stored source documents survive erase
+
+Documents you stored with `storeSource()` are your property, not the engine's: `erase()` never
+touches them. Their erasure path is `forget({ sourceRef })`, which hard-deletes the stored text
+(and its passages) at forget time. On an erasure request, call
+`forget({ sourceRef })` for every stored document of the subject — see
+[Handling an erasure request](#handling-an-erasure-request) below.
+
+### The pragma requirement
+
+`erase()` verifies erasure with SQLite's `secure_delete` pragma, which makes SQLite overwrite
+deleted content with zeros. The engine sets `PRAGMA secure_delete=ON` when it opens the
+database and reads it back to confirm — but the pragma is **per-connection**: if your app opens
+its own connection and writes to the wiki tables with raw SQL, that connection must set the
+pragma itself. `erase()` checks the pragma of its own connection before it starts; if
+`secure_delete` is off there, erasure fails with an `erase_secure_delete_off` diagnostic and is
+marked unverified — never a false success.
+
+When FTS5 init fails on an open and the engine falls back to its unavailable-strategy mode
+(FTS tables still present), `erase()` refuses (unverified) until the pending FTS ledgers
+(`fts_pending` and `source_passages_fts_pending`) are empty, because text the engine could not
+drain from the full-text index cannot be claimed erased. Likewise, if the index strategy is
+unavailable (init failed) and FTS surfaces remain, `erase()` refuses with
+`erase_fts_index_unavailable` even when the ledgers are empty.
+
+On runtimes without the FTS5 module, or with `indexStrategy: 'minisearch'`, a store that earlier
+ran FTS5 keeps orphaned full-text tables. `erase()` clears or drops them itself, lists every table it cleared or
+dropped in `report.ftsOrphansCleared`, and makes erasure verifiable — provided no external-removal
+holds remain (holds still yield `verified: false`). If it cannot, the step fails honestly with
+`erase_fts_orphan_probe_failed` (the orphan probe errored), `erase_fts_orphan_clear` (a clear
+failed), or `erase_fts_index_unavailable` (the index is unavailable, so the tables are left
+untouched).
+
+Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
+opt-out.
+
+### Copy census: what erase does and doesn't reach
+
+`erase()` zeroes the store file (and its WAL/journal surfaces). In WAL mode the WAL is
+checkpointed and the zeroed surfaces are covered; in rollback-journal mode the journal is
+unlinked rather than zeroed. These copies are yours to handle:
+
+1. **Events.** Erase deletes none of them — events follow the host's `retainEventsFor`
+   setting. Each host publishes its own value; the engine doesn't pick one for you. If you need
+   events gone, that's `clearAll({ includeEvents: true })` (see
+   [Wipe an entity completely](#wipe-an-entity-completely)).
+2. **The outbox.** With `enableOutbox: true`, unacknowledged outbox rows still hold fact text.
+   Drain the outbox before erasing.
+3. **Stored source documents.** They survive erase unless you call `forget({ sourceRef })` per
+   document.
+4. **The ontology manifest.** It stays. Write an empty manifest to reset it (see the wipe
+   section below).
+5. **Exports.** Dump files live outside the store; erasing doesn't touch them, and re-importing
+   an export brings the data back. Erase the exported files themselves if the request covers
+   them.
+
+### The VACUUM residue window
+
+`erase()` runs `VACUUM` as part of its recipe, and VACUUM builds its temporary copy of the
+database *outside* the main file while it works — a short window where content pages exist in a
+temp file. The host can close it: run the erase call on a connection with
+`PRAGMA temp_store=MEMORY`, so the temporary copy lives in RAM instead of on disk. This is
+build-dependent, not a hard guarantee: a SQLite build compiled with `SQLITE_TEMP_STORE=0`
+overrides the connection setting and keeps the temporary copy on disk. Treat the pragma as
+advice that removes the window on stock builds, not as a safeguard every build honors.
+
+### Handling an erasure request
+
+When a subject asks you to erase their data (a GDPR Art. 17 request), the sequence is:
+
+1. **Stop writes to the subject's entities.** Quiesce the whole store, not just the subject's
+   entities: erase refuses while any maintenance op or ingest is active store-wide, and step 5
+   needs store-wide write quiescence.
+2. **Deal with the subject's retained events.** This is a prerequisite, not a convenience
+   follow-up: events follow your `retainEventsFor` value, and `erase()` deletes none of them, so a
+   host claiming erasure must first remove the event rows it keeps. `forget()` has no per-event
+   selector; the way to delete an entity's events on request is
+   `clearAll({ includeEvents: true })` (see [Wipe an entity completely](#wipe-an-entity-completely)).
+3. **`forget({ sourceRef })` for every stored document of the subject** (see
+   [the source store guide](/expo-llm-wiki/guides/source-store/)).
+4. **Drain the outbox** and handle your exports (copy census above).
+5. **`forget()` the facts, then `erase()`** — no standalone prune step.
+
+Check the erasure report's verified flag before you confirm anything to the subject, and see
+[the diagnostics guide](/expo-llm-wiki/guides/diagnostics/) for the `erase_*` codes. For the
+vocabulary — forget, prune, erase, expire and the fact states — see
+[the Glossary](/expo-llm-wiki/reference/glossary/).
 
 ## Right to be forgotten (GDPR)
 

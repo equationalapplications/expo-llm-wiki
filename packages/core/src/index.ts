@@ -31,6 +31,9 @@ export {
   HEAL_MAX_TASKS,
   HEAL_RECHECK_MS,
 } from './services/MaintenanceService';
+export { EraseStepError } from './services/MaintenanceService';
+export type { EraseReport } from './services/MaintenanceService';
+export { CheckpointIncompleteError } from './repositories/MetadataRepository';
 export { ONTOLOGY_BACKFILL_SYSTEM_PROMPT } from './prompts';
 
 export function createWiki(db: SQLiteAdapter, options: WikiOptions): WikiMemory {

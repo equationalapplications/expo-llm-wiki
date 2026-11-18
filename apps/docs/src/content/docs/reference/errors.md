@@ -22,6 +22,7 @@ try {
 | Error | Thrown when | Useful fields | What to do |
 |---|---|---|---|
 | `WikiBusyError` | A conflicting job (librarian, heal, ingest, prune, reembed, import, forget, or ontology backfill) is already running for the entity | `operation`, `entityId` | Retry later. It's usually safe to swallow. |
+| `WikiBusyError('erase', '*')` / `EraseStepError` | While `erase()` holds the store-wide lock, other operations (import, auto-heal, and every fenced call) get `WikiBusyError('erase', '*')`. `erase()` itself refuses with `WikiBusyError(<blockingOp>, …)` naming what blocked it; during its pipeline, step failures throw `EraseStepError` | `operation`, `entityId`; step errors carry `code` and the report | Retry after quiescing the store. Retryable step errors: `erase_checkpoint_incomplete`; `erase_vacuum_failed` (commonly an unfenced writer holding the database — but any VACUUM failure raises it, so check disk space and I/O before re-running); `erase_tombstones_remaining` (the step-9 gate: soft-deleted rows survived the pipeline — re-run `erase()` after quiescing); `erase_retired_read_failed` (the retired-table inventory read failed — re-run `erase()`); `erase_fts_orphan_probe_failed` (an orphaned FTS surface could not be classified — erasure is unverified; investigate the store, then re-run); `erase_fts_orphan_clear` (clearing an orphaned FTS surface failed — check locks/disk and re-run); `erase_fts_index_unavailable` (the index strategy is unavailable or cannot drop a live orphan surface — erasure is unverified; retry on an FTS5-capable runtime or once the strategy recovers; note an FTS5-capable runtime can already be on the unavailable strategy because init failed — fix init first, e.g. `syncSearchIndex()`, rather than just re-running erase). `erase_tombstone_gate_failed` (the gate's own count query failed) and `erase_secure_delete_read_failed` (the step-0 pragma read failed) are retryable the same way |
 | `WikiTransactionError` | A driver error escaped a transaction | `cause`, `sqliteErrorCode` | Alert, grouping by `sqliteErrorCode` |
 | `PrunePartialFailureError` | A deletion hook left some removals unconfirmed during `runPrune`. Prune keeps those rows, finishes its other work, then throws. | `deleted`, `failedAt`, `remaining`, `deletedTasks`, `deletedEvents`, `cause` | Fix the hook, then run prune again |
 | `WikiExternalDeletionError` | `forget()` ran, but your vector index didn't confirm every removal. The local delete stays committed. | `code` (`'WIKI_EXTERNAL_DELETION'`), `entityId`, `unconfirmedIds` (at most 100), `unconfirmedCount`, `timedOut`, `cause` (sanitized; absent on a timeout or when no cause is known) | Fix the hook. The ids stay owed; retry, or call `runExternalDeletions()` |
@@ -32,12 +33,18 @@ try {
 | `WikiStrictOntologyViolation` | A strict-mode graph write used a type outside the manifest | `kind`, `type`, `entityId` | Fix the data or the manifest |
 | `WikiInvalidReadOptions` | `read()` options can't be satisfied (for example, floors that sum to more than `maxResults`) | `field`, `reason` | Fix the options |
 | `WikiDraftNotFound` | `promoteDraft` found no live draft with that ID | `code` | Refresh the draft list |
-| `WikiSupersedeError` | `supersede()` was refused | `reason` | See [Temporal → Rules](/expo-llm-wiki/guides/temporal-facts/#rules) |
+| `WikiSupersedeError` | `supersede()` or `expire()` was refused | `reason` | See [Temporal → Rules](/expo-llm-wiki/guides/temporal-facts/#rules) (`supersede()`) and [Expire a fact](/expo-llm-wiki/guides/temporal-facts/#expire-a-fact) (`expire()`) |
 | `WikiMigrationRequiredError` | `setup({ migrations: 'refuse' })` found pending work | `pendingWork` | Run `setup()` outside the lease |
 | `WikiSearchUnavailableError` | The keyword index failed to initialize | `cause` | Writes still work. Call `syncSearchIndex()` to retry. |
 | `WikiParseError` | The model's output couldn't be parsed | `tier`, `position` | Usually surfaces as `parseFailures` rather than a throw |
 
 Errors you throw from your own callbacks pass through with their type unchanged.
+
+`storeSource()` mostly doesn't throw: size, budget, hash and duplicate refusals come back as
+`{ stored: false, diagnostics }` (see [Source text store](/expo-llm-wiki/guides/source-store/)).
+Only invalid arguments, a busy lock (`WikiBusyError`), and a failed database transaction
+propagate as throws — a transaction failure surfaces as a `WikiTransactionError` carrying
+`cause` (the driver error) and `sqliteErrorCode`, never the raw driver error.
 
 ## Migration v9 fails on existing duplicates
 

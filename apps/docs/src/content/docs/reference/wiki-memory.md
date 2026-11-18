@@ -32,7 +32,8 @@ In Expo, `createWiki` takes an `expo-sqlite` database instead of an adapter.
 | `upsertGraph(entityId, { sourceRef, sourceHash, nodes, edges }, tx)` | `Promise<{ nodesWritten, edgesWritten, superseded }>` | [GraphRAG](/expo-llm-wiki/guides/graphrag/#seed-a-graph-without-an-llm) |
 | `remember(entityId, { title, body, tags?, confidence?, source_type?, okf_type?, valid_from? })` | `Promise<WikiFact>` | [Direct fact writes](#remember) |
 | `supersede(entityId, oldId, { title, body, … }, { validFrom? }?)` | `Promise<{ newId }>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
-| `importDump(dump, { merge? }?)` | `Promise<void>` | `merge` defaults to `false` (replace the entity). [OKF](/expo-llm-wiki/guides/okf/) |
+| `expire(entityId, factId, { at? })` | `Promise<void>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
+| `importDump(dump, { merge? }?)` | `Promise<ImportDumpResult>` | `merge` defaults to `false` (replace the entity). Returns `skippedSources`, the stored sources the import refused. [OKF](/expo-llm-wiki/guides/okf/) |
 
 ### remember
 
@@ -74,7 +75,10 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `traverseGraph(entityId, GraphTraversalOptions)` | `Promise<{ nodes, edges }>` | [GraphRAG](/expo-llm-wiki/guides/graphrag/) |
 | `history(entityId, factId)` | `Promise<WikiFact[]>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
 | `getMemoryBundle(entityId)` | `Promise<MemoryBundle>` | All non-deleted facts, tasks and edges, plus the 10 newest events. Use `exportDump()` for a full copy |
-| `exportDump(entityIds?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/) |
+| `exportDump(entityIds?, { includeForgotten? }?)` | `Promise<MemoryDump>` | [OKF](/expo-llm-wiki/guides/okf/). Forgotten (soft-deleted) rows are excluded unless `includeForgotten: true` |
+| `erase()` | `Promise<EraseReport>` | Verified erasure of every forgotten fact in scope (events are kept). A step failure throws `EraseStepError` carrying the report with `verified: false`; a refusal before the pipeline starts throws a plain `WikiBusyError` with no report. See [Deleting data](/expo-llm-wiki/guides/deleting-data/) |
+| `erase({ rebuild: true })` | `Promise<EraseReport>` | As `erase()`, but rebuilds the entries FTS index in place of the corrupt-index optimize, then `optimize` still runs on both tables; the retired index table is reclaimed before the final checks |
+| `getRetentionPolicy()` | `{ retainSoftDeletedFor, retainEventsFor, pruneSupersededAfter }` | The retention windows `runPrune()` uses when the host runs it, in days (`null` = keep forever); `erase()` ignores `retainSoftDeletedFor`. Read-only, for disclosure |
 | `getEntitySummary(entityId)` | `Promise<string \| null>` | |
 
 ## Change detection & inventory
@@ -84,7 +88,10 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `hasChanged(entityId, sourceRef, sourceHash)` | `Promise<boolean>` |
 | `hasChanged(entityId, [{ sourceRef, sourceHash }])` | `Promise<{ sourceRef, changed, duplicateOf? }[]>` |
 | `pendingSources(entityId, [{ sourceRef, sourceHash }])` | `Promise<{ sourceRef, status: 'new' \| 'changed' \| 'partial' \| 'current' }[]>` |
-| `listSourceRefs(entityId)` | `Promise<{ sourceRef, sourceHash, factCount, lastIngestedAt }[]>` |
+| `listSourceRefs(entityId)` | `Promise<{ sourceRef, sourceHash: string \| null, factCount, lastIngestedAt, stored?: { charCount, staleHash? } \| null }[]>` |
+| `storeSource(entityId, { sourceRef, sourceHash, text })` | `Promise<StoreSourceResult>` — refusals return `{ stored: false, diagnostics }`; a busy lock throws. Added in 9.2.0. [Source text store](/expo-llm-wiki/guides/source-store/) |
+| `getStoredSource(entityId, sourceRef)` | `Promise<StoredSource \| null>` — the text exactly as handed |
+| `listStoredSources(entityId)` | `Promise<StoredSourceSummary[]>` |
 
 | `findSourceRefsByHash(entityId, sourceHash)` | `Promise<string[]>` |
 | `listEntityIds({ prefix? }?)` | `Promise<string[]>` |
@@ -93,6 +100,11 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 `sourceRef` are excluded. `sourceHash` and `lastIngestedAt` come from the most recently updated
 live row for that `sourceRef`, and `factCount` counts the live rows.
 
+`stored` compares the source text store with the ref's live facts, in three states: text stored
+with a matching hash (`{ charCount }`), text stored under a stale hash
+(`{ charCount, staleHash: true }`), or nothing stored (`null`). Added in 9.2.0. See
+[Source text store](/expo-llm-wiki/guides/source-store/).
+
 ## Maintenance
 
 | Method | Returns | Guide |
@@ -100,7 +112,7 @@ live row for that `sourceRef`, and `factCount` counts the live rows.
 | `runLibrarian(entityId, { promptOverride? }?)` | `Promise<void>` | [Maintenance](/expo-llm-wiki/guides/maintenance/) |
 | `runHeal(entityId, { promptOverride?, batchSize? }?)` | `Promise<HealResult>` | |
 | `runReembed(entityId?, { skipExisting?, force? }?)` | `{ embedded, skipped, failed, deferred, permanentlyFailed }` | |
-| `runPrune(entityId, { retainSoftDeletedFor?, retainEventsFor?, vacuum? }?)` | `{ entries, tasks, events }` | |
+| `runPrune(entityId, { retainSoftDeletedFor?, retainEventsFor?, vacuum? }?)` | `{ entries, tasks, events }` | With `vacuum: true`, an incomplete post-VACUUM checkpoint throws `CheckpointIncompleteError` after the deletes land; persistent reader connections make this routine |
 | `runOntologyBackfill(entityId, { batchSize?, promptOverride?, classifier? }?)` | `{ scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }` | [Ontologies](/expo-llm-wiki/guides/ontologies/#backfill-untyped-facts) |
 | `getPendingMaintenance(entityIds?)` | `PendingMaintenance[]` (adds `pendingExternalDeletions?`; removal-only entities are listed only while a row is outside backoff) | [Deferred](/expo-llm-wiki/guides/maintenance/#deferred-maintenance) |
 | `runPendingMaintenance({ entityIds?, tokenBudget?, deadlineMs?, jobs? }?)` | `{ perEntity, tokensUsed, estimated, remaining, stoppedReason, externalDeletions }` | `jobs` accepts `'librarian'`, `'heal'`, `'reembed'`, `'externalDeletions'` (default all). `externalDeletions` is `{ confirmed, pending }`. It runs first and doesn't use `tokenBudget`. It awaits the `setup()` removal drain first, when one was started. |
@@ -113,7 +125,8 @@ live row for that `sourceRef`, and `factCount` counts the live rows.
 
 | Method | Returns |
 |---|---|
-| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>` |
+| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>`. A `sourceRef`/`sourceHash` forget also hard-deletes the matching stored text and passages in the same transaction; `clearAll` deletes the entity's whole store. |
+| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's supersession chain: it follows supersession links in the directions reachable from the selected entry (for A→C←B, forgetting A reaches C but not B), up to 100 links per direction. `chainEntryIds` lists the chain entries reached; `truncated: true` means links deeper than the 100-link per-direction cap were left unforgotten. The dry run counts only live entries in `deleted.entries` |
 
 ## Ontology
 

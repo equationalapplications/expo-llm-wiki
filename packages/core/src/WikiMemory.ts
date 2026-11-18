@@ -36,7 +36,7 @@ import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
 import { resolveGrounding } from './utils/grounding';
 import { IngestionService } from './services/IngestionService';
-import { MaintenanceService } from './services/MaintenanceService';
+import { MaintenanceService, type EraseReport } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
@@ -421,6 +421,21 @@ export class WikiMemory {
    * transaction.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
+    // Always-on erasure substrate (forget-erasure spec §1, ruling B): no opt-out, no option.
+    // secure_delete is connection-wide and ATTACH-wide: it covers every database on this
+    // connection. Hosts whose own code writes wiki tables through a different connection
+    // (or re-opens the file) must set `PRAGMA secure_delete=ON` there too.
+    // A refusal only warns; the honest failure belongs to erase's step 0, not setup.
+    // "FULL" is the spec's name for full zeroing; SQLite spells it `ON` (1) — `FULL` is not a
+    // SQLite value (reads back 0 on 3.53.4) and `FAST` (2) only zeroes partially.
+    await this.db.execAsync('PRAGMA secure_delete=ON');
+    const secureDelete = await this.db.getFirstAsync<{ secure_delete: number }>('PRAGMA secure_delete');
+    if (!secureDelete || Number(secureDelete.secure_delete) !== 1) {
+      console.warn(
+        '[WikiMemory] PRAGMA secure_delete=ON (full zeroing) was not honored by this SQLite runtime; ' +
+        'deleted content may remain recoverable in the database file until erase() verifies it.',
+      );
+    }
     const setupBudgetMs = this.setupBudgetMs();
     // One deadline per open (spec #280 Change 3): captured here, never re-budgeted per turn.
     const openDeadline = monotonicNow() + setupBudgetMs;
@@ -786,6 +801,16 @@ export class WikiMemory {
     return ids.filter(id => id.startsWith(options.prefix!));
   }
 
+  /**
+   * Erase everything soft-deleted, store-wide, and verify it (forget-erasure
+   * spec §2). Throws `EraseStepError` (partial report, `verified: false`) when
+   * a step fails; skipped entities report `verified: false`.
+   * `{ rebuild: true }` additionally restarts the FTS rebuild.
+   */
+  async erase(options?: { rebuild?: boolean }): Promise<EraseReport> {
+    return this.maintenanceService.erase(options);
+  }
+
   async runPrune(
     entityId: string,
     options?: {
@@ -1046,8 +1071,27 @@ export class WikiMemory {
     return (await sync) && this.searchService.isKeywordAvailable();
   }
 
-  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
-    return this.importExportService.exportDump(entityIds);
+  async exportDump(entityIds?: string[], opts?: { includeForgotten?: boolean }): Promise<MemoryDump> {
+    return this.importExportService.exportDump(entityIds, opts);
+  }
+
+  /**
+   * The retention windows `runPrune()` uses when the host runs it (shipped
+   * defaults plus host overrides), for GDPR disclosure. Nothing prunes
+   * automatically; `erase()` ignores `retainSoftDeletedFor`. Days; `null`
+   * means "keep forever". Read-only.
+   */
+  getRetentionPolicy(): {
+    retainSoftDeletedFor: number;
+    retainEventsFor: number | null;
+    pruneSupersededAfter: number | null;
+  } {
+    const c = this.options.config;
+    return {
+      retainSoftDeletedFor: c?.pruneRetainSoftDeletedFor ?? 7,
+      retainEventsFor: c?.pruneEventsAfter ?? 30,
+      pruneSupersededAfter: c?.pruneSupersededAfter ?? null,
+    };
   }
 
   /** Entity summary prose persisted from an OKF profile ≥ 1 import; null when none stored. */
@@ -1130,7 +1174,8 @@ export class WikiMemory {
   /**
    * End `oldId`'s validity and link it to its replacement (spec §4.3). One
    * transaction. Throws `WikiSupersedeError` for missing, foreign, already
-   * superseded, immutable-document, or cyclic targets.
+   * superseded, already expired, immutable-document, or cyclic targets, and
+   * for an inverted or empty interval (`invalid_interval`).
    */
   async supersede(
     entityId: string,
@@ -1139,6 +1184,19 @@ export class WikiMemory {
     options?: { validFrom?: number },
   ): Promise<{ newId: string }> {
     return this.temporalService.supersede(entityId, oldId, replacement, options);
+  }
+
+  /**
+   * End `factId`'s validity without a replacement — an archive, not a
+   * deletion (INTENT rule 12). Sets `valid_to` only: `superseded_by`,
+   * `superseded_at` and `deleted_at` stay untouched, and an `asOf` read at
+   * `T` with `COALESCE(valid_from, created_at) <= T < valid_to` still returns
+   * the fact. Throws `WikiSupersedeError` for
+   * a missing, foreign, already superseded, immutable-document, or already
+   * expired target, and for an inverted or empty interval (`invalid_interval`).
+   */
+  async expire(entityId: string, factId: string, options?: { at?: number }): Promise<void> {
+    return this.temporalService.expire(entityId, factId, options);
   }
 
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */

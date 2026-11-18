@@ -112,6 +112,7 @@ describe('public exports: temporal facts', () => {
   it('exports WikiSupersedeError and the supersede/history methods', () => {
     expect(new PublicSupersedeError('not_found').reason).toBe('not_found');
     expect(typeof PublicWikiMemory.prototype.supersede).toBe('function');
+    expect(typeof PublicWikiMemory.prototype.expire).toBe('function');
     expect(typeof PublicWikiMemory.prototype.history).toBe('function');
   });
 });

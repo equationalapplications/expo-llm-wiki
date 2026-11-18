@@ -404,17 +404,22 @@ export class EntryRepository extends BaseRepository {
   async findExistingMetadataByIds(
     ids: readonly string[],
     tx?: SQLiteAdapter,
-  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }>> {
     const executor = this.getExecutor(tx);
-    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    const rows: Array<{ id: string; entity_id: string; updated_at: number; deleted_at: number | null }> = [];
     for (let i = 0; i < ids.length; i += this.chunkSize) {
       const chunk = ids.slice(i, i + this.chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       const chunkRows = await executor.getAllAsync<any>(
-        `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+        `SELECT id, entity_id, updated_at, deleted_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
         chunk,
       );
-      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+      rows.push(...chunkRows.map((row) => ({
+        id: row.id,
+        entity_id: row.entity_id,
+        updated_at: Number(row.updated_at),
+        deleted_at: row.deleted_at == null ? null : Number(row.deleted_at),
+      })));
     }
     return rows;
   }
@@ -640,12 +645,17 @@ export class EntryRepository extends BaseRepository {
     entityId: string,
     cutoff: number,
     tx?: SQLiteAdapter,
+    opts?: { noCutoff?: boolean },
   ): Promise<Array<{ id: string; entity_id: string }>> {
     const executor = this.getExecutor(tx);
+    // noCutoff (erase): every soft-deleted row, no timestamp predicate — see
+    // getDistinctEntityIds's softDeletedAll note.
+    const cutoffPredicate = opts?.noCutoff ? '' : ' AND deleted_at <= ?';
+    const args: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     return executor.getAllAsync<{ id: string; entity_id: string }>(
       `SELECT id, entity_id FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+       WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      args,
     );
   }
 
@@ -653,10 +663,11 @@ export class EntryRepository extends BaseRepository {
    * Fetch all non-deleted entries for an entity, ordered by updated_at DESC.
    * Used by _getFullBundle().
    */
-  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ?${live} ORDER BY updated_at DESC`,
       [entityId],
     );
     return rows.map(mapRowToFact);
@@ -765,10 +776,11 @@ export class EntryRepository extends BaseRepository {
    * Fetch all non-deleted entries for an entity with embedding blobs preserved.
    * Used by ImportExportService for export/import round-tripping.
    */
-  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter, opts?: { includeDeleted?: boolean }): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const live = opts?.includeDeleted ? '' : ' AND deleted_at IS NULL';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ?${live} ORDER BY updated_at DESC`,
       [entityId],
     );
     return rows.map(mapRowToFactWithBlobs);
@@ -844,7 +856,7 @@ export class EntryRepository extends BaseRepository {
     cutoff: number,
     ids: string[],
     tx: SQLiteAdapter,
-    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[] } = {},
+    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[]; noCutoff?: boolean } = {},
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     // Spec durable-vector-removal §5.6.4: under a removal hook, never hard-delete
@@ -858,22 +870,27 @@ export class EntryRepository extends BaseRepository {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       // RETURNING names exactly the rows this statement removed: not a row the
-      // guard kept, and not a row that was already gone before it ran.
-      const deleted = (await executor.getAllAsync<{ id: string }>(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id`,
-        [entityId, cutoff, ...chunk],
-      )).map((r) => r.id);
+      // guard kept, and not a row that was already gone before it ran. deleted_at
+      // rides along so the outbox payload stamps the row's real tombstone time —
+      // never the sweep cutoff (erase sweeps with a max cutoff, and a payload
+      // stamped Number.MAX_SAFE_INTEGER would be nonsense as a timestamp).
+      const cutoffPredicate = opts.noCutoff ? '' : ' AND deleted_at <= ?';
+      const delArgs: unknown[] = opts.noCutoff ? [entityId, ...chunk] : [entityId, cutoff, ...chunk];
+      const deleted = (await executor.getAllAsync<{ id: string; deleted_at: number }>(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate} AND id IN (${placeholders})${guard} RETURNING id, deleted_at`,
+        delArgs,
+      )).map((r) => ({ id: r.id, deleted_at: typeof r.deleted_at === 'number' ? r.deleted_at : Number(r.deleted_at) }));
       totalChanges += deleted.length;
-      opts.deletedIds?.push(...deleted);
+      opts.deletedIds?.push(...deleted.map((r) => r.id));
       // Stage outbox entries for permanently deleted records
       if (deleted.length > 0) {
-        for (const id of deleted) {
+        for (const row of deleted) {
           await this.outbox.push({
             entityId,
             tableName: 'entries',
-            recordId: id,
+            recordId: row.id,
             operation: 'DELETE',
-            payload: { id, entity_id: entityId, deleted_at: cutoff },
+            payload: { id: row.id, entity_id: entityId, deleted_at: row.deleted_at },
           }, tx);
         }
       }
@@ -1082,14 +1099,37 @@ export class EntryRepository extends BaseRepository {
     return new Set(rows.map((r) => r.id));
   }
 
+  /**
+   * Depth-aware supersession walk for chain forget (spec forget-erasure §3).
+   * Probes `maxDepth + 1` levels so a chain longer than the cap is detectable;
+   * the returned ids are capped to `maxDepth` per direction (successors nearest first; predecessors are returned farthest-first).
+   * No `deleted_at` filter: soft-deleted links still carry the chain.
+   */
+  async findSupersessionChainWalk(
+    entityId: string,
+    factId: string,
+    maxDepth: number,
+    tx?: SQLiteAdapter,
+  ): Promise<{ ids: string[]; truncated: boolean }> {
+    const { predecessors, successors } = await this.findSupersessionChainIds(entityId, factId, maxDepth + 1, tx);
+    // Cap by row DEPTH, not row count: a node with more than `maxDepth` direct
+    // predecessors (all depth 1) is a wide fan-in, not a chain longer than the
+    // cap — counting rows would set `truncated` and drop reachable rows.
+    const truncated = predecessors.some((r) => r.depth > maxDepth) || successors.some((r) => r.depth > maxDepth);
+    // predecessors are ordered farthest-first (ORDER BY depth DESC), so the nearest are at the end.
+    const pred = predecessors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
+    const succ = successors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
+    return { ids: Array.from(new Set([...succ, ...pred])), truncated };
+  }
+
   async findSupersessionChainIds(
     entityId: string,
     factId: string,
     maxDepth: number,
     tx?: SQLiteAdapter,
-  ): Promise<{ predecessors: string[]; successors: string[] }> {
+  ): Promise<{ predecessors: Array<{ id: string; depth: number }>; successors: Array<{ id: string; depth: number }> }> {
     const executor = this.getExecutor(tx);
-    const successors = await executor.getAllAsync<{ id: string }>(
+    const successors = await executor.getAllAsync<{ id: string; depth: number }>(
       `WITH RECURSIVE fwd(id, depth) AS (
          SELECT superseded_by, 1 FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND superseded_by IS NOT NULL
          UNION
@@ -1097,10 +1137,10 @@ export class EntryRepository extends BaseRepository {
          JOIN ${this.prefix}entries e ON e.id = fwd.id AND e.entity_id = ?
          WHERE e.superseded_by IS NOT NULL AND fwd.depth < ?
        )
-       SELECT id FROM fwd ORDER BY depth ASC`,
+       SELECT id, depth FROM fwd ORDER BY depth ASC`,
       [factId, entityId, entityId, maxDepth],
     );
-    const predecessors = await executor.getAllAsync<{ id: string }>(
+    const predecessors = await executor.getAllAsync<{ id: string; depth: number }>(
       `WITH RECURSIVE bwd(id, depth) AS (
          SELECT id, 1 FROM ${this.prefix}entries WHERE entity_id = ? AND superseded_by = ?
          UNION
@@ -1108,10 +1148,10 @@ export class EntryRepository extends BaseRepository {
          JOIN ${this.prefix}entries e ON e.entity_id = ? AND e.superseded_by = bwd.id
          WHERE bwd.depth < ?
        )
-       SELECT id FROM bwd ORDER BY depth DESC`,
+       SELECT id, depth FROM bwd ORDER BY depth DESC`,
       [entityId, factId, entityId, maxDepth],
     );
-    const drop = (ids: Array<{ id: string }>) => ids.map((r) => r.id).filter((id) => id !== factId);
+    const drop = (rows: Array<{ id: string; depth: number }>) => rows.filter((r) => r.id !== factId);
     return { predecessors: drop(predecessors), successors: drop(successors) };
   }
 
