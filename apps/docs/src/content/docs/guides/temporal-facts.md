@@ -54,7 +54,8 @@ start (`invalid_interval`).
 
 - is an `immutable_document` fact (re-ingest the document instead),
 - belongs to another entity,
-- is already superseded, or
+- is already superseded,
+- is already expired (`valid_to` set — an archived fact, or one with a future-dated end), or
 - would create a cycle.
 
 ## Record when events really happened

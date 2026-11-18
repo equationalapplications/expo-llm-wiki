@@ -1174,7 +1174,7 @@ export class WikiMemory {
   /**
    * End `oldId`'s validity and link it to its replacement (spec §4.3). One
    * transaction. Throws `WikiSupersedeError` for missing, foreign, already
-   * superseded, immutable-document, or cyclic targets.
+   * superseded, already expired, immutable-document, or cyclic targets.
    */
   async supersede(
     entityId: string,
