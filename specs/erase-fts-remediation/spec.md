@@ -84,9 +84,10 @@ uses (`MaintenanceService.ts:840`):
   set by `detachFts5`) so the next capable open takes the **deterministic**
   rename-retire + rebuild path (`Fts5IndexStrategy.ts:245`
   `resetAndRearm`), not a corruption-driven one.
-- **Path B — vtab present and queryable, strategy `instanceof
-  MiniSearchIndexStrategy` (config-chosen `indexStrategy:
-  'minisearch'`):** `DELETE FROM` a live FTS5 vtab's shadows is corruption
+- **Path B — vtab present and queryable, configured `indexStrategy:
+  'minisearch'` (gated on the host's config, NOT on an `instanceof`
+  check — the pre-setup placeholder strategy is also a
+  MiniSearchIndexStrategy and must never unlock Path B):** `DELETE FROM` a live FTS5 vtab's shadows is corruption
   territory (investigation landmine 1) — but the module is present and the
   MiniSearch choice is a durable host decision, so **DROP the orphaned
   vtabs outright** (`DROP TABLE IF EXISTS ${prefix}entries_fts`, same for
@@ -262,7 +263,10 @@ shadow stand-ins with a canary row; F1 (`:88-109`) — a real
 - **Clear only `_content`** — `_data/_idx/_docsize` hold postings and doc
   metadata derived from the text; leaving them defeats the canary test and
   a half-hollowed vtab is exactly the corruption case D5 must not depend
-  on accidentally. Rejected.
+  on accidentally. (The shipped preserve rule is narrower than this
+  alternative implies: `%_data` ids 1 and 10 and the whole `%_config`
+  table survive — they are fts5's own structure/config state, not text.)
+  Rejected.
 - **Gate on `!hasStrictDrain()` alone** — a stubbed strategy on a capable
   runtime would pass and take the module-less path against a live vtab
   (investigation landmine 1). The queryable probe is the gate. Rejected.
