@@ -1,6 +1,6 @@
 # forget({ eventId }) — delete librarian facts by their source-pointer event id
 
-**Status: Draft — awaiting owner gate (issue #386)**  
+**Status: Draft v2 — design ratified by the owner 2026-11-18 ("422 ratified"); review ladder in flight (Opus T3 → Fable T4 spec gate) before implementation**  
 **Intent check:** INTENT rule 2 — this change adds one optional selector
 (`eventId`) to `ForgetParams` (`packages/core/src/types.ts`) and two
 `EntryRepository` methods; it adds no columns, drops nothing, and changes no
