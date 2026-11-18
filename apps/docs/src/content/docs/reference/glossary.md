@@ -62,7 +62,8 @@ strength; no opt-out. Ships with the forget-erasure work in this release — see
 
 **Expire** — ends a fact's validity without a replacement: an archive, not a deletion. A fact
 expired with a future `at` remains live and readable until that time. The
-archived fact becomes superseded. Ships in this release — see [Temporal
+archived fact enters the superseded (archived) state; no
+replacement link is created. Ships in this release — see [Temporal
 facts](/expo-llm-wiki/guides/temporal-facts/).
 
 **Heal** — the periodic repair pass: soft-deletes wrong or superseded entries, checks

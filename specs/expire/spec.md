@@ -30,12 +30,12 @@ supersession chain and the entity's fact list.
 Not a defect: `expire()` was deliberately deferred from the forget-erasure
 lane (T11 note) so that lane stayed scoped to erasure. The temporal
 machinery it needs already exists and is exercised by `supersede()`:
-`EntryRepository.setTemporal` (`EntryRepository.ts:1035` — "write any subset
+`EntryRepository.setTemporal` ("write any subset
 of the four temporal columns"), the liveness predicates
 (`packages/core/src/utils/temporal.ts` `liveAtSql`/`isLiveAt`), the expired
-projection `findExpiredIds` (`EntryRepository.ts:1158`), and the prune hook
+projection `findExpiredIds`, and the prune hook
 that applies retention to expired rows
-(`MaintenanceService.ts:340`, gated by `pruneSupersededAfter`, off by
+(`MaintenanceService` `runPrune`, gated by `pruneSupersededAfter`, off by
 default).
 
 Evidence: the baseline `supersede()` gap is exercised by the #414
@@ -72,7 +72,7 @@ into this MINOR.
 pushed by `setTemporal` itself). `expire()` never touches `superseded_by`,
 `superseded_at`, or `deleted_at`. Because `setTemporal` filters
 `WHERE id = ? AND entity_id = ?` and returns its `changes` count
-(`EntryRepository.ts:1046-1054`), the implementation treats a
+(`EntryRepository.setTemporal`), the implementation treats a
 **`changes === 0` return as a cross_entity-class failure** — a fact owned
 by another entity must fail loudly, never resolve silently as archived.
 The fact stays in the store: current reads (`liveAtSql('current')`) exclude
@@ -89,7 +89,7 @@ already_superseded → immutable_target`), then its own expiry check last:
 - `not_found` — fact missing or `deleted_at != null`;
 - `cross_entity` — `old.entity_id !== entityId` (same check as
   `supersedeInTx`, `TemporalService.ts:29`; `findTemporalRow` has no
-  entity filter, `EntryRepository.ts:1057-1062`, so the explicit guard is
+  entity filter, so the explicit guard is
   load-bearing, backstopped by D2's `changes === 0` rule);
 - `already_superseded` — `superseded_by != null` (end validity through the
   chain, not a second verb);
@@ -106,7 +106,8 @@ fact passes and line 43 **overwrites the archived `valid_to`** with the
 new time — the archive date is lost without an error, contradicting this
 spec's rejection of silent temporal rewrites. `supersedeInTx` gains the
 guard: old row already ENDED (`valid_to` set to a time at or before the
-supersede time) → `WikiSupersedeError('already_expired')`. A future-dated
+CURRENT time, not the supersede's `validFrom`) → `WikiSupersedeError('already_expired')`;
+a back-dated `validFrom` cannot rewrite an ended archive. A future-dated
 end stays supersable — supersede's normal semantics overwrite it — because
 rejecting it would strand a live, contradictory, unlinked replacement in
 the librarian (a double-live-fact failure). `expire()` keeps the broad
@@ -136,9 +137,9 @@ non-live facts); there is no vector removal — the fact is not forgotten.
 **D5 — prune relationship: stated, covered by the glossary.** Rows with
 `valid_to` set — expired by this verb **and** superseded rows — enter the
 prune path through `findExpiredIds`
-(`EntryRepository.ts:1158`, "valid_to IS NOT NULL"), which
+(`EntryRepository.findExpiredIds`, "valid_to IS NOT NULL"), which
 `runPrune` soft-deletes only when `pruneSupersededAfter` is set (off by
-default), after their retention window (`MaintenanceService.ts:335-354`);
+default), after their retention window (`MaintenanceService.runPrune`);
 retention is host policy. `expire()` itself deletes nothing. No INTENT
 rule 12 amendment is needed: the glossary already classifies
 expire-ended facts as **Superseded** ("ended without a replacement by
@@ -148,13 +149,14 @@ engine documents the expired-or-superseded pairing
 (`packages/core/src/types.ts:309-311`). The only INTENT.md edit in this
 PR: the stale sentence "expire() is ratified and needs a spec home before
 it is built" (:346-347) becomes "expire()'s spec home is `specs/expire/`"
-— committed on this PR's branch at implementation time, before merge (the
-draft phase carries only `specs/expire/`).
+— committed on this PR's branch at implementation time, before merge.
 No prune code changes.
 
 **D6 — exposure: core only.** The react/expo wrappers do not forward
 `supersede()` today (grep-verified); `expire()` matches. No wrapper, no
-schema migration (no new columns or tables).
+schema migration (no new columns or tables). The MCP server's
+`supersedeFact` tool (`packages/mcp-server/src/tools/memory-supersede.ts`)
+goes through the remote operation, not `WikiMemory`, and is out of scope.
 
 **D7 — docs.** apps/docs: the temporal/supersession API page gains `expire()`
 alongside `supersede`/`history`, and the temporal guide names it per INTENT

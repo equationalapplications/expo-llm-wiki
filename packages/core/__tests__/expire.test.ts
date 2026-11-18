@@ -126,6 +126,18 @@ describe('expire()', () => {
     expect((await temporal('f1')).superseded_by).toBeNull();
   });
 
+  it('back-dated supersede cannot rewrite an ended archive (D3b guards against now)', async () => {
+    await insert('f1');
+    await wiki.expire('e1', 'f1', { at: 500 });
+    await insert('v2');
+    const count = async () => (await db.getAllAsync(`SELECT 1 FROM llm_wiki_entries`)).length;
+    const before = await count();
+    await expect(wiki.supersede('e1', 'f1', 'v2', { validFrom: 400 })).rejects.toMatchObject({ reason: 'already_expired' });
+    expect((await temporal('f1')).valid_to).toBe(500);
+    expect((await temporal('f1')).superseded_by).toBeNull();
+    expect(await count()).toBe(before);
+  });
+
   it('double-supersede regression: already_superseded still wins over already_expired', async () => {
     await insert('v1');
     const { newId: v2 } = await wiki.supersede('e1', 'v1', { title: 'v2', body: 'b' }, { validFrom: 200 });
