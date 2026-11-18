@@ -74,9 +74,10 @@ interface MemoryBundle {
 `getMemoryBundle()` when the entity has one. A merge import trusts events at or before it as
 already consolidated at the source and keeps their dates. Events dated *after* the watermark
 are not trusted that way: if such an event's date would sort behind the local librarian
-position (or its date is unusable), the import re-dates it just after the current time — or
-just after the librarian position, if that is later — keeping its order, and reports
-`event_created_at_restamped`. **The watermark is not the source text store** —
+position, the import re-dates it just after the current time — or just after the librarian
+position, if that is later — keeping its order, and reports `event_created_at_restamped`.
+(An unusable date is re-dated the same way regardless of the watermark, in merge and replace
+imports alike.) **The watermark is not the source text store** —
 it tracks the librarian, not stored text.
 
 ## `WikiEdge`

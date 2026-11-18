@@ -89,7 +89,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   erase_retired_read_failed: 'Erase stopped: the retired-FTS-table inventory read failed; the erase is incomplete and unverified.',
   erase_entity_skipped: 'Erase skipped an entity because another operation held its prune lock.',
   erase_registry_sweep_skipped: 'Erase skipped the source_ref_index tombstone sweep because the table does not exist (pre-v9 store).',
-  import_tombstone_skipped: 'Import skipped live dump rows whose ids were forgotten locally; a restore never resurrects forgotten facts.',
+  import_tombstone_skipped: 'Import skipped live dump rows (facts and tasks) whose ids were forgotten locally. The protection holds while the tombstone is retained; once a prune hard-deletes the row, an old dump can import the fact again — see the OKF guide’s restore caveat.',
   event_created_at_clamped: 'Imported events dated in the future were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
   event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were adjusted: an affected created_at was re-dated just after the current time, or after the librarian position if that is later, keeping their order; an unusable occurred_at was cleared.',
   external_deletion_pending: 'Removals owed to the external vector index are still pending.',

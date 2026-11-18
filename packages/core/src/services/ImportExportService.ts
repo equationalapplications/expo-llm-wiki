@@ -263,7 +263,7 @@ export class ImportExportService {
     const preservedBlobDims = new Set<number>();
     const softDeletedFactIds: string[] = [];
     const softDeletedTaskIds: string[] = [];
-    const clippedTextByFactId = new Map<string, { title: string; body: string }>();
+    const clippedTextByFactId = new Map<string, { title: string; body: string; tags: string[] }>();
     let clampedEvents = 0;
     let tombstoneSkipped = 0;
     const restamped = { behind_watermark: 0, invalid: 0 };
@@ -277,7 +277,7 @@ export class ImportExportService {
           tx,
           false,
         );
-        softDeletedFactIds.push(...deletedLiveFactIds);
+        for (const fid of deletedLiveFactIds) softDeletedFactIds.push(fid);
         await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
         for (const t of await this.taskRepo.findAllByEntityId(entityId, tx)) softDeletedTaskIds.push(t.id);
         await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
@@ -409,7 +409,10 @@ export class ImportExportService {
 
         const safeTitle = clip(String(fact.title ?? ''), IMPORT_TITLE_MAX);
         const safeBody = clip(String(fact.body ?? ''), IMPORT_BODY_MAX);
-        clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody });
+        // Tags are part of the embedded text, so the ACCEPTED row's tags are
+        // captured here — a later rejected row's tags must never ride along.
+        const safeTags = Array.isArray(fact.tags) ? fact.tags : [];
+        clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody, tags: safeTags });
 
         // Normalize source_ref using the same rules as ingestDocument and the
         // startup migration. Persisting the raw value would let a later re-ingest
@@ -711,36 +714,33 @@ export class ImportExportService {
       await this.searchService.sync(entityId, { ids: [...new Set([...upsertedFactIds, ...softDeletedFactIds])] });
     }
 
-    for (const fact of bundle.facts) {
-      if (
-        fact.deleted_at == null &&
-        liveEmbedFactIds.has(fact.id) &&
-        !factsWithPreservedBlob.has(fact.id)
-      ) {
-        const clipped = clippedTextByFactId.get(fact.id);
+    // One embed per UNIQUE live id, built from the ACCEPTED row's clipped
+    // text and tags. Iterating bundle.facts instead would embed once per dump
+    // row — a duplicate call for the same id, and a rejected row's tags could
+    // ride along on the accepted row's text.
+    for (const id of liveEmbedFactIds) {
+      if (!factsWithPreservedBlob.has(id)) {
+        const clipped = clippedTextByFactId.get(id);
         const embedded = await this.embeddingService.embedFact({
-          id: fact.id,
+          id,
           entity_id: entityId,
-          title: clipped?.title ?? fact.title,
-          body: clipped?.body ?? fact.body,
-          tags:
-            Array.isArray(fact.tags) || typeof fact.tags === 'string'
-              ? fact.tags
-              : [],
+          title: clipped?.title ?? '',
+          body: clipped?.body ?? '',
+          tags: clipped?.tags ?? [],
         }, { operation: 'importDump', trigger: 'call' });
         // Under forceDeleteIgnoreRankerHook the index is decommissioned: no removal calls.
         if (!embedded && this.options.forceDeleteIgnoreRankerHook !== true) {
           try {
-            await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
+            await this.embeddingService.notifyEmbeddingPersisted(entityId, id, null);
           } catch (hookErr) {
             console.warn(
-              `[WikiMemory] onEmbeddingPersisted hook failed for unembedded fact ${fact.id}:`,
+              `[WikiMemory] onEmbeddingPersisted hook failed for unembedded fact ${id}:`,
               hookErr,
             );
             this.embeddingService.reportHookFailed(
               { operation: 'importDump', trigger: 'call' },
               entityId,
-              fact.id,
+              id,
             );
           }
         }

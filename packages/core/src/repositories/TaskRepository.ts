@@ -301,17 +301,23 @@ export class TaskRepository extends BaseRepository {
     entityId: string,
     cutoff: number,
     tx: SQLiteAdapter,
+    opts?: { noCutoff?: boolean },
   ): Promise<number> {
     const executor = this.getExecutor(tx);
+    // noCutoff (erase): every soft-deleted row, no timestamp predicate — a
+    // nanosecond-epoch or TEXT-valued deleted_at never matches `<= cutoff`.
+    const cutoffPredicate = opts?.noCutoff ? '' : ' AND deleted_at <= ?';
+    const selectArgs: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     const rowsToDelete = await executor.getAllAsync<{ id: string; deleted_at: number }>(
-      `SELECT id, deleted_at FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+      `SELECT id, deleted_at FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      selectArgs,
     );
     if (rowsToDelete.length === 0) return 0;
 
+    const deleteArgs: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     const result = await executor.runAsync(
-      `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+      `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      deleteArgs,
     );
 
     for (const row of rowsToDelete) {

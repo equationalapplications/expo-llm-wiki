@@ -125,7 +125,7 @@ with a matching hash (`{ charCount }`), text stored under a stale hash
 | Method | Returns |
 |---|---|
 | `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>`. A `sourceRef`/`sourceHash` forget also hard-deletes the matching stored text and passages in the same transaction; `clearAll` deletes the entity's whole store. |
-| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's supersession chain: it follows supersession links in the directions reachable from the selected entry (for A→C←B, forgetting A reaches C but not B), up to 100 links per direction. `chainEntryIds` lists the chain entries reached; `truncated: true` means a chain longer than 100 links was cut at the cap, or links deeper than the per-direction cap were left. The dry run counts only live entries in `deleted.entries` |
+| `forget(entityId, { entryId, includeChain: true }, { dryRun? }?)` | `Promise<ForgetResult>` with `chainEntryIds`. Also forgets the entry's supersession chain: it follows supersession links in the directions reachable from the selected entry (for A→C←B, forgetting A reaches C but not B), up to 100 links per direction. `chainEntryIds` lists the chain entries reached; `truncated: true` means links deeper than the 100-link per-direction cap were left unforgotten. The dry run counts only live entries in `deleted.entries` |
 
 ## Ontology
 

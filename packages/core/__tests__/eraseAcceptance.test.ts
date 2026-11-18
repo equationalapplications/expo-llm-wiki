@@ -132,6 +132,33 @@ describe('fact-path tier (spec Test plan #1)', () => {
     await h.raw.closeAsync();
   }, 60_000);
 
+  it('a far-future (nanosecond-epoch) or TEXT-valued deleted_at is still erased — no cutoff, gate or not', async () => {
+    const h = await make();
+    // A foreign exporter writing nanosecond timestamps produces ~1.7e18 tombstones
+    // through the documented OKF restore path (parseOkfBundle passes finite
+    // numbers through); raw importDump stores deleted_at with no checks at all,
+    // so a TEXT value is storable too. SQLite ranks TEXT above INTEGER, so a
+    // numeric `deleted_at <= ?` cutoff never matches either row.
+    await h.raw.runAsync(
+      `INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, 1, 1, ?)`,
+      ['ns-tomb-entry', E, 'ns entry', `${CANARY} nanosecond tombstone entry body`, 'ref-ns', 1_700_000_000_000_000_000],
+    );
+    await h.raw.runAsync(
+      `INSERT INTO ${P}tasks (id, entity_id, description, status, priority, created_at, updated_at, deleted_at) VALUES (?, ?, ?, 'pending', 0, 1, 1, ?)`,
+      ['ns-tomb-task', E, `${CANARY} nanosecond tombstone task body`, 'not-a-number'],
+    );
+    await h.raw.execAsync('PRAGMA wal_checkpoint(TRUNCATE)');
+    await expectPresent(h);
+    const report = await h.wiki.erase();
+    expect(report.verified).toBe(true);
+    const entry = await h.raw.getFirstAsync(`SELECT id FROM ${P}entries WHERE id = 'ns-tomb-entry'`);
+    const task = await h.raw.getFirstAsync(`SELECT id FROM ${P}tasks WHERE id = 'ns-tomb-task'`);
+    expect(entry).toBeFalsy();
+    expect(task).toBeFalsy();
+    await expectClean(h);
+    await h.raw.closeAsync();
+  }, 60_000);
+
   it('documented recipe: forget({ entryId }) → erase() — whole-file absence', async () => {
     const h = await factFixture();
     await h.wiki.forget(E, { entryId: h.entryId });

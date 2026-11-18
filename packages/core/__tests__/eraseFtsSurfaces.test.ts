@@ -130,6 +130,10 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     const strat = search(t.wiki).indexStrategy;
     vi.spyOn(strat, 'drainPassagesStrict').mockImplementation(async () => { order.push('drain'); throw new Error('boom'); });
     const svc = search(t.wiki) as any;
+    // Isolate the STRICT drain's chaining: the ledger drain step is itself
+    // chain-fed, so stub it out — otherwise a chain-order assertion here would
+    // pass even if drainPassagesStrict were called unchained.
+    vi.spyOn(svc, 'drainEntriesLedgerSurfaced').mockResolvedValue(undefined);
     // Queue an explicitly blocked predecessor so the chain is genuinely held:
     // the drain must wait for prior sync work, not merely follow the chain tail.
     let release!: () => void;

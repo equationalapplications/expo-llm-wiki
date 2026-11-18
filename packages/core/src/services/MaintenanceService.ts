@@ -243,7 +243,7 @@ export interface EraseReport {
   failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | null;
   /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */
   runtime: string;
-  /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds. */
+  /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds, or was skipped by design (`registry_sweep` on a pre-v9 store; `tombstone_gate` when holds/skips already account for surviving rows). */
   steps: Array<{ step: string; outcome: 'ok' | 'partial' | 'failed' }>;
 }
 
@@ -301,7 +301,7 @@ export class MaintenanceService {
    */
   private async _runPrune(
     entityId: string,
-    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[]; softDeletedCutoff?: number } | undefined,
+    options: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean; syncedIds?: string[]; softDeletedCutoff?: number | 'all' } | undefined,
     owner: 'host' | 'erase',
   ): Promise<{ entries: number; tasks: number; events: number }> {
     this.jobManager.acquireLock('prune', entityId, undefined, owner);
@@ -354,11 +354,14 @@ export class MaintenanceService {
       }
 
       if (retainSoftDeletedFor !== null) {
-        // softDeletedCutoff: erase's override — a max cutoff hard-deletes every
-        // soft-deleted row, including rows tombstoned with a future deleted_at
-        // (imported as supplied, never clamped), which a `now` cutoff would leave behind.
-        const cutoff = options?.softDeletedCutoff ?? now - retainSoftDeletedFor * 86400000;
-        const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
+        // softDeletedCutoff: erase's override. 'all' means NO timestamp
+        // predicate at all — a numeric cutoff (even MAX_SAFE_INTEGER) is still
+        // a cutoff, and a tombstone above it (nanosecond-epoch exports) or a
+        // TEXT-valued one (SQLite ranks TEXT above INTEGER) would escape the
+        // walk and then fail the step-9 gate on every erase.
+        const softDeletedAll = options?.softDeletedCutoff === 'all';
+        const cutoff = softDeletedAll ? 0 : (options?.softDeletedCutoff as number) ?? now - retainSoftDeletedFor * 86400000;
+        const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff, undefined, { noCutoff: softDeletedAll });
 
         const prunableIds = entriesToDelete.map((r) => r.id);
         const vr = this.vectorRemoval;
@@ -422,7 +425,7 @@ export class MaintenanceService {
           }
           if (deletable.length > 0) {
             const deletedIds: string[] = [];
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger, deletedIds });
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger, deletedIds, noCutoff: softDeletedAll });
             if (hookLedger) {
               // A removal re-owed inside this transaction (host raw SQL on the
               // shared connection) made the guard keep its fact: count it as
@@ -444,7 +447,7 @@ export class MaintenanceService {
               else await vrRepo.deleteForFacts(entityId, deletable, tx, 'confirmedGone');
             }
           }
-          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
+          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx, { noCutoff: softDeletedAll });
         });
         if (hookLedger) {
           const keptSet = new Set(kept);
@@ -590,11 +593,12 @@ export class MaintenanceService {
       ok('secure_delete');
 
       // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
-      // No cutoff: rows tombstoned with a future deleted_at (imports never clamp)
-      // must still be walked and hard-deleted, or erase reports verified while
-      // their text survives in the database file.
+      // softDeletedAll: rows tombstoned with ANY deleted_at value — a future
+      // or TEXT-valued one (imports never clamp; SQLite ranks TEXT above
+      // INTEGER) — must still be walked and hard-deleted, or erase reports
+      // verified while their text survives in the database file.
       try {
-        report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: Number.MAX_SAFE_INTEGER });
+        report.entities = await this.metadataRepo.getDistinctEntityIds(undefined, { softDeletedAll: true });
       } catch (err) {
         report.failedStep = 'prune';
         throw new EraseStepError('erase_prune_failed', 'erase stopped at step 1: the entity walk failed; erasure is unverified', report, err);
@@ -604,7 +608,7 @@ export class MaintenanceService {
         const syncedIds: string[] = [];
         syncedByEntity.set(entityId, syncedIds);
         try {
-          await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds, softDeletedCutoff: Number.MAX_SAFE_INTEGER }, 'erase');
+          await this._runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, syncedIds, softDeletedCutoff: 'all' }, 'erase');
         } catch (err) {
           if (err instanceof PrunePartialFailureError) {
             report.holds.push({ entityId, deleted: err.deleted, deletedTasks: err.deletedTasks, failedAt: err.failedAt, remaining: err.remaining });

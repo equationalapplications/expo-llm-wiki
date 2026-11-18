@@ -645,12 +645,17 @@ export class EntryRepository extends BaseRepository {
     entityId: string,
     cutoff: number,
     tx?: SQLiteAdapter,
+    opts?: { noCutoff?: boolean },
   ): Promise<Array<{ id: string; entity_id: string }>> {
     const executor = this.getExecutor(tx);
+    // noCutoff (erase): every soft-deleted row, no timestamp predicate — see
+    // getDistinctEntityIds's softDeletedAll note.
+    const cutoffPredicate = opts?.noCutoff ? '' : ' AND deleted_at <= ?';
+    const args: unknown[] = opts?.noCutoff ? [entityId] : [entityId, cutoff];
     return executor.getAllAsync<{ id: string; entity_id: string }>(
       `SELECT id, entity_id FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-      [entityId, cutoff],
+       WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate}`,
+      args,
     );
   }
 
@@ -851,7 +856,7 @@ export class EntryRepository extends BaseRepository {
     cutoff: number,
     ids: string[],
     tx: SQLiteAdapter,
-    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[] } = {},
+    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[]; noCutoff?: boolean } = {},
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     // Spec durable-vector-removal §5.6.4: under a removal hook, never hard-delete
@@ -869,10 +874,12 @@ export class EntryRepository extends BaseRepository {
       // rides along so the outbox payload stamps the row's real tombstone time —
       // never the sweep cutoff (erase sweeps with a max cutoff, and a payload
       // stamped Number.MAX_SAFE_INTEGER would be nonsense as a timestamp).
+      const cutoffPredicate = opts.noCutoff ? '' : ' AND deleted_at <= ?';
+      const delArgs: unknown[] = opts.noCutoff ? [entityId, ...chunk] : [entityId, cutoff, ...chunk];
       const deleted = (await executor.getAllAsync<{ id: string; deleted_at: number }>(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id, deleted_at`,
-        [entityId, cutoff, ...chunk],
-      )).map((r) => ({ id: r.id, deleted_at: Number(r.deleted_at) }));
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL${cutoffPredicate} AND id IN (${placeholders})${guard} RETURNING id, deleted_at`,
+        delArgs,
+      )).map((r) => ({ id: r.id, deleted_at: typeof r.deleted_at === 'number' ? r.deleted_at : Number(r.deleted_at) }));
       totalChanges += deleted.length;
       opts.deletedIds?.push(...deleted.map((r) => r.id));
       // Stage outbox entries for permanently deleted records
@@ -1095,7 +1102,7 @@ export class EntryRepository extends BaseRepository {
   /**
    * Depth-aware supersession walk for chain forget (spec forget-erasure §3).
    * Probes `maxDepth + 1` levels so a chain longer than the cap is detectable;
-   * the returned ids are capped to `maxDepth` per direction (nearest first).
+   * the returned ids are capped to `maxDepth` per direction (successors nearest first; predecessors are returned farthest-first).
    * No `deleted_at` filter: soft-deleted links still carry the chain.
    */
   async findSupersessionChainWalk(
@@ -1109,7 +1116,7 @@ export class EntryRepository extends BaseRepository {
     // predecessors (all depth 1) is a wide fan-in, not a chain longer than the
     // cap — counting rows would set `truncated` and drop reachable rows.
     const truncated = predecessors.some((r) => r.depth > maxDepth) || successors.some((r) => r.depth > maxDepth);
-    // predecessors are ordered farthest-first, so the nearest are at the end.
+    // predecessors are ordered farthest-first (ORDER BY depth DESC), so the nearest are at the end.
     const pred = predecessors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
     const succ = successors.filter((r) => r.depth <= maxDepth).map((r) => r.id);
     return { ids: Array.from(new Set([...succ, ...pred])), truncated };

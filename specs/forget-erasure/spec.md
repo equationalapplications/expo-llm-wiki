@@ -1,6 +1,6 @@
 # Forget must erase — FTS5 erasure, chain forget, erase()
 
-**Status: rev 28 — implementation folded through Opus delta r2 (PR #404) — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
+**Status: rev 28 — implementation folded through Opus delta r2 (PR #404), then the post-implementation review folds (2026-11-17: CodeRabbit r1–r3, Opus + Sonnet xHigh ladders): spec §2 gained step 9 (final tombstone gate), §8's public-names list grew (`erase_tombstones_remaining`, `erase_tombstone_gate_failed`, `erase_retired_read_failed`, `erase_secure_delete_read_failed`, the entity-walk `erase_prune_failed` path), and the tombstone-wins guard wording covers facts and tasks — rev 27 folded the owner spec stop A–H RATIFIED (2026-11-17); rev 28
 genericized all private-repo host references per owner ruling (2026-11-17: the family's
 hosted cloud service is private and provides no value to the engine's public docs —
 retention opinions stay

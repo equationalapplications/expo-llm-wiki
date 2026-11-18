@@ -203,3 +203,63 @@ describe('erase() prune core (spec §2 steps 0/1/1b)', () => {
     expect(diagnostics.some((d) => d.code === 'erase_registry_sweep_skipped')).toBe(true);
   });
 });
+
+describe('Sonnet/Opus fold: new erase failure paths are typed and surfaced', () => {
+  it('step 0: a pragma read failure throws erase_secure_delete_read_failed with the report', async () => {
+    const t = await make();
+    const m: any = svc(t.wiki);
+    const spy = vi.spyOn(m.db, 'getFirstAsync').mockImplementation(async (sql: string) => {
+      if (sql.toUpperCase().includes('PRAGMA SECURE_DELETE')) throw new Error('driver gone');
+      return null as any;
+    });
+    let caught: any;
+    try { await m.erase(); } catch (e) { caught = e; }
+    spy.mockRestore();
+    expect(caught?.code).toBe('erase_secure_delete_read_failed');
+    expect(caught?.report.failedStep).toBe('secure_delete');
+    expect(caught?.report.verified).toBe(false);
+  });
+
+  it('step 1: an entity-walk failure throws erase_prune_failed with the report', async () => {
+    const t = await make();
+    const m: any = svc(t.wiki);
+    const spy = vi.spyOn(m.metadataRepo, 'getDistinctEntityIds').mockRejectedValue(new Error('walk boom'));
+    let caught: any;
+    try { await m.erase(); } catch (e) { caught = e; }
+    spy.mockRestore();
+    expect(caught?.code).toBe('erase_prune_failed');
+    expect(caught?.report.failedStep).toBe('prune');
+    expect(caught?.report.verified).toBe(false);
+  });
+
+  it('step 4 re-run: a retired-table read failure throws erase_retired_read_failed and emits its error diagnostic', async () => {
+    const t = await make();
+    const m: any = svc(t.wiki);
+    const spy = vi.spyOn(m.db, 'getAllAsync').mockImplementation(async (sql: string) => {
+      if (sql.includes('entries_fts_retired_%')) throw new Error('read boom');
+      return [] as any;
+    });
+    let caught: any;
+    try { await m.erase(); } catch (e) { caught = e; }
+    spy.mockRestore();
+    expect(caught?.code).toBe('erase_retired_read_failed');
+    expect(caught?.report.failedStep).toBe('retired_reclaim');
+    expect(t.diagnostics.some((d) => d.code === 'erase_retired_read_failed' && d.severity === 'error')).toBe(true);
+  });
+
+  it('step 9: a gate count failure throws erase_tombstone_gate_failed with the report', async () => {
+    const t = await make();
+    const m: any = svc(t.wiki);
+    const spy = vi.spyOn(m.db, 'getFirstAsync').mockImplementation(async (sql: string) => {
+      if (sql.toUpperCase().includes('PRAGMA SECURE_DELETE')) return { secure_delete: 1 } as any;
+      if (sql.includes('COUNT(*)') && sql.includes('deleted_at IS NOT NULL')) throw new Error('count boom');
+      return null as any;
+    });
+    let caught: any;
+    try { await m.erase(); } catch (e) { caught = e; }
+    spy.mockRestore();
+    expect(caught?.code).toBe('erase_tombstone_gate_failed');
+    expect(caught?.report.failedStep).toBe('tombstone_gate');
+    expect(caught?.report.verified).toBe(false);
+  });
+});

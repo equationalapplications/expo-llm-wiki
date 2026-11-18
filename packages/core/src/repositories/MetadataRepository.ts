@@ -211,8 +211,22 @@ export class MetadataRepository extends BaseRepository {
    * that cutoff (erase's hard-delete walk, forget-erasure spec §2). Without
    * the option the host-facing semantics above are unchanged.
    */
-  async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number }): Promise<string[]> {
+  async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number; softDeletedAll?: boolean }): Promise<string[]> {
     const executor = this.getExecutor(tx);
+    if (opts?.softDeletedAll) {
+      // Erase's walk: EVERY soft-deleted row, no timestamp predicate at all. A
+      // numeric cutoff (even MAX_SAFE_INTEGER) is still a cutoff — a tombstone
+      // above it (nanosecond-epoch exports) or a TEXT-valued one (SQLite ranks
+      // TEXT above INTEGER, so `<= number` never matches) would escape.
+      const rows = await executor.getAllAsync<{ entity_id: string }>(
+        `SELECT DISTINCT entity_id FROM (
+           SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL
+           UNION
+           SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL
+         ) ORDER BY entity_id COLLATE BINARY`,
+      );
+      return rows.map(r => r.entity_id);
+    }
     if (opts?.softDeletedAtOrBefore !== undefined) {
       const cutoff = opts.softDeletedAtOrBefore;
       const rows = await executor.getAllAsync<{ entity_id: string }>(
