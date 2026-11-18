@@ -882,7 +882,6 @@ export class MaintenanceService {
         if (!report.ftsOrphansCleared.includes(name)) report.ftsOrphansCleared.push(name);
         emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: name } });
       }
-      });
       report.steps.push({ step: 'fts_orphan_clear', outcome: 'ok' });
     } catch (err) {
       if (err instanceof EraseStepError) throw err;
