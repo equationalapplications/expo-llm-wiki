@@ -150,6 +150,11 @@ describe('ops librarian end to end', () => {
     await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
     await wiki.runLibrarian('u');
     await pending;
+    // Pin the precondition the guard relies on: the archive (valid_to = 50) was
+    // in place BEFORE applyOps ran. If a future async adapter defers this
+    // UPDATE past the op, the test silently becomes the future-dated path.
+    const before = await db.getFirstAsync<any>(`SELECT valid_to FROM llm_wiki_entries WHERE id='seattle'`);
+    expect(before.valid_to).toBe(50);
     const rejected = ofCode(diagnostics, 'librarian_op_rejected');
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as any).detail.reason).toBe('already_expired');

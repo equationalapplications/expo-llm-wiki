@@ -63,7 +63,7 @@ cannot be expired before its `created_at` (the lower bound is `created_at` only 
 "retro-active" reaches back only to the fact's own validity start), and a
 default `at` can reject on a fact whose `valid_from` is future-dated.
 `supersede()` has the same pre-existing gap
-(`TemporalService.ts:43` never checks `t` against the old row's start);
+(`supersedeInTx` never checks `t` against the old row's start);
 that is a separate concern, filed as its own issue (#414), not folded
 into this MINOR.
 
@@ -82,9 +82,12 @@ deletion" wording of INTENT rule 12, and the INTENT glossary's own
 classification ("An archive is a superseded fact", ~:97-104).
 
 **D3 — guards (reuse `WikiSupersedeError`, thin; order mirrors the code).**
-`expire()` reuses `supersedeInTx`'s guard set in `supersedeInTx`'s own
-evaluation order (`TemporalService.ts:27-31`: `not_found → cross_entity →
-already_superseded → immutable_target`), then its own expiry check last:
+`expire()` reuses `supersedeInTx`'s guard set in the same evaluation
+order (in `supersedeInTx`: `not_found → cross_entity →
+already_superseded → already_expired → immutable_target`), then its own
+interval check last. The `already_expired` guard sits after
+`already_superseded` in BOTH verbs (the D3b placement), so the two verbs
+report the same reason for the same row:
 
 - `not_found` — fact missing or `deleted_at != null`;
 - `cross_entity` — `old.entity_id !== entityId` (same check as
@@ -93,11 +96,11 @@ already_superseded → immutable_target`), then its own expiry check last:
   load-bearing, backstopped by D2's `changes === 0` rule);
 - `already_superseded` — `superseded_by != null` (end validity through the
   chain, not a second verb);
-- `immutable_target` — `source_type === 'immutable_document'` (same rule as
-  supersede: documents are host property, never verb-mutated);
 - `already_expired` — `valid_to != null` (no silent overwrite; the host
   decides). Future-dated expiries are included: a `valid_to` still in the
   future is a scheduled end of validity, and correcting it is out of scope
+- `immutable_target` — `source_type === 'immutable_document'` (same rule as
+  supersede: documents are host property, never verb-mutated);
   (Non-goals).
 
 **D3b — supersede-after-expire is rejected, not silently rewritten.**
@@ -108,18 +111,23 @@ spec's rejection of silent temporal rewrites. `supersedeInTx` gains the
 guard: old row already ENDED (`valid_to` set to a time at or before the
 CURRENT time, not the supersede's `validFrom`) → `WikiSupersedeError('already_expired')`;
 a back-dated `validFrom` cannot rewrite an ended archive. A future-dated
-end stays supersable — supersede's normal semantics overwrite it — because
+end stays supersable — supersede's normal semantics overwrite it (a
+supersede with `validFrom` later than the scheduled end EXTENDS the end
+to the supersede time; documented in the temporal guide) — because
 rejecting it would strand a live, contradictory, unlinked replacement in
 the librarian (a double-live-fact failure). `expire()` keeps the broad
 re-expire guard (`valid_to != null`). **Guard placement:** the check runs **after** the
-existing `already_superseded` check (`TemporalService.ts:30`) — every
+existing `already_superseded` check (immediately after that check) — every
 superseded row also carries `valid_to` (line 43 writes it), so a
 misplaced check would turn every double-supersede into `already_expired`
 and break the existing expectations (`supersede.test.ts:64-70`). The
 librarian path shares the function
 (`apply.ts:204`), so the guard covers it too; a host that wants a
 replacement for an archived fact supersedes the **successor** fact, not
-the archived one. Test plan item 2b pins this, including the
+the archived one. For an ENDED archive the rejection still strands the
+librarian's already-inserted replacement as a live, unlinked fact — that
+strand-on-reject shape is inherited from every other rejection reason
+(pre-existing, pinned by test), not introduced by this guard. Test plan item 2b pins this, including the
 double-supersede regression case.
 
 The `WikiSupersedeReason` union gains `'already_expired'` and
@@ -146,7 +154,7 @@ expire-ended facts as **Superseded** ("ended without a replacement by
 `expire()`. An archive is a superseded fact", INTENT.md ~:97-104), so
 rule 12's "turn superseded into forgotten" already covers them, and the
 engine documents the expired-or-superseded pairing
-(`packages/core/src/types.ts:309-311`). The only INTENT.md edit in this
+(`pruneSupersededAfter`, in the options type). The only INTENT.md edit in this
 PR: the stale sentence "expire() is ratified and needs a spec home before
 it is built" (:346-347) becomes "expire()'s spec home is `specs/expire/`"
 — committed on this PR's branch at implementation time, before merge.
