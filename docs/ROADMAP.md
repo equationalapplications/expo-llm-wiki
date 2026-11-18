@@ -110,6 +110,7 @@ sorts the kinds dependably.
 ### Step 3 — A source pointer on every librarian fact — PLANNED
 
 Done — merged 2026-11-14, PR #385, spec [source-pointers](../specs/source-pointers/spec.md)
+Follow-up done — merged 2026-11-18, PR #422, spec [forget-by-event-id](../specs/forget-by-event-id/spec.md) (issue #386)
 
 Ops facts the librarian writes can carry a pointer to where they came
 from: the source event and, when grounding permits, the verified quote
@@ -119,9 +120,9 @@ prune inside the fact's own record (owner ruling, 2026-11-14). Today a
 host hides a quote by forgetting its fact by entry id,
 `forget({ entryId })` — reads and exports drop it immediately, and prune
 purges the row; deleting quotes by event id, `forget({ eventId })`,
-landed in PR
-[#422](https://github.com/equationalapplications/expo-llm-wiki/pull/422)
-(`specs/forget-by-event-id/`, issue
+is specified in
+[`specs/forget-by-event-id/`](../specs/forget-by-event-id/spec.md)
+(issue
 [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).
 

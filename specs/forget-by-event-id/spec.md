@@ -169,10 +169,17 @@ JSON match itself.
 `softDeleteBySource`'s select-ids → guarded-UPDATE → **one outbox `DELETE`
 row per changed row** shape in the same transaction
 (`EntryRepository.ts:585-637`; payload `{ id, entity_id, deleted_at }`,
-`tx` required). A bare UPDATE would tombstone locally while synced replicas
-never learn of the removal — the exact failure this selector exists to
-prevent. This is not an implementation detail; it is the acceptance surface
-(test 10).
+`tx` required). Qualified honestly: the outbox write happens when the
+outbox is enabled (`config.enableOutbox`) — `OutboxRepository.push`
+no-ops otherwise (`OutboxRepository.ts:29`), exactly as it does for every
+other selector. An engine configured without an outbox has no sync
+consumers by construction, so "no rows" is the correct behavior there;
+the guarantee is **parity with `softDeleteBySource` under the same
+configuration**, not an unconditional write. A bare UPDATE would
+tombstone locally while enabled replicas never learn of the removal — the
+exact failure this selector exists to prevent. This is not an
+implementation detail; it is the acceptance surface (test 11, which runs
+with the outbox enabled).
 
 ### D4 — Deletion scope: entries only
 
