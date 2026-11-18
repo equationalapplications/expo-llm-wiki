@@ -10,7 +10,7 @@ import { openTestDatabase } from './helpers/sqliteAdapter';
 import { WikiMemory } from '../src/index';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
 import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
-import { FTS5_RETIRED_TABLES_KEY } from '../src/services/search/fts5Sql';
+import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY } from '../src/services/search/fts5Sql';
 import { EraseStepError } from '../src/services/MaintenanceService';
 import type { WikiDiagnostic, WikiOptions } from '../src/types';
 
@@ -204,6 +204,67 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(report.verified).toBe(true);
     expect(report.ftsOrphansCleared).toContain(`${P}entries_fts_content`);
     expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts_content`))!.n).toBe(0);
+  });
+
+  it('Path A: module-less probe empties shadows + companions and forces detached state (AC1/AC2 stand-in)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    // With the module loaded SQLite write-protects real shadow tables, so stand in for a
+    // module-less open: plain tables carry the vtab name and the shadow names (canary rows).
+    await t.raw.execAsync(`DROP TABLE ${P}entries_fts; DROP TABLE ${P}source_passages_fts;
+      CREATE TABLE ${P}entries_fts (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts VALUES (1, 'CANARY-vtab');`);
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-secret');`);
+    }
+    await t.raw.runAsync(`INSERT INTO ${P}fts_pending (entity_id, id) VALUES ('e1', 'r0')`);
+    // The vtab probe rejects as module-less; sourceTableExists (sqlite_master) is untouched.
+    const probeError = new Error('no such module: fts5');
+    const realGet = t.raw.getFirstAsync.bind(t.raw);
+    vi.spyOn(t.raw, 'getFirstAsync').mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (new RegExp(`FROM ${P}(entries_fts|source_passages_fts) LIMIT`).test(sql)) throw probeError;
+      return realGet(sql as never, params as never);
+    });
+    const report = newReport();
+    await maint(t.wiki)._eraseDrainPassages(report);
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts${sfx}`))!.n, sfx).toBe(0);
+    }
+    expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}fts_pending`))!.n).toBe(0);
+    const meta = new MetadataRepository(t.raw, P);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
+    expect(report.failedStep).toBeNull();
+    expect(t.diagnostics.some((d) => d.code === 'erase_fts_orphan_cleared')).toBe(true);
+  });
+
+  it('probe failure honesty: a non-module probe error fails as erase_fts_orphan_probe_failed (AC5)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    const realGet = t.raw.getFirstAsync.bind(t.raw);
+    vi.spyOn(t.raw, 'getFirstAsync').mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (new RegExp(`FROM ${P}(entries_fts|source_passages_fts) LIMIT`).test(sql)) throw new Error('disk I/O error');
+      return realGet(sql as never, params as never);
+    });
+    const report = newReport();
+    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_fts_orphan_probe_failed' });
+    expect(report.failedStep).toBe('index_sync');
+    expect(report.verified).toBe(false);
+  });
+
+  it('clear failure honesty: a failing DELETE fails as erase_fts_orphan_clear and the surface is not reported cleared (AC6)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts_content VALUES (1, 'CANARY');`);
+    const realRun = t.raw.runAsync.bind(t.raw);
+    vi.spyOn(t.raw, 'runAsync').mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith(`DELETE FROM ${P}entries_fts_content`)) throw new Error('database is locked');
+      return realRun(sql as never, params as never);
+    });
+    const report = newReport();
+    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_fts_orphan_clear' });
+    expect(report.failedStep).toBe('fts_orphan_clear');
+    expect(report.ftsOrphansCleared).not.toContain(`${P}entries_fts_content`);
   });
 
   it('step 7: optimize runs on both FTS tables', async () => {
