@@ -79,15 +79,26 @@ checks, then the interval check last, immediately before the writes. An
 expired fact with an inverted `t` reports `already_expired`, not
 `invalid_interval`. This matches expire()'s D1 ordering rule.
 
-The replacement's row creation (the `upsert` in `supersede()`) runs
-before `supersedeInTx` inside the same transaction. A rejection throws
-inside that transaction, so the caller's rollback removes the created
-replacement. The existing "leaves no partial writes on rejection" test
-pins this pattern; the new cases reuse it.
+`supersedeInTx` has two callers, and a rejection behaves differently on
+each:
+
+- **Public `supersede()`** — the replacement's row creation runs before
+  `supersedeInTx` inside the same transaction, so a rejection rolls back
+  the created replacement. The existing "leaves no partial writes on
+  rejection" test pins this pattern; the new cases reuse it.
+- **Librarian ops path** — `applyOps` inserts the replacement first and
+  catches `WikiSupersedeError` into a `librarian_op_rejected` diagnostic
+  with no rollback
+  (`packages/core/src/services/librarian/ops/apply.ts:201-212`). A
+  rejection there leaves both facts live and retrievable: the old row
+  keeps its window and the unlinked replacement stays. The existing
+  `already_expired` ops test (`opsLibrarian.test.ts:135`) pins this
+  shape; the new guard adopts it for `invalid_interval` (D3
+  consequence 4).
 
 ### D3 — documented consequences
 
-The check changes behavior for existing callers in two documented ways:
+The check changes behavior for existing callers in four documented ways:
 
 1. A fact cannot be superseded at or before its own validity start. A
    `validFrom` at or before `valid_from ?? created_at` now throws.
@@ -98,9 +109,18 @@ The check changes behavior for existing callers in two documented ways:
    checked — the successor can still start at or before the fact it
    replaces (Problem section). A test pins this boundary so a later
    policy change is visible.
+4. Librarian ops change outcome. `applyOps` derives a SUPERSEDE time
+   from the model's `valid_from` or the candidate event's time
+   (`extract.ts:116`). An op whose time lands at or before the target's
+   start used to link the pair with an inverted window, which dropped
+   the old fact from reads. It now surfaces as a `librarian_op_rejected`
+   diagnostic with reason `invalid_interval`, and both facts stay live
+   and retrievable (D2, ops path). `applyOps` handling of
+   `invalid_interval` stays unchanged.
 
-The `docs` guide states all three consequences in the supersede rules
-section.
+The `docs` guide states consequences 1, 2 and 3 in the supersede rules
+section; consequence 4 is pinned by an `opsLibrarian` test and covered
+by the diagnostics table entry the guide already carries.
 
 ### D4 — docs updates
 
@@ -111,11 +131,15 @@ gains `invalid_interval` in its throws sentence, worded like the
 `apps/docs/src/content/docs/guides/temporal-facts.md` — the "## Rules"
 section gains one bullet: `supersede()` rejects a `validFrom` at or
 before the target's validity start (`invalid_interval`), a default
-`validFrom` applies the rule to the current time, and a fact whose start
-is in the future rejects until that start. The "## Expire a fact"
-section already documents the expire() side; no change there.
-`reference/errors.md` already routes `WikiSupersedeError` reasons to the
-guide; no change there.
+`validFrom` applies the rule to the current time, a fact whose start
+is in the future rejects until that start, and an explicit early
+`valid_from` on a replacement fact is not validated. The new bullet
+goes after the "when the target:" list as its own paragraph — the list
+describes target properties, the bullet describes an argument rule.
+The "## Expire a fact" section already documents the expire() side; no
+change there. `reference/errors.md` already routes `WikiSupersedeError`
+reasons to the guide; `guides/diagnostics.md` already carries the
+`librarian_op_rejected` row. No change in either.
 
 ## Test plan
 
@@ -148,7 +172,12 @@ already carries the supersede guard suite. The `insert()` helper defaults
    explicit `valid_from: 50` superseded at `validFrom: 200` onto a fact
    with `created_at` 100 still succeeds — the current unchecked
    ordering behavior is pinned, not blessed.
-10. Full `packages/core` suite green; typecheck green; docs build green.
+10. Librarian ops path (D3 consequence 4): a SUPERSEDE op whose time is
+    at or before the target's start surfaces one
+    `librarian_op_rejected` diagnostic with reason `invalid_interval`;
+    the old row keeps its window and the replacement stays live and
+    unlinked (mirror the `already_expired` ops test's assertions).
+11. Full `packages/core` suite green; typecheck green; docs build green.
 
 ## Rejected alternatives
 
@@ -165,6 +194,11 @@ already carries the supersede guard suite. The `insert()` helper defaults
   `valid_from` (overlap or gap policy)** — a separate design question
   about successor windows. The expire lane scoped the same question out.
   Out of scope here.
+- **Change `applyOps`'s handling of `invalid_interval`** (clamp the op
+  time, or skip the replacement insert) — a librarian-path behavior
+  redesign outside a guard-mirror lane. Option (a) matches how the path
+  already treats `already_expired`: swallow into a diagnostic, keep both
+  facts live, pin with an ops test.
 - **Repair rows already carrying zero-width intervals** — a data
   migration with its own scan and policy. Out of scope; file a follow-up
   if a corrupted store surfaces.
@@ -173,7 +207,10 @@ already carries the supersede guard suite. The `insert()` helper defaults
 
 PATCH (`fix:` — a guard on an existing API; no new surface, no type
 change). No migration. Hosts that catch `WikiSupersedeError` see the new
-`invalid_interval` reason without code changes.
+`invalid_interval` reason without code changes. Librarian-op hosts see a
+previously linked-but-corrupt event now surface as a
+`librarian_op_rejected` diagnostic with both facts live (D3
+consequence 4).
 
 ## Non-goals
 
