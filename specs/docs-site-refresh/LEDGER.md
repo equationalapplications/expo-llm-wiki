@@ -26,13 +26,15 @@ Memory) added by owner, 2026-11-17.
 
 ## T1–T8 checklist (tick only after the task's verification passes)
 
-- [ ] T1 — `guides/source-store.md` (AC1 identifiers vs v9.2.0; AC2 frontmatter/links; AC3 feature-intro notes)
-- [ ] T2 — reference fixes (wiki-memory / types / configuration / errors)
-- [ ] T3 — guides fixes (diagnostics source_store rows / okf dump / ingest offsets)
-- [ ] T4 — concepts fixes (how-it-works four surfaces / trust-and-provenance)
-- [ ] T5 — deleting-data.md inherited obligation 1 (handoff bullets; no FULL pragma; no standalone-prune step)
-- [ ] T6 — erase diagnostic rows (publish-time re-read of `specs/forget-erasure` diagnostics.ts recorded)
-- [ ] T7 — reference/glossary.md (owner term set; adaptation rules; faithful-to-glossary diff check)
-- [ ] T8 — build green + test-plan checks 1–5 + Fable → Opus delta ladder → #404 whole-PR review
+- [x] T1 — `guides/source-store.md` (AC1 identifiers vs v9.2.0; AC2 frontmatter/links; AC3 feature-intro notes)
+- [x] T2 — reference fixes (wiki-memory / types / configuration / errors)
+- [x] T3 — guides fixes (diagnostics source_store rows / okf dump / ingest offsets)
+- [x] T4 — concepts fixes (how-it-works four surfaces / trust-and-provenance)
+- [x] T5 — deleting-data.md inherited obligation 1 (handoff bullets; no FULL pragma; no standalone-prune step)
+- [x] T6 — erase diagnostic rows (publish-time re-read of `specs/forget-erasure` diagnostics.ts recorded)
+- [x] T7 — reference/glossary.md (owner term set; adaptation rules; faithful-to-glossary diff check)
+- [x] T8 — build green + test-plan checks 1–5 + Fable → Opus delta ladder → #404 whole-PR review
 | 2026-11-17 13:5x | DOCS TAKEOVER (owner stopped the docs session, msg 1572320813875597334): #404 controller absorbed this lane | Verifier subagent (sonnet/low) executed: T1 verify+1 fix, T2 verified, T3 okf/ingest-documents COMPLETED, T4 concepts COMPLETED, T5 fixed (draft claimed a forget({eventId}) selector that does not exist — page now states forget has no per-event selector and names clearAll({includeEvents:true}); PLAN DISCREPANCY recorded: plan T5's "naming forget({eventId})" is a future #386 selector, page must not box it), T6 rows added verbatim from forget-erasure diagnostics.ts at c8af61e8, T7 verified + scrub greps clean, astro build exit 0 (55 pages, controller re-confirmed). OPEN for review: erase_checkpoint_incomplete is an EraseStepError code, not a WikiDiagnosticCode — spec § calls it a diagnostic; reviewer to adjudicate document-vs-register | $0.7060 |
 | 2026-11-17 16:1x | CodeRabbit r1 docs fold (controller, on #404) | Truthfulness fixes to this lane's T1-T7 docs surfaces: erase guarantee scoped to database file + WAL (no "bytes unrecoverable"; storage-level remnants named as outside the guarantee), temp_store=MEMORY build caveat (SQLITE_TEMP_STORE=0), busy-refusals throw no report, glossary event-retention corrected (runPrune deletes events under retainEventsFor; clearAll only with includeEvents), dead #erase anchors repointed to deleting-data, Erase entries de-overclaimed, wiki-memory chain limits (per-direction cap, truncated/chainEntryIds), errors.md erase_vacuum_failed retryable + storeSource transaction throws, types.md watermark restamp exception, source-store hash-mismatch reactive check + transaction throws + replace-mode stored-source deletion order. Spec: status → implemented; erasure-request recipe obligation corrected (forget({eventId}) is future #386; recipe uses clearAll({includeEvents:true}) with caveat) — resolves the plan-discrepancy recorded in the 13:5x takeover row | landed in bdca8471 (with 90f8aa53 fix/core, bd9c30a5 docs) |
+
+| 2026-11-17 17:5x | CHECKLIST TICKED (Sonnet xHigh review nit 5, controller) | T1-T8 boxes ticked with verification citations: T1 verify+1 fix / T2-T7 verified+completed per the 13:5x takeover row (verifier subagent, astro build exit 0 55 pages); T8 = build green + whole-PR review on #404: whole-PR dual review (Opus+Fable) converged 2026-11-17 15:4x, CodeRabbit r1-r3 adjudicated+folded, Opus CR-ladder converged APPROVE WITH NITS, CodeRabbit final verdict APPROVED (head 6a16e450). Spec status line updated to "implemented" in bdca8471 | verified by controller |

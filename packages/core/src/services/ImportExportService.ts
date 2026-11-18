@@ -279,7 +279,7 @@ export class ImportExportService {
         );
         softDeletedFactIds.push(...deletedLiveFactIds);
         await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
-        softDeletedTaskIds.push(...(await this.taskRepo.findAllByEntityId(entityId, tx)).map((t) => t.id));
+        for (const t of await this.taskRepo.findAllByEntityId(entityId, tx)) softDeletedTaskIds.push(t.id);
         await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
         await this.edgeRepo.bulkDeleteByEntityId(entityId, tx);
         await this.metadataRepo.deleteCheckpoint(entityId, tx);
@@ -394,15 +394,17 @@ export class ImportExportService {
           // never resurrected by a live dump row, and a dump tombstone applies
           // even when the merge recency check would otherwise skip the row.
           // (Rows the replace-import wipe above just tombstoned are not forgets.)
+          // Comparisons are `== null`/`!= null`, never truthiness: a crafted
+          // `deleted_at: 0` is a tombstone, not a live row.
           if (
             existing.deleted_at != null &&
-            !fact.deleted_at &&
+            fact.deleted_at == null &&
             !wipedByThisImport.has(fact.id)
           ) {
             tombstoneSkipped++;
             continue;
           }
-          if (merge && safeUpdatedAt <= existing.updated_at && !fact.deleted_at) continue;
+          if (merge && safeUpdatedAt <= existing.updated_at && fact.deleted_at == null) continue;
         }
 
         const safeTitle = clip(String(fact.title ?? ''), IMPORT_TITLE_MAX);
@@ -523,7 +525,7 @@ export class ImportExportService {
         // [tombstone, live] for a wiped id must not resurrect via the exemption.
         wipedByThisImport.delete(fact.id);
         upsertedFactIds.add(fact.id);
-        if (fact.deleted_at) {
+        if (fact.deleted_at != null) {
           upsertedDeletedFactIds.add(fact.id);
           liveEmbedFactIds.delete(fact.id);
         } else {

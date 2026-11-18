@@ -890,6 +890,7 @@ export type WikiDiagnosticCode =
   | 'erase_retired_vtab_undroppable'
   | 'erase_retired_remaining'
   | 'erase_tombstones_remaining'
+  | 'erase_retired_read_failed'
   | 'erase_registry_sweep_skipped'
   | 'import_tombstone_skipped'
   | 'event_created_at_clamped'

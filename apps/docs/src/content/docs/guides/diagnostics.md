@@ -73,6 +73,7 @@ const wiki = createWiki(db, {
 | `erase_retired_vtab_undroppable` (`warn`) | A retired FTS table could not be dropped on a runtime without FTS5; its shadow tables were emptied and the name stays listed until an FTS5-capable open drops it |
 | `erase_retired_remaining` (`error`) | Erase stopped: retired FTS tables still exist after reclamation; the erase is incomplete |
 | `erase_tombstones_remaining` (`error`) | Erase stopped: soft-deleted rows remain in the database file after the erase pipeline (step 9 tombstone gate); the erase is incomplete and unverified. Re-run `erase()` after quiescing the store |
+| `erase_retired_read_failed` (`error`) | Erase stopped: the retired-FTS-table inventory read failed (step 4 re-run check); the erase is incomplete and unverified. Re-run `erase()` after quiescing the store |
 
 The five `source_store_*` codes are all `warn`. `storeSource` refusals carry them in the returned
 `{ stored: false, diagnostics }` and fire them on the hook with `operation: 'sourceStore'`;

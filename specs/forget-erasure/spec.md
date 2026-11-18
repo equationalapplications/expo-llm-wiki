@@ -419,7 +419,10 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    **unaccounted** survivors only. Also new in this round: erase's entity walk and its
    per-entity prune apply **no `deleted_at` cutoff** (`softDeletedCutoff` override,
    `Number.MAX_SAFE_INTEGER`), so future-dated tombstones are hard-deleted by step 1 itself;
-   the gate is the backstop for anything that still slips through. Test: seed an entry and a
+   the gate is the backstop for anything that still slips through. When holds or skipped
+   entities are present the gate does not run, and the report records
+   `{ step: 'tombstone_gate', outcome: 'partial' }` so "not run" is distinguishable from
+   "passed". Test: seed an entry and a
    task with a far-future `deleted_at` (the acceptance test uses `now + 86_400_000_000` ms —
    roughly 1000 days out, future under any realistic clock), run `erase()`, assert
    `verified: true`, both rows
@@ -820,8 +823,10 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
   `erase({ rebuild: true })`; the implementation also introduced the public slugs
   `erase_entity_skipped`, `erase_registry_sweep_skipped`, `erase_retired_remaining`,
   `erase_tombstones_remaining` (step-9 diagnostic, spec §2 step 9) plus the step-error codes
-  `erase_tombstone_gate_failed`, `erase_secure_delete_read_failed`, and a step-1
-  `erase_prune_failed` path for an entity-walk failure (CodeRabbit r1 fold, 2026-11-17),
+  `erase_tombstone_gate_failed`, `erase_secure_delete_read_failed`, `erase_retired_read_failed`,
+  and a step-1
+  `erase_prune_failed` path for an entity-walk failure (CodeRabbit r1 fold, 2026-11-17;
+  `erase_retired_read_failed` split out in the Sonnet xHigh fold, 2026-11-17),
   `prune_checkpoint_incomplete`, `import_tombstone_skipped`). Historical review tags (T3/T4 findings) keep their original
   wording where they quote pre-rev-27 text.
 

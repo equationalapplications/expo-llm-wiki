@@ -4,7 +4,7 @@
  * tombstone sweep). The thin `MaintenanceService.erase()` entry returns a
  * report; T6 completes the pipeline (steps 3-8).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 import { openV8Database, insertV8Entry, sourceRefIndexExists } from './helpers/v8Schema';
@@ -53,6 +53,29 @@ const count = async (raw: SQLiteAdapter, t: string) =>
   (await raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}${t}`))!.n;
 
 describe('erase() prune core (spec §2 steps 0/1/1b)', () => {
+  it('step 9 gate: a surviving unaccounted tombstone fails the erase as erase_tombstones_remaining, never verified:true', async () => {
+    const t = await make();
+    await insEntry(t.raw, 'survivor', 'e1', 1);
+    // No-op step 1's prune so the tombstone survives to the gate unaccounted —
+    // the gate is the backstop, and this test pins its refusal path: a later
+    // edit that weakens the count query or the throw would fail here.
+    const m = svc(t.wiki);
+    const pruneSpy = vi.spyOn(m, '_runPrune').mockResolvedValue({ entries: 0, tasks: 0, events: 0 });
+    let caught: any;
+    try {
+      await m.erase();
+    } catch (e) {
+      caught = e;
+    }
+    pruneSpy.mockRestore();
+    expect(caught?.name).toBe('EraseStepError');
+    expect(caught?.code).toBe('erase_tombstones_remaining');
+    expect(caught?.report.failedStep).toBe('tombstone_gate');
+    expect(caught?.report.verified).toBe(false);
+    expect(t.diagnostics.some((d) => d.code === 'erase_tombstones_remaining' && d.severity === 'error')).toBe(true);
+    expect(caught?.report.steps.some((s: any) => s.step === 'tombstone_gate' && s.outcome === 'failed')).toBe(true);
+  });
+
   it('AC1: an unconfirmed external removal is held, not hard-deleted; erase continues and reports holds', async () => {
     const t = await make({ hook: (c) => { if (c.factId === 'a') throw new Error('nope'); } });
     for (const id of ['a', 'b']) await insEntry(t.raw, id, 'e1', 1);

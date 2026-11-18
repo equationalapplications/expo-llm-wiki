@@ -48,7 +48,8 @@ windows later.
 - **Throws are for invalid calls only — and for database failures.** A bad `sourceRef`, a
   `sourceHash` that isn't 64-char hex, or a non-string `text` throws before anything is written.
   A busy lock (`WikiBusyError`) throws too — retry later, like any other writer. A failed
-  database transaction also propagates as a throw (its driver error, unchanged).
+  database transaction throws as a `WikiTransactionError` (with `cause` carrying the underlying
+  driver error and `sqliteErrorCode` the code) — never the raw driver error itself.
 - **Re-storing the same ref and hash is a no-op** that returns the existing figures. Re-storing the
   same ref with the *same* hash but *different* text is refused as `source_store_hash_mismatch`. A
   ref with a *changed* hash replaces the old text (and its passages) in one transaction.

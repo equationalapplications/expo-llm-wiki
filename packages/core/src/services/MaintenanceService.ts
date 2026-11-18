@@ -693,7 +693,7 @@ export class MaintenanceService {
         );
       } catch (err) {
         report.failedStep = 'retired_reclaim';
-        throw new EraseStepError('erase_retired_remaining', 'erase stopped after step 6: the retired-table read failed; erasure is unverified', report, err);
+        throw new EraseStepError('erase_retired_read_failed', 'erase stopped after step 6: the retired-table read failed; erasure is unverified', report, err);
       }
       const left = present.map((r) => r.name).filter((n) => isRetiredTableName(this.prefix, n) && !report.retiredUndroppable.includes(n));
       if (left.length > 0) {
@@ -742,6 +742,11 @@ export class MaintenanceService {
           throw new EraseStepError('erase_tombstones_remaining', `erase stopped at step 9: ${remainingTombstones} soft-deleted row(s) remain; erasure is unverified`, report);
         }
         ok('tombstone_gate');
+      } else {
+        // The gate did not run: holds/skipped entities already account for the
+        // surviving soft-deleted rows. Record it so the report's step list never
+        // makes "not run" look like "passed".
+        report.steps.push({ step: 'tombstone_gate', outcome: 'partial' });
       }
 
       // Skipped entities were not erased: honest report, never a verified success.
