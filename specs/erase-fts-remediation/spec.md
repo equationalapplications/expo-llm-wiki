@@ -9,7 +9,7 @@
 On a runtime whose SQLite lacks the FTS5 module — or one configured to
 `indexStrategy: 'minisearch'` — `wiki.erase()` currently **cannot complete**
 whenever orphaned FTS5 tables exist. `_eraseDrainPassages`
-(`packages/core/src/services/MaintenanceService.ts:781-807`) probes
+(`packages/core/src/services/MaintenanceService.ts:782-812`) probes
 `entries_fts_content` / `source_passages_fts_content` when the strategy has
 no strict drains and throws `erase_orphaned_fts_content`
 (failedStep `index_sync`, `verified: false`). Erasure stays permanently
@@ -41,17 +41,25 @@ the module and is **swallowed** (`:84`), and state is set `'detached'`
    external-content/contentless — `fts5Sql.ts:51` (entries) and
    `:215` (passages) — so the `_content` shadows hold the full text.
 3. The only orphan handling is the probe-and-fail added in #404;
-   nothing ever clears the shadows (`MaintenanceService.ts:781-807`).
+   nothing ever clears the shadows (`MaintenanceService.ts:799-811`).
 4. The retired-table path already proves the clear pattern is safe on a
    module-less runtime: `_eraseReclaimRetired`'s module-less branch
-   (`MaintenanceService.ts:845-853`) DELETEs all five suffixes per retired
+   (`MaintenanceService.ts:846-853`) DELETEs all five suffixes per retired
    table under the pragma and records the name as `retiredUndroppable`.
 
 ## The decisions
 
-**D1 — two remediation paths, gated by whether the vtab is queryable.**
-Before any clear, probe the live table:
-`SELECT 1 FROM ${prefix}entries_fts LIMIT 1`.
+**D1 — existence gate first, then two remediation paths gated by whether
+the vtab is queryable.** Per surface, independently: if
+`sourceTableExists('${prefix}entries_fts')` is false (and likewise for
+`source_passages_fts` — the existing probe's own precondition,
+`MaintenanceService.ts:789/:802`), that surface has nothing to clear: no
+probe, no entry in `ftsOrphansCleared`, erase proceeds. A DB that never
+saw FTS5 must erase clean on a module-less runtime, not fail on
+`no such table`. Only for a **present** table, probe:
+`SELECT 1 FROM ${prefix}entries_fts LIMIT 1`, classifying errors with the
+same `/no such module/i` match the codebase already uses
+(`MaintenanceService.ts:840`).
 
 - **Path A — module-less (`no such module`):** the vtab is inert. DELETE
   FROM every existing shadow suffix (`_content _data _idx _docsize
@@ -73,9 +81,9 @@ Before any clear, probe the live table:
   nothing (strategy is not fts5); if the host ever switches back to fts5,
   init recreates the tables fresh (`fts5Sql.ts` `CREATE ... IF NOT
   EXISTS`).
-- **Probe error of any other class:** fail erase honestly with a new
-  `erase_fts_orphan_probe_failed` (failedStep `index_sync`), unchanged
-  honesty posture.
+- **Probe error of any other class** (present table, non-module error):
+  fail erase honestly with a new `erase_fts_orphan_probe_failed`
+  (failedStep `index_sync`), unchanged honesty posture.
 
 **D2 — exact-name allowlist, never a pattern.** Only prefix-joined exact
 names (`${prefix}entries_fts`, `${prefix}source_passages_fts`, their five
@@ -99,7 +107,8 @@ undeletable.
 
 **D4 — gate placement.** The remediation replaces the two probe-and-throw
 blocks inside the existing `!hasStrictDrain()` branch
-(`MaintenanceService.ts:781-807`) — strict-drain (FTS5) runtimes are
+(`MaintenanceService.ts:782-812`; the replaced blocks are `:799-811`) —
+strict-drain (FTS5) runtimes are
 untouched, and their erasure behavior is unchanged byte-for-byte. The
 `canReclaimRetired()` retired-table machinery is untouched.
 
@@ -167,8 +176,11 @@ shadow stand-ins with a canary row; F1 (`:88-109`) — a real
 7. **Pending-ledger cover:** module-less erase with rows in
    `fts_pending` / passage pending (undrainable) → cleared under Path A,
    no `erase_index_sync_failed`. [V]
-8. Diagnostics: `erase_fts_orphan_cleared` emitted per table. [V]
-9. Docs build green. [V]
+8. **Never-FTS runtime clean:** module-less open on a DB that never had
+   FTS5 tables (existence gate hits first) → `erase()` completes
+   `verified: true`, `ftsOrphansCleared: []`, no probe thrown. [V]
+9. Diagnostics: `erase_fts_orphan_cleared` emitted per table. [V]
+10. Docs build green. [V]
 
 ## Rejected alternatives
 
