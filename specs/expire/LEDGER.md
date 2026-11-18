@@ -2,8 +2,8 @@
 
 One checkbox per plan task. Tick only after that task's verification passes.
 
-- [ ] T1 — widen the error type (`WikiSupersedeReason` + verb param, AC8)
-- [ ] T2 — `expire()` + facade, happy path (AC1, AC3, AC6)
+- [x] T1 — widen the error type (`WikiSupersedeReason` + verb param, AC8) — `fa155b9d`, controller-verified 2026-11-18
+- [x] T2 — `expire()` + facade, happy path (AC1, AC3, AC6) — `d13e793e`, controller-verified 2026-11-18
 - [ ] T3 — guard stack + guard order (AC2)
 - [ ] T4 — interval validation (AC3)
 - [ ] T5 — supersede-after-expire guard (D3b, AC2b)
