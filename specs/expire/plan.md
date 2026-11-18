@@ -452,3 +452,26 @@ the delivery flow), the Step 8 flip (`**Status:**` → Implemented, delete
 final PR body update (links spec + plan + issue; "Fixes #410" is NOT set —
 the anchor is forget-erasure T11; the supersede-gap issue is referenced,
 not closed).
+
+
+## Review notes — pre-adjudicated dispositions (Tier-1.5 implementation ladder, 2026-11-18)
+
+Reviewer instruction: weigh each disposition below and flag ONLY if you
+DISAGREE (with file:line + suggested fix). Do not re-litigate what you
+agree with.
+
+1. T3/T4 added no implementation code — the guard stack and interval
+   checks were written in T2 per the plan; those tasks are test-only pins.
+   Their tests passing first-run is the expected outcome, not a skipped
+   RED gate (the plan said so per task).
+2. T6 test-side folds (no src changes): outbox/prune options live under
+   `config` (source truth: WikiOptions), not top level; the AC5 search
+   pin is behavioral ("read no longer returns the fact") because the FTS
+   index retains non-deleted rows by design — temporal filtering is
+   query-time (`liveAtSql`), so a row-count pin would be wrong.
+3. The supersede-gap (no lower-bound check in supersede()) is
+   intentionally OUT of this PR — filed as #414 per spec D1.
+4. The expire error verbs: `WikiSupersedeError` keeps its class name and
+   `code`; only the message verb changes (spec D3, owner-ratified).
+5. `changes === 0` backstop throws `cross_entity` (spec D2) — defense in
+   depth behind the memory-level guard, not a distinct reason.
