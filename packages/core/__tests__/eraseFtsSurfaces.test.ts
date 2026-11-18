@@ -302,6 +302,19 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts_content`))!.n).toBe(1);
   });
 
+  it('AC8: pending rows clear under Path A before the pending throw re-runs; uncovered leftovers still throw', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts_content VALUES (1, 'CANARY');`);
+    await t.raw.runAsync(`INSERT INTO ${P}fts_pending (entity_id, id) VALUES ('e1', 'r0')`);
+    const report = newReport();
+    await maint(t.wiki)._eraseDrainPassages(report);
+    expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}fts_pending`))!.n).toBe(0);
+    expect(report.failedStep).toBeNull();
+  });
+
   it('step 7: optimize runs on both FTS tables', async () => {
     const t = await make();
     const spy = vi.spyOn(t.raw, 'execAsync');
