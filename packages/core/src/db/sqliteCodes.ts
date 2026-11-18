@@ -15,10 +15,13 @@ const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
   21: 'SQLITE_MISUSE', 22: 'SQLITE_NOLFS', 23: 'SQLITE_AUTH', 24: 'SQLITE_FORMAT',
   25: 'SQLITE_RANGE', 26: 'SQLITE_NOTADB', 27: 'SQLITE_NOTICE', 28: 'SQLITE_WARNING',
   // Extended result codes (https://sqlite.org/rescode.html#extended_result_code_list).
-  // 2067 = SQLITE_CONSTRAINT_UNIQUE — raised when a UNIQUE index/PRIMARY KEY
-  // rejects an INSERT/UPDATE; expo-sqlite reports this as a numeric "Error code N:"
-  // prefix and we normalize it back to the symbolic name so callers can branch on
-  // the same string the rest of the ecosystem uses.
+  // 2067 = SQLITE_CONSTRAINT_UNIQUE — a UNIQUE index rejecting an INSERT/UPDATE.
+  // better-sqlite3 / node:sqlite enable extended result codes and report it
+  // directly. expo-sqlite never emits it (as of expo-sqlite 58.0.14, per
+  // #403): it leaves extended result codes off
+  // and surfaces the same failure as the primary code 19 with the
+  // "UNIQUE constraint failed" message text, which `extractSqliteCode` below
+  // refines back to this name (#403).
   2067: 'SQLITE_CONSTRAINT_UNIQUE',
   // 267 = SQLITE_CORRUPT_VTAB — a corrupt FTS5 shadow table (ftsCorruptionClass).
   267: 'SQLITE_CORRUPT_VTAB',
@@ -42,7 +45,29 @@ export function extractSqliteCode(err: unknown): string | undefined {
   if (typeof code === 'string' && code.startsWith('SQLITE_')) return code;
   if (typeof message === 'string') {
     const m = /^Error code (\d+):/.exec(message);
-    if (m) return nameForSqliteResultCode(Number(m[1]));
+    if (m) {
+      const n = Number(m[1]);
+      // expo-sqlite never calls sqlite3_extended_result_codes (#403), so a
+      // UNIQUE violation arrives as the primary code 19 with the
+      // "UNIQUE constraint failed" message text. Refine it to the extended
+      // SQLITE_CONSTRAINT_UNIQUE so callers branch on the same string the
+      // rest of the ecosystem reports.
+      //
+      // Divergence, forced by the message-only shape: a PRIMARY KEY clash
+      // shares that exact message text, so expo folds it into
+      // SQLITE_CONSTRAINT_UNIQUE here while better-sqlite3 / node:sqlite
+      // report 1555 (SQLITE_CONSTRAINT_PRIMARYKEY) for the same failure and
+      // re-raise it past the duplicate-hash translation. Unavoidable — the
+      // message cannot distinguish the two — and acceptable: no PRIMARY KEY
+      // can realistically clash inside the ingest transaction (ids are
+      // random), so the folded name never misdirects the translation in
+      // practice. Every other constraint family (CHECK / FOREIGN KEY /
+      // NOT NULL) keeps 19 → SQLITE_CONSTRAINT.
+      if (n === 19 && message.includes('UNIQUE constraint failed')) {
+        return nameForSqliteResultCode(2067);
+      }
+      return nameForSqliteResultCode(n);
+    }
   }
   return undefined;
 }

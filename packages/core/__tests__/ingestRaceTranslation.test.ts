@@ -164,6 +164,83 @@ describe('IngestionService — UNIQUE violation translation', () => {
     ).rejects.toBeInstanceOf(WikiDuplicateHashError);
   });
 
+  it("mode 'skip': an expo-sqlite-shaped primary-result-code error (19 + message, no `code`) still translates (#403)", async () => {
+    // #403's on-device symptom, end to end: expo-sqlite throws a plain Error
+    // with the primary code 19 and the "UNIQUE constraint failed" text — no
+    // `code` property, no extended 2067. The transactional source_ref_index
+    // upsert must still reach the catch-and-translate through the message
+    // path, not only via better-sqlite3's symbolic string. The better-sqlite3
+    // tests above cover the symbolic path; this covers the shape expo emits.
+    const { wiki, db } = await makeWiki();
+    const sourceRefIndexRepo = (wiki as any).sourceRefIndexRepo;
+    const originalLookup = sourceRefIndexRepo.findActiveByEntityAndHash.bind(sourceRefIndexRepo);
+    const originalRun = db.runAsync.bind(db);
+    let firstCallDone = false;
+    let sriInserts = 0;
+    let expoThrown = false;
+    // The 1st source_ref_index INSERT is the mock's canonical row; the 2nd is
+    // the transactional upsert (step g) inside ingestDocument. Match INSERTs
+    // only — the soft-delete UPDATE at step (f) also touches the table but
+    // must not count. Make the upsert throw the expo shape.
+    db.runAsync = async (sql: string, args: unknown[] = []) => {
+      if (sql.startsWith('INSERT INTO llm_wiki_source_ref_index')) {
+        sriInserts++;
+        if (sriInserts === 2) {
+          expoThrown = true;
+          throw new Error('Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash');
+        }
+      }
+      return originalRun(sql, args);
+    };
+    sourceRefIndexRepo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
+      if (!firstCallDone) {
+        firstCallDone = true;
+        await insertSourceRefIndexRow(db, { entityId, sourceRef: 'canonical.md', sourceHash: hash });
+        return null;
+      }
+      return originalLookup(entityId, hash, tx);
+    };
+    try {
+      const result = await wiki.ingestDocument(
+        'entity-1',
+        { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' },
+        { onDuplicateHash: 'skip' },
+      );
+      // Assert the injection fired: if the count ever drifts (a step reordered,
+      // another INSERT added), the real better-sqlite3 INSERT would raise the
+      // symbolic SQLITE_CONSTRAINT_UNIQUE and this test would silently degrade
+      // to re-covering the symbolic path above.
+      expect(expoThrown).toBe(true);
+      expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'canonical.md' });
+    } finally {
+      sourceRefIndexRepo.findActiveByEntityAndHash = originalLookup;
+      db.runAsync = originalRun;
+    }
+  });
+
+  it("default mode 'ingest': an expo-shaped driver error surfaced through the serialized-transaction wrapper still raises WikiDuplicateHashError (#403)", async () => {
+    // WikiMemory wraps every adapter in withSerializedTransactions, so a
+    // driver-shaped throw inside withTransactionAsync is caught by the wrapper
+    // and re-raised as WikiTransactionError — IngestionService reads
+    // `err.sqliteErrorCode`, the same wrapped path the 'skip' test above
+    // exercises, here in 'ingest' mode. The raw `extractSqliteCode(err)` branch
+    // at the catch site is effectively unreachable in production (the wrapper
+    // always wraps driver errors first); it exists for unwrapped adapters.
+    const { wiki, db } = await makeWiki();
+    await insertSourceRefIndexRow(db, { entityId: 'entity-1', sourceRef: 'canonical.md', sourceHash: VALID_HASH_A });
+    const originalTx = db.withTransactionAsync.bind(db);
+    db.withTransactionAsync = async () => {
+      throw new Error('Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash');
+    };
+    try {
+      await expect(
+        wiki.ingestDocument('entity-1', { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' }),
+      ).rejects.toBeInstanceOf(WikiDuplicateHashError);
+    } finally {
+      db.withTransactionAsync = originalTx;
+    }
+  });
+
   it('unrelated transaction errors are re-thrown unmodified', async () => {
     const { wiki } = await makeWiki();
     const db2 = (wiki as any).db;

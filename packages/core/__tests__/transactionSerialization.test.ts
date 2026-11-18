@@ -37,6 +37,29 @@ describe('extractSqliteCode', () => {
       .toBe('SQLITE_CONSTRAINT_UNIQUE');
   });
 
+  it('maps the expo-sqlite primary-code UNIQUE shape (code 19 + "UNIQUE constraint failed") to SQLITE_CONSTRAINT_UNIQUE (#403)', () => {
+    // expo-sqlite never calls sqlite3_extended_result_codes, so a UNIQUE violation
+    // surfaces with the primary code 19 — not 2067 — and IngestionService's
+    // duplicate-hash race translation (which branches on SQLITE_CONSTRAINT_UNIQUE)
+    // never fires on device unless the message shape refines the mapping.
+    expect(extractSqliteCode({ message: 'Error code 19: UNIQUE constraint failed: llm_wiki_entries.entity_id, llm_wiki_entries.source_hash' }))
+      .toBe('SQLITE_CONSTRAINT_UNIQUE');
+    // Primary-key violations surface with the same message text — folded into
+    // UNIQUE here, forced by the message-only shape. Node drivers report 1555
+    // (SQLITE_CONSTRAINT_PRIMARYKEY) for the same failure and re-raise it past
+    // the duplicate-hash translation; the message text cannot distinguish the
+    // two, so expo collapses both to the UNIQUE name.
+    expect(extractSqliteCode({ message: 'Error code 19: UNIQUE constraint failed: llm_wiki_entries.id' }))
+      .toBe('SQLITE_CONSTRAINT_UNIQUE');
+    // Other code-19 constraint families keep the primary-code mapping.
+    expect(extractSqliteCode({ message: 'Error code 19: CHECK constraint failed: entries' }))
+      .toBe('SQLITE_CONSTRAINT');
+    expect(extractSqliteCode({ message: 'Error code 19: FOREIGN KEY constraint failed' }))
+      .toBe('SQLITE_CONSTRAINT');
+    expect(extractSqliteCode({ message: 'Error code 19: NOT NULL constraint failed: entries.id' }))
+      .toBe('SQLITE_CONSTRAINT');
+  });
+
   it('leaves a sql.js-style "UNIQUE constraint failed" message un-extracted (no numeric prefix)', () => {
     // sql.js surfaces failures with the bare "UNIQUE constraint failed" text and no
     // numeric Error code prefix. We deliberately do NOT match that shape here — the
