@@ -119,8 +119,10 @@ prune inside the fact's own record (owner ruling, 2026-11-14). Today a
 host hides a quote by forgetting its fact by entry id,
 `forget({ entryId })` — reads and exports drop it immediately, and prune
 purges the row; deleting quotes by event id, `forget({ eventId })`,
-is planned in issue
-[#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386). Issue
+landed in PR
+[#422](https://github.com/equationalapplications/expo-llm-wiki/pull/422)
+(`specs/forget-by-event-id/`, issue
+[#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)). Issue
 [#377](https://github.com/equationalapplications/expo-llm-wiki/issues/377).
 
 *Gate:* a spec — met (`specs/source-pointers/`, PR #385,

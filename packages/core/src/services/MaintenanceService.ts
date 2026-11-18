@@ -1318,8 +1318,11 @@ export class MaintenanceService {
       // Every branch that soft-deletes entries also enumerates the ids into
       // deletedEntryIds inside the same transaction: the entryId branch, the
       // by-source branch (findIdsBySource(..., includeDeleted=true) — its
-      // predicate matches softDeleteBySource's exactly), and the clearAll
-      // branch. So the index update is O(deleted), not O(entity) (spec §2.1).
+      // predicate matches softDeleteBySource's exactly), the eventId branch
+      // (findIdsByPointerEvent(..., includeDeleted=true) — same predicate as
+      // softDeleteByPointerEvent modulo the tombstone guard), and the
+      // clearAll branch. So the index update is O(deleted), not O(entity)
+      // (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       await this.searchService.syncEntries(entityId, uniqueDeletedIds);
       if (uniqueDeletedIds.length > 0) {

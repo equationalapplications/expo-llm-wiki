@@ -1,6 +1,6 @@
 # forget({ eventId }) — delete librarian facts by their source-pointer event id
 
-**Status: Draft v5 — design ratified by the owner 2026-11-18 ("422 ratified"); Opus T3 folds + Fable T4 folds applied (B1 BLOCKER: planner-dependent JSON guard — empirically probed; M1–M2; m1–m5); implementation next**  
+**Status: Implemented 2026-11-18 (PR #422, implementation commit `b8b8824c`; acceptance tests in `packages/core/__tests__/forgetEventId.test.ts`) — owner-ratified design ("422 ratified"); Opus T3 + Fable T4 spec gates and the implementation T3 review folded**  
 **Intent check:** INTENT rule 2 — this change adds one optional selector
 (`eventId`) to `ForgetParams` (`packages/core/src/types.ts`) and three
 `EntryRepository` methods; it adds no columns, drops nothing, and changes no
@@ -156,10 +156,14 @@ its own method, see D7):
   dry-run.
 
 All three share **one match-predicate constant** (the SQL from D1 minus the
-tombstone guard). The tombstone guard (`AND deleted_at IS NULL`) is added
-only inside the mutator — the enumeration and the dry-run count must see
-their stated row populations, so the methods are intentionally not
-predicate-identical end to end; what is shared verbatim is the JSON match.
+tombstone guard). The tombstone guard (`AND deleted_at IS NULL`) is added by
+the mutator — counting transitions only — and by default in the other two
+methods (`findIdsByPointerEvent`'s `includeDeleted = false` default;
+`countLiveByPointerEvent` is live-only by definition, since a dry run
+previews what a real call would still delete). `findIdsByPointerEvent(…,
+true)` lifts the guard for the enumeration superset that feeds index sync
+and the ledger backstop. What is shared verbatim across all three is the
+JSON match itself.
 
 **Outbox parity is mandatory:** `softDeleteByPointerEvent` copies
 `softDeleteBySource`'s select-ids → guarded-UPDATE → **one outbox `DELETE`

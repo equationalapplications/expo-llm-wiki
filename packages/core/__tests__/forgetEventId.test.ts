@@ -128,7 +128,12 @@ describe('forget({ eventId }) — frozen surfaces (test 5)', () => {
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_ref_index`))!.n).toBe(refsBefore);
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`))!.n).toBe(passagesBefore);
     // Events row untouched too (D4): the event the pointer names stays.
-    expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}events WHERE entity_id = 'e1'`))!.n).toBe(0);
+    await t.db.runAsync(
+      `INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('E1', 'e1', 'observation', 'the quoted event', 1)`,
+    );
+    await t.wiki.forget('e1', { eventId: 'E1' });
+    expect(await t.live('a')).toBe(0);
+    expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}events WHERE id = 'E1'`))!.n).toBe(1);
   });
 });
 
@@ -163,26 +168,66 @@ describe('forget({ eventId }) — removal contract (tests 4, 10, 11)', () => {
     expect(err.unconfirmedIds).toEqual(['a']);
     expect(t.calls.map((c: Call) => c.factId).sort()).toEqual(['a', 'b']);
   });
+
+  it('the removed facts drop out of the FTS index (test 4, FTS leg)', async () => {
+    const t = await make();
+    await t.ins('e1', 'a', VALID_POINTER);
+    await t.ins('e1', 'b', OTHER_POINTER);
+    await t.db.runAsync(`UPDATE ${P}entries SET body = 'zetaquote' WHERE id = 'a'`);
+    await t.db.runAsync(`UPDATE ${P}entries SET body = 'deltatext' WHERE id = 'b'`);
+    await t.wiki.syncSearchIndex('e1');
+    const ftsMatches = async (term: string) =>
+      (await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts WHERE ${P}entries_fts MATCH ?`, [term]))!.n;
+    expect(await ftsMatches('zetaquote')).toBe(1);
+    await t.wiki.forget('e1', { eventId: 'E1' });
+    expect(await ftsMatches('zetaquote')).toBe(0);
+    expect(await ftsMatches('deltatext')).toBe(1); // other event's fact still indexed
+  });
+
+  it('a pre-tombstoned matching row is backstopped and its removal still delivered (test 4, backstop leg)', async () => {
+    const t = await make((c) => {
+      if (c.factId === 'pre') throw new Error('nope');
+    });
+    await t.ins('e1', 'pre', VALID_POINTER);
+    await t.ins('e1', 'fresh', VALID_POINTER);
+    await t.db.runAsync(`UPDATE ${P}entries SET deleted_at = 5 WHERE id = 'pre'`);
+    let err: any;
+    try {
+      await t.wiki.forget('e1', { eventId: 'E1' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WikiExternalDeletionError);
+    // The enumeration superset (includeDeleted=true) fed the pre-tombstoned id
+    // into the ledger backstop, so its removal is delivered alongside the live one.
+    expect(t.calls.map((c: Call) => c.factId).sort()).toEqual(['fresh', 'pre']);
+    expect(err.unconfirmedIds).toEqual(['pre']);
+  });
 });
 
 describe('forget({ eventId }) — validation and exclusivity (test 9)', () => {
+  const CLEAR_ALL_MSG = 'forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, sourceHash, and eventId';
+  const EVENT_ID_MSG = 'forget() eventId is mutually exclusive with entryId, taskId, sourceRef, and sourceHash';
+  const CHAIN_MSG = 'forget() includeChain composes only with entryId';
   it.each([
-    [{ eventId: '' }, 'Invalid eventId'],
-    [{ eventId: 42 as unknown as string }, 'Invalid eventId'],
-    [{ eventId: 'E1', entryId: 'a' }, 'mutually exclusive'],
-    [{ eventId: 'E1', sourceRef: 'doc' }, 'mutually exclusive'],
-    [{ eventId: 'E1', sourceHash: 'h' }, 'mutually exclusive'],
-    [{ eventId: 'E1', taskId: 't' }, 'mutually exclusive'],
-    [{ eventId: 'E1', clearAll: true }, 'mutually exclusive'],
-    [{ eventId: 'E1', includeChain: true }, 'composes only with entryId'],
-  ])('rejects %j', async (params, fragment) => {
+    [{ eventId: '' }, /^Invalid eventId$/],
+    [{ eventId: 42 as unknown as string }, /^Invalid eventId$/],
+    [{ eventId: 'E1', entryId: 'a' }, new RegExp(`^${EVENT_ID_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+    [{ eventId: 'E1', sourceRef: 'doc' }, new RegExp(`^${EVENT_ID_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+    [{ eventId: 'E1', sourceHash: 'h' }, new RegExp(`^${EVENT_ID_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+    [{ eventId: 'E1', taskId: 't' }, new RegExp(`^${EVENT_ID_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+    [{ eventId: 'E1', clearAll: true }, new RegExp(`^${CLEAR_ALL_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+    [{ eventId: 'E1', includeChain: true }, new RegExp(`^${CHAIN_MSG.replaceAll('(', '\\(').replaceAll(')', '\\)')}$`)],
+  ])('rejects %j with the exact message', async (params, pattern) => {
     const t = await make();
-    await expect(t.wiki.forget('e1', params as any)).rejects.toThrow(fragment);
+    await expect(t.wiki.forget('e1', params as any)).rejects.toThrow(pattern);
   });
 
   it('dry-run rejection message names eventId', async () => {
     const t = await make();
-    await expect(t.wiki.forget('e1', { entryId: 'a' }, { dryRun: true })).rejects.toThrow(/eventId/);
+    await expect(t.wiki.forget('e1', { entryId: 'a' }, { dryRun: true })).rejects.toThrow(
+      /^forget\(\{ dryRun: true \}\) does not support entryId\/taskId selectors \(entryId is accepted only with includeChain\); use sourceRef\/sourceHash, eventId, or clearAll$/,
+    );
   });
 });
 
