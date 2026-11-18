@@ -208,6 +208,21 @@ Run: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __test
 Expected: all green — new cases pass, expire() untouched, existing
 supersede suite (including "no gap") untouched.
 
+> **Errata (2026-11-18, controller, during Task 2 execution):** the
+> "all green" expectation above missed one pre-existing test —
+> `keeps an existing replacement valid_from` (`supersede.test.ts:47-55`)
+> supersedes with `validFrom: 99` against a target whose start is
+> `created_at` 100, i.e. a corrupt inverted interval the ratified spec
+> (D1) rejects by design; on the unfixed tree it silently wrote
+> `valid_to = 99`, back-dating the target's end before its own start.
+> Falsified premise: "the rest of the existing suite is spec-clean under
+> the guard." Amendment (preserves the test's observable pin — the
+> replacement keeps its explicit `valid_from` 42 and the target's
+> `valid_to` becomes t): in that test, `validFrom: 99` → `validFrom: 200`
+> and `valid_to).toBe(99)` → `valid_to).toBe(200)`. The guard is not
+> weakened; no other test changes. Task 1's RED expectation is unaffected
+> (it ran on the unguarded tree).
+
 - [ ] **Step 3: Run the full core suite** (the guard touches a shared
       service; ingest, forgetChain, migration suites exercise supersede)
 
