@@ -68,6 +68,12 @@ non-finite `at` throws a `TypeError`.
 - is already superseded, or
 - would create a cycle.
 
+`supersede()` also rejects a `validFrom` at or before the target's validity
+start (`invalid_interval`). An omitted `validFrom` applies the same rule to
+the current time, so a fact whose validity starts in the future rejects
+until that start. An explicit early `valid_from` on the replacement fact is
+not validated against the target.
+
 ## Record when events really happened
 
 ```ts
