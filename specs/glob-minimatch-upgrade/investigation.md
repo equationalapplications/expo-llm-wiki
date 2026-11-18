@@ -6,8 +6,9 @@ WITH NITS, all nits folded below.)
 **Status:** Step 0 COMPLETE — owner ruling 2026-11-16: forced-major
 adoption APPROVED (supersedes the 2026-11-09 park), sequencing = fold into
 cooldown pass 2 (cron `7e3f2bdc1576`, 2026-11-20), residual @expo/\*
-exposure accepted, scopelab `includeAssets` remedy deferred. Spec, plan and
-ledger now exist in this folder. Ruling executed: PR #402 opened
+exposure accepted, scopelab `includeAssets` remedy deferred. Spec and
+investigation exist in this folder (plan and ledger were deleted in the
+step-4 cleanup). Ruling executed: PR #402 opened
 (2026-11-16); pass-2 cron brief retargeted to fold node-forge 1.4.3 +
 astro into the same merge wave.
 **Branch:** `specs/glob-minimatch-upgrade`
@@ -190,13 +191,16 @@ apps/scopelab, eslint chain in apps/wiki-demo — all dev/build-time); that
 this override forces a MAJOR outside every range declared in today's
 resolved graph; and the drop condition:
 
-> **Drop condition:** remove each line when no package in the resolved
-> graph (`pnpm why glob` / `pnpm why minimatch`) declares a range that
-> excludes 14.0.2 / 11.0.1. NOTE: the workspace importers themselves never
-> declare glob or minimatch — the range holders to watch are the
-> transitive parents: @expo/\* (glob `^13.0.0`), workbox-build (glob
-> `^11.0.1`), eslint + @typescript-eslint/typescript-estree +
-> @expo/fingerprint (minimatch `^10.2.x`). `pnpm why` lists the parents
+> **Drop condition:** remove each line when no parent whose DECLARED range
+> falls inside the override range (`pnpm why glob` / `pnpm why minimatch`
+> to list them) declares a range that excludes 14.0.2 / 11.0.1. NOTE: the
+> workspace importers themselves never declare glob or minimatch — the
+> range holders to watch are the transitive parents: @expo/\* (glob
+> `^13.0.0`), workbox-build (glob `^11.0.1`), eslint +
+> @typescript-eslint/typescript-estree + @expo/fingerprint +
+> @eslint/config-array (minimatch `^10.2.x`; config-array 0.23.5 declares
+> `^10.2.4`, so the minimatch line is not retirable until its range
+> accepts 11.x). `pnpm why` lists the parents
 > but shows only resolved versions — check each parent's DECLARED range
 > with `pnpm view <parent>@<locked> dependencies.glob` (or
 > `dependencies.minimatch`). Re-check in every cooldown sweep (the standing
@@ -207,7 +211,13 @@ resolved graph; and the drop condition:
 > DECLARED range falls inside the override range. `filelist` retains
 > `minimatch@5.1.9`, below the override floor `>=7.0.0`; it is an unrelated
 > consumer and never blocks retirement. Spec + `pnpm-workspace.yaml` carry
-> the scoped wording.
+> the scoped wording. Also folded 2026-11-18 (Opus cycle r1): config-array
+> added to the range-holder lists; CI's audit step is prod+high only, so
+> the moderate-level glob/minimatch check is manual (evidence recorded in
+> the spec's test plan). Host-local artifacts cited in this document
+> (`/tmp/globmin-branch-fulltest.log`, the Hermes cron store) are
+> controller-machine evidence, non-reproducible on other hosts; the
+> canonical test evidence is CI on PR #402 (5/5 SUCCESS at `6ca72ee1`).
 
 No allowlist change: neither GHSA was allowlisted.
 
@@ -243,9 +253,9 @@ comment, (3) open the PR.
    The probes show the majors work in every gate-covered surface today
    with zero observable drift, so waiting buys nothing but exposure time.
 2. **Pin glob only, skip minimatch** — glob 14 needs minimatch `^11.0.0`
-  internally, but eslint, typescript-estree and @expo/fingerprint declare
-  `^10.2.x` and would keep the vulnerable 10.2.6 resolved for their own
-  subtrees; the minimatch override exists for THEM.
+   internally, but eslint, typescript-estree and @expo/fingerprint declare
+   `^10.2.x` and would keep the vulnerable 10.2.6 resolved for their own
+   subtrees; the minimatch override exists for THEM.
 3. **Force minimatch@5.1.9 (filelist's copy) to 11 for single-copy
    hygiene** — zero security gain (5.1.9 is outside the vulnerable range),
    5→11 API jump for filelist's consumer. Leave untouched.

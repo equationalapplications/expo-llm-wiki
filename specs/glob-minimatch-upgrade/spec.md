@@ -5,17 +5,16 @@
 **Branch:** `specs/glob-minimatch-upgrade`
 **Priority:** tier 3 (other security; moderate advisories, dev-only exposure)
 **Issue:** equationalapplications/expo-llm-wiki#278
-**Intent check:** this spec touches INTENT rules **8** (small, first-party,
-auditable dependency surface) and **9** (the supply-chain gate is binding),
-and aligns with both: the forced majors are adopted via the repo's one
-override home (`pnpm-workspace.yaml`) with the 14-day gate cleared
-(2026-11-10) and the owner ruling recorded in-file and in the ledger — the
-override pattern is exactly what rule 9 names as the honest adoption
-mechanism; and because glob/minimatch are dev-time tooling (no runtime
-dependency added), the audit-clean dependency surface rule 8 protects is
-strengthened, not widened, by clearing two audit advisories. The scoped
-drop condition keeps the override surface temporary (rule 8: overrides
-retire once every affected range accepts the patched major).
+**Intent check:** INTENT rule **8** (small, first-party, auditable
+dependency surface) does **not** apply — glob/minimatch are dev-time
+tooling in the build graph, not runtime dependencies of any published
+package, and this change adds no runtime dependency. The alignment rests
+on INTENT rule **9** (the supply-chain gate is binding): the forced majors
+are adopted through the repo's single override home (`pnpm-workspace.yaml`),
+the 14-day age gate cleared (2026-11-10) before the owner ruling
+(2026-11-16), the ruling is recorded in-file, and the scoped drop
+condition keeps the override surface temporary — rule 9's manual override
+pattern being what keeps the gate honest.
 
 ## Problem
 
@@ -58,16 +57,22 @@ clear dates, reach, the forced-major fact, the accepted residual risk, and
 the drop condition. The drop condition: remove each line when no parent
 whose DECLARED range falls inside the override range still excludes
 14.0.2 / 11.0.1 — i.e. every range holder subject to the override (glob
-`^11`/`^13`, minimatch `^10.2.x`) has accepted the patched major.
-Unrelated consumers outside the override range (e.g. `filelist`'s
-`minimatch` `5.1.9`, below the override floor `>=7.0.0`) do not block
-retirement. Re-check in every cooldown sweep.
+`^11`/`^13` — @expo/\*, workbox-build; minimatch `^10.2.x` — eslint,
+@typescript-eslint/typescript-estree, @expo/fingerprint,
+@eslint/config-array `^10.2.4`) has accepted the patched major. Enumerate
+the parents with `pnpm why glob` / `pnpm why minimatch`, then check each
+parent's DECLARED range. Unrelated consumers outside the override range
+(e.g. `filelist`'s `minimatch` `5.1.9`, below the override floor
+`>=7.0.0`) do not block retirement. Re-check in every cooldown sweep.
+Note: @eslint/config-array 0.23.5 still declares `^10.2.4`, so the
+minimatch line is NOT yet retirable as of 2026-11-18.
 
 ## Files touched
 
 - `pnpm-workspace.yaml` — two override lines plus comment.
 - `pnpm-lock.yaml` — regenerated.
-- `specs/glob-minimatch-upgrade/` — this spec, the investigation doc, plan, ledger.
+- `specs/glob-minimatch-upgrade/` — this spec and the investigation doc
+  (plan and ledger were deleted in the step-4 cleanup commit).
 
 ## Accepted risk (owner-approved 2026-11-16)
 
@@ -81,6 +86,12 @@ a shipped bug — these packages never ship to runtime.
 
 - `pnpm install --frozen-lockfile` must be a no-op on the committed lockfile.
 - `pnpm audit` must not emit GHSA-3g3m-2fjr-6pw4 or GHSA-g3hv-75wg-m249.
+  NOTE: CI's audit step (`test.yml`) runs `--prod --audit-level=high` and
+  would NOT catch these (both moderate, dev-only) — this check is MANUAL.
+  Manual run recorded 2026-11-18 (full, `--audit-level=moderate`): the two
+  glob/minimatch GHSAs are absent; remaining findings are astro
+  GHSA-r3h5-4585-7x3w (patched ≥7.4.7 — dependabot #399/#382) and node-forge
+  ×3 (patched ≥1.4.3 — the armed pass-2 fold), all outside this lane's scope.
 - Root `pnpm test` must pass (core 2566/2566 baseline; recorded run EXIT=0).
 - `pnpm typecheck` must pass.
 - `pnpm --filter docs build` must pass.
