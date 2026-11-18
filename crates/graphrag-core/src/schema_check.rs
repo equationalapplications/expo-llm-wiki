@@ -1,8 +1,8 @@
 //! Schema contract validation (REQ-SQL-04).
 //!
 //! Validates that a host-supplied SQLite database matches the schema contract
-//! of packages/core (core 7.1.3): the tables and columns the engine reads must
-//! exist, and the `{prefix}meta` marker row `schema_version` must equal
+//! of packages/core: the tables and columns the engine reads must exist, and
+//! the `{prefix}meta` marker row `schema_version` must equal
 //! [`REQUIRED_SCHEMA_VERSION`].
 //!
 //! Read-only by construction: the validator only issues `SELECT`s and
@@ -13,8 +13,11 @@
 use crate::error::GraphragError;
 use rusqlite::Transaction;
 
-/// Core 7.1.3 `CURRENT_SCHEMA_VERSION` (packages/core/src/db/migrations.ts).
-pub const REQUIRED_SCHEMA_VERSION: i64 = 11;
+/// packages/core `CURRENT_SCHEMA_VERSION` (packages/core/src/db/migrations.ts,
+/// derived there from the last migration; core 9.4.x runs schema 17).
+/// Kept in lockstep by the parity test (tests/schema_parity.rs), which parses
+/// the migrations file and fails if this pin ever falls behind or ahead.
+pub const REQUIRED_SCHEMA_VERSION: i64 = 17;
 
 /// Required columns of `{prefix}entries` (schema.ts, verbatim names).
 const REQUIRED_ENTRIES_COLUMNS: &[&str] = &[
