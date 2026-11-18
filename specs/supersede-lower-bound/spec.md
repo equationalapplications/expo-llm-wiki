@@ -104,6 +104,9 @@ The check changes behavior for existing callers in four documented ways:
    `validFrom` at or before `valid_from ?? created_at` now throws.
 2. A default `validFrom` (`t = now`) can throw on a fact whose
    `valid_from` is future-dated. The throw lasts until the fact's start.
+   It also throws on a fact created in the same millisecond as the call
+   (`t == created_at`) — correct under half-open liveness, and
+   `expire()` behaves identically.
    This mirrors expire()'s documented default-`at` consequence.
 3. An explicit early `valid_from` on a new replacement fact is not
    checked — the successor can still start at or before the fact it
@@ -165,6 +168,10 @@ already carries the supersede guard suite. The `insert()` helper defaults
 4. A `valid_from` on the old row lowers nothing and hides nothing:
    give the old fact `valid_from` 500 (raw `UPDATE`, as in the plan's
    test), then `validFrom: 400` throws and `validFrom: 600` succeeds.
+   Also pin the direction `valid_from` < `created_at`: old fact with
+   `valid_from` 50 under `created_at` 100, `validFrom: 75` succeeds
+   with `valid_to` 75 — the bound is `valid_from ?? created_at`, not
+   `Math.max` (either would pass the 500 case).
 5. Default `validFrom` on a future-dated fact throws
    `invalid_interval` (D3 consequence 2).
 6. Guard order: an expired fact (its `valid_to` in the past) superseded
