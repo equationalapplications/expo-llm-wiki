@@ -343,8 +343,8 @@ visible. Today forget, prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
 canary-reproducible), which is why `erase()` exists and claims
 erasure only on the database's own read-back. The retention windows are the host's
-declaration, readable back through `getRetentionPolicy()`. `expire()`
-is ratified and needs a spec home before it is built.
+declaration, readable back through `getRetentionPolicy()`. `expire()`'s
+spec home is `specs/expire/`.
 
 ### 13. Erasure is verifiable, portability is clean
 

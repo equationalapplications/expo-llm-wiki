@@ -32,6 +32,7 @@ In Expo, `createWiki` takes an `expo-sqlite` database instead of an adapter.
 | `upsertGraph(entityId, { sourceRef, sourceHash, nodes, edges }, tx)` | `Promise<{ nodesWritten, edgesWritten, superseded }>` | [GraphRAG](/expo-llm-wiki/guides/graphrag/#seed-a-graph-without-an-llm) |
 | `remember(entityId, { title, body, tags?, confidence?, source_type?, okf_type?, valid_from? })` | `Promise<WikiFact>` | [Direct fact writes](#remember) |
 | `supersede(entityId, oldId, { title, body, … }, { validFrom? }?)` | `Promise<{ newId }>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
+| `expire(entityId, factId, { at? })` | `Promise<void>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
 | `importDump(dump, { merge? }?)` | `Promise<ImportDumpResult>` | `merge` defaults to `false` (replace the entity). Returns `skippedSources`, the stored sources the import refused. [OKF](/expo-llm-wiki/guides/okf/) |
 
 ### remember

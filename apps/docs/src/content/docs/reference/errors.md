@@ -33,7 +33,7 @@ try {
 | `WikiStrictOntologyViolation` | A strict-mode graph write used a type outside the manifest | `kind`, `type`, `entityId` | Fix the data or the manifest |
 | `WikiInvalidReadOptions` | `read()` options can't be satisfied (for example, floors that sum to more than `maxResults`) | `field`, `reason` | Fix the options |
 | `WikiDraftNotFound` | `promoteDraft` found no live draft with that ID | `code` | Refresh the draft list |
-| `WikiSupersedeError` | `supersede()` was refused | `reason` | See [Temporal → Rules](/expo-llm-wiki/guides/temporal-facts/#rules) |
+| `WikiSupersedeError` | `supersede()` or `expire()` was refused | `reason` | See [Temporal → Rules](/expo-llm-wiki/guides/temporal-facts/#rules) (`supersede()`) and [Expire a fact](/expo-llm-wiki/guides/temporal-facts/#expire-a-fact) (`expire()`) |
 | `WikiMigrationRequiredError` | `setup({ migrations: 'refuse' })` found pending work | `pendingWork` | Run `setup()` outside the lease |
 | `WikiSearchUnavailableError` | The keyword index failed to initialize | `cause` | Writes still work. Call `syncSearchIndex()` to retry. |
 | `WikiParseError` | The model's output couldn't be parsed | `tier`, `position` | Usually surfaces as `parseFailures` rather than a throw |

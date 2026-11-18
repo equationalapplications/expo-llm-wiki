@@ -60,9 +60,11 @@ naming each step's outcome. Always on at full
 strength; no opt-out. Ships with the forget-erasure work in this release — see
 [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 
-**Expire** — ends a fact's validity without a replacement: an archive, not a deletion. The
-archived fact becomes superseded. Planned, not yet released — a separate spec precedes its
-implementation.
+**Expire** — ends a fact's validity without a replacement: an archive, not a deletion. A fact
+expired with a future `at` remains live and readable until that time. The
+archived fact enters the superseded (archived) state; no
+replacement link is created. Ships in this release — see [Temporal
+facts](/expo-llm-wiki/guides/temporal-facts/).
 
 **Heal** — the periodic repair pass: soft-deletes wrong or superseded entries, checks
 consistency, and reports clean when nothing is off. Part of the librarian's repair function,

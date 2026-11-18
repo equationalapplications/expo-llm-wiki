@@ -1608,15 +1608,15 @@ export class WikiDraftNotFound extends Error {
   }
 }
 
-export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity';
+export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity' | 'already_expired' | 'invalid_interval';
 
-/** Thrown by `supersede()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
+/** Thrown by `supersede()` and `expire()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
 export class WikiSupersedeError extends Error {
   readonly code = 'WIKI_SUPERSEDE_REJECTED' as const;
   readonly reason: WikiSupersedeReason;
 
-  constructor(reason: WikiSupersedeReason) {
-    super(`supersede() rejected: ${reason}`);
+  constructor(reason: WikiSupersedeReason, verb = 'supersede()') {
+    super(`${verb} rejected: ${reason}`);
     this.name = 'WikiSupersedeError';
     this.reason = reason;
     Object.setPrototypeOf(this, WikiSupersedeError.prototype);

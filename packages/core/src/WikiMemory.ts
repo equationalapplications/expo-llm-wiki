@@ -1174,7 +1174,7 @@ export class WikiMemory {
   /**
    * End `oldId`'s validity and link it to its replacement (spec §4.3). One
    * transaction. Throws `WikiSupersedeError` for missing, foreign, already
-   * superseded, immutable-document, or cyclic targets.
+   * superseded, already expired, immutable-document, or cyclic targets.
    */
   async supersede(
     entityId: string,
@@ -1183,6 +1183,19 @@ export class WikiMemory {
     options?: { validFrom?: number },
   ): Promise<{ newId: string }> {
     return this.temporalService.supersede(entityId, oldId, replacement, options);
+  }
+
+  /**
+   * End `factId`'s validity without a replacement — an archive, not a
+   * deletion (INTENT rule 12). Sets `valid_to` only: `superseded_by`,
+   * `superseded_at` and `deleted_at` stay untouched, and an `asOf` read at
+   * `T` with `COALESCE(valid_from, created_at) <= T < valid_to` still returns
+   * the fact. Throws `WikiSupersedeError` for
+   * a missing, foreign, already superseded, immutable-document, or already
+   * expired target, and for an inverted or empty interval (`invalid_interval`).
+   */
+  async expire(entityId: string, factId: string, options?: { at?: number }): Promise<void> {
+    return this.temporalService.expire(entityId, factId, options);
   }
 
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */
