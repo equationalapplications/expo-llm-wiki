@@ -140,7 +140,8 @@ clear is its own step so hosts can distinguish "could not look" from
 "could not clear"; the bare `failedStep` union at
 `MaintenanceService.ts:243` gains the new member. Each surface is pushed
 to `ftsOrphansCleared` only **after** that surface fully clears; the
-step is recorded via the existing `ok()` helper and emits a new diagnostic
+step is recorded as `{ step: 'fts_orphan_clear', outcome: 'ok' }` in `report.steps`
+when remediation ran (a mid-method throw skips the record) and emits a new diagnostic
 `erase_fts_orphan_cleared` per cleared table. If any clear or the metadata
 write fails mid-way: `EraseStepError('erase_fts_orphan_clear', ...)`,
 `verified: false`. The `erase_orphaned_fts_content` code is RETIRED by this spec: its only
@@ -216,7 +217,9 @@ shadow stand-ins with a canary row; F1 (`:88-109`) — a real
    module-less slot) to prove the runtime classification end-to-end. [V]
 2. **Path A determinism:** after Path A erase, `FTS5_STATE_KEY` reads
    `'detached'`; a subsequent FTS5-capable open rebuilds via
-   `resetAndRearm` and serves queries. [V]
+   `resetAndRearm` and serves queries. [V] manually verified 2026-11-18
+   (module-less sqlite3 CLI), see canary-ac2.test.ts + canary-evidence.md —
+   not executable in CI
 3. **Path B:** capable runtime, orphaned **queryable** vtabs present, and
    the strategy positively a `MiniSearchIndexStrategy` (construct via a
    real config-minisearch store, or an `instanceof`-real stub — the N2

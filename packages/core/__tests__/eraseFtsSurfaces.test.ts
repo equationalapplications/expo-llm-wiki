@@ -35,7 +35,7 @@ const maint = (wiki: WikiMemory): any => (wiki as any).maintenanceService;
 const search = (wiki: WikiMemory): any => (wiki as any).searchService;
 const newReport = () => ({
   verified: false, secureDelete: 1, sqliteVersion: '', entities: [], holds: [], skipped: [],
-  syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null, retiredUndroppable: [], ftsOrphansCleared: [],
+  syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null, steps: [], retiredUndroppable: [], ftsOrphansCleared: [],
 }) as any;
 
 /** Force a retired table the way a tokenizer-mismatch / corruption reset does. */
@@ -51,6 +51,11 @@ async function forceRetired(t: Awaited<ReturnType<typeof make>>) {
     INSERT INTO ${P}entries_fts (rowid, id, entity_id, title, body, tags) SELECT rowid, id, entity_id, title, body, '' FROM ${P}entries;`);
   await new Fts5IndexStrategy(t.raw, P, t.meta).init();
 }
+/** Retired-shadow fixture with real fts5 shapes: _data (id, block) rows 1, 10 + canary; _config (key, value). */
+const retiredFixture = (name: string, sfx: string, canary: string) =>
+  sfx === '_data' ? `CREATE TABLE ${name}${sfx} (id INTEGER, block TEXT); INSERT INTO ${name}${sfx} VALUES (1, 'avg'), (10, 'struct'), (99, '${canary}');`
+  : sfx === '_config' ? `CREATE TABLE ${name}${sfx} (key TEXT, value TEXT); INSERT INTO ${name}${sfx} VALUES ('version', '4');`
+  : `CREATE TABLE ${name}${sfx} (k INTEGER, v TEXT); INSERT INTO ${name}${sfx} VALUES (1, '${canary}');`;
 const retiredNames = async (t: Awaited<ReturnType<typeof make>>) =>
   (await t.raw.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE name LIKE '${P}entries_fts_retired_%'`)).map((r) => r.name);
 const listed = async (t: Awaited<ReturnType<typeof make>>) =>
@@ -73,7 +78,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     // With the module loaded SQLite protects shadow tables; a module-less open sees them as plain
     // tables. Fixture: drop the vtab, leave plain shadow tables holding rows, keep the name listed.
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
-      await t.raw.execAsync(`CREATE TABLE ${name}${sfx} (k INTEGER, v TEXT); INSERT INTO ${name}${sfx} VALUES (1, 'secret');`);
+      await t.raw.execAsync(retiredFixture(name, sfx, 'secret'));
     }
     await t.meta.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify([name]));
     vi.spyOn(search(t.wiki), 'reclaimRetiredSurfaced').mockRejectedValue(new Error('no such module: fts5'));
@@ -81,7 +86,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     await maint(t.wiki)._eraseReclaimRetired(report);
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
       const row = await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${name}${sfx}`);
-      expect(row!.n).toBe(0);
+      expect(row!.n).toBe(sfx === '_data' ? 2 : sfx === '_config' ? 1 : 0);
     }
     expect(await listed(t)).toEqual([name]);
     expect(report.retiredUndroppable).toEqual([name]);
@@ -99,12 +104,12 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     const meta = new MetadataRepository(raw, P);
     const name = `${P}entries_fts_retired_1`;
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
-      await raw.execAsync(`CREATE TABLE ${name}${sfx} (k INTEGER, v TEXT); INSERT INTO ${name}${sfx} VALUES (1, 'canary');`);
+      await raw.execAsync(retiredFixture(name, sfx, 'canary'));
     }
     await meta.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify([name]));
     const report = await maint(wiki).erase();
     for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
-      expect((await raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${name}${sfx}`))!.n, sfx + JSON.stringify(report)).toBe(0);
+      expect((await raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${name}${sfx}`))!.n, sfx + JSON.stringify(report)).toBe(sfx === '_data' ? 2 : sfx === '_config' ? 1 : 0);
     }
     expect(JSON.parse((await meta.getMeta(FTS5_RETIRED_TABLES_KEY)) ?? '[]')).toEqual([name]);
     expect(report.retiredUndroppable).toEqual([name]);

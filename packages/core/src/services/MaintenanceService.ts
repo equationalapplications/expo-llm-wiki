@@ -851,7 +851,9 @@ export class MaintenanceService {
         }
       }
       // Path B body (after the surface loop, D4): DROP the queryable vtabs and
-      // the FTS triggers, mirroring detachFts5's effects.
+      // the FTS triggers. Path B DELETEs the passage companions' rows where
+      // detachFts5 DROPs the tables — harmless: the next capable init re-creates
+      // them (CREATE IF NOT EXISTS), matching ensurePassageObjects' re-seed.
       for (const surface of pathBTargets) {
         await this.db.execAsync(`DROP TABLE IF EXISTS ${surface}`);
         emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: surface } });
@@ -867,6 +869,7 @@ export class MaintenanceService {
           await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'detached', tx);
         });
       }
+      report.steps.push({ step: 'fts_orphan_clear', outcome: 'ok' });
     } catch (err) {
       if (err instanceof EraseStepError) throw err;
       report.failedStep = 'fts_orphan_clear';
@@ -938,7 +941,10 @@ export class MaintenanceService {
     try {
       for (const name of await this._retiredList()) {
         for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
-          if (await this.sourceTableExists(`${name}${sfx}`)) await this.db.runAsync(`DELETE FROM ${name}${sfx}`);
+          if (sfx === '_config') continue; // preserve rule (as Path A): keeps the retired vtab readable so a capable re-open can DROP it
+          if (await this.sourceTableExists(`${name}${sfx}`)) {
+            await this.db.runAsync(sfx === '_data' ? `DELETE FROM ${name}_data WHERE id NOT IN (1, 10)` : `DELETE FROM ${name}${sfx}`);
+          }
         }
         if (!report.retiredUndroppable.includes(name)) report.retiredUndroppable.push(name);
         emitDiagnostic(this.options, { code: 'erase_retired_vtab_undroppable', operation: 'erase', trigger: 'call', entityId: '' });

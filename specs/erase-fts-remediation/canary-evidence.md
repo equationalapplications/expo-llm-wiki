@@ -1,4 +1,9 @@
-# AC2 manual canary — 2026-11-18 (controller-run)
+> Historical (pre-repair) finding below. The shipped repair differs: writable_schema surgery was
+> impossible (better-sqlite3 and the SQLite 3.53 CLI refuse sqlite_schema DML), so Path A now
+> preserves `%_data` ids 1 (AVERAGES) and 10 (STRUCTURE) and the `%_config` table; the canary
+> (`canary-ac2.test.ts`, this dir) asserts the repaired behavior and passes.
+
+# Pre-repair finding (historical) — AC2 manual canary, 2026-11-18 (controller-run)
 
 Runtime found: system `sqlite3` CLI has NO fts5 module (`no such module: fts5`) — a true
 module-less runtime. node:sqlite also lacks fts5. better-sqlite3 (capable) for phases 1/3.
@@ -23,8 +28,3 @@ unregister the vtab via the documented writable_schema emergency procedure
 (`PRAGMA writable_schema=ON; DELETE FROM sqlite_schema WHERE name=...; OFF`) and drop the
 now-plain shadow tables by name, so the rearm's CREATE builds fresh. Same corrupt-DROP
 likely bites _eraseReclaimRetired's retired-table DROP on a capable open (needs review).
-
-> Historical (pre-repair) finding. The shipped repair differs: writable_schema surgery was
-> impossible (better-sqlite3 and the SQLite 3.53 CLI refuse sqlite_schema DML), so Path A now
-> preserves `%_data` ids 1 (AVERAGES) and 10 (STRUCTURE) and the `%_config` table; the canary
-> (`canary-ac2.test.ts`, this dir) asserts the repaired behavior.
