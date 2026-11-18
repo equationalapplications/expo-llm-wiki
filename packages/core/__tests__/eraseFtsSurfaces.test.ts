@@ -32,7 +32,7 @@ const maint = (wiki: WikiMemory): any => (wiki as any).maintenanceService;
 const search = (wiki: WikiMemory): any => (wiki as any).searchService;
 const newReport = () => ({
   verified: false, secureDelete: 1, sqliteVersion: '', entities: [], holds: [], skipped: [],
-  syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null, retiredUndroppable: [],
+  syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, failedStep: null, retiredUndroppable: [], ftsOrphansCleared: [],
 }) as any;
 
 /** Force a retired table the way a tokenizer-mismatch / corruption reset does. */
@@ -163,19 +163,47 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     warn.mockRestore();
   });
 
-  it('step 3: strategy without strict drain refuses on orphaned FTS content tables (F-MAJOR-1); absent tables proceed', async () => {
+  it('step 3: strategy without strict drain CLEARS orphaned FTS content tables (F-MAJOR-1 flipped, Path C)', async () => {
     const t = await make();
     vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
-    // A real minisearch store never had FTS5 tables: model that by dropping them.
     await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
     await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
-    await maint(t.wiki)._eraseDrainPassages(newReport());
-    await t.raw.runAsync(`CREATE TABLE ${P}entries_fts_content (id INTEGER, c0 TEXT)`);
-    await t.raw.runAsync(`INSERT INTO ${P}entries_fts_content (id, c0) VALUES (1, 'CANARY-forgotten-text')`);
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      await t.raw.execAsync(`CREATE TABLE ${P}entries_fts${sfx} (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts${sfx} VALUES (1, 'CANARY-forgotten-text');`);
+    }
     const report = newReport();
-    await expect(maint(t.wiki)._eraseDrainPassages(report)).rejects.toMatchObject({ code: 'erase_orphaned_fts_content' });
-    expect(report.failedStep).toBe('index_sync');
-    expect(report.verified).toBe(false);
+    await maint(t.wiki)._eraseDrainPassages(report);
+    for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
+      expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts${sfx}`))!.n, sfx + JSON.stringify(report)).toBe(0);
+    }
+    expect(report.ftsOrphansCleared).toEqual([
+      `${P}entries_fts_content`, `${P}entries_fts_data`, `${P}entries_fts_idx`, `${P}entries_fts_docsize`, `${P}entries_fts_config`,
+      `${P}fts_pending`, `${P}fts_map`, `${P}source_passages_fts_pending`, `${P}source_passages_fts_map`,
+    ]);
+    expect(report.failedStep).toBeNull();
+  });
+
+  it('Path C / never-FTS: a module-less DB that never had FTS tables proceeds with no probe and no entry (AC9)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    const report = newReport();
+    await maint(t.wiki)._eraseDrainPassages(report);
+    expect(report.ftsOrphansCleared).toEqual([]);
+    expect(report.failedStep).toBeNull();
+  });
+
+  it('full erase(): Path C completes verified (AC9 via pipeline)', async () => {
+    const t = await make();
+    vi.spyOn(search(t.wiki), 'hasStrictDrain').mockReturnValue(false);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}entries_fts`);
+    await t.raw.runAsync(`DROP TABLE IF EXISTS ${P}source_passages_fts`);
+    await t.raw.execAsync(`CREATE TABLE ${P}entries_fts_content (k INTEGER, v TEXT); INSERT INTO ${P}entries_fts_content VALUES (1, 'CANARY-forgotten-text');`);
+    const report = await maint(t.wiki).erase();
+    expect(report.verified).toBe(true);
+    expect(report.ftsOrphansCleared).toContain(`${P}entries_fts_content`);
+    expect((await t.raw.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries_fts_content`))!.n).toBe(0);
   });
 
   it('step 7: optimize runs on both FTS tables', async () => {
