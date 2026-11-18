@@ -67,4 +67,30 @@ describe('expire()', () => {
     await wiki.expire('e1', v2, { at: 300 });
     expect((await wiki.history('e1', 'v1')).map((f) => f.id)).toEqual(['v1', v2]);
   });
+
+  it.each([
+    ['not_found', async () => wiki.expire('e1', 'missing')],
+    ['not_found', async () => { await insert('f1'); await db.runAsync(`UPDATE llm_wiki_entries SET deleted_at = 50 WHERE id = 'f1'`); return wiki.expire('e1', 'f1'); }],
+    ['cross_entity', async () => { await insert('x', 'e2'); return wiki.expire('e1', 'x'); }],
+    ['immutable_target', async () => { await insert('doc', 'e1', 'immutable_document'); return wiki.expire('e1', 'doc'); }],
+    ['already_superseded', async () => { await insert('f1'); await wiki.supersede('e1', 'f1', { title: 't', body: 'b' }); return wiki.expire('e1', 'f1'); }],
+    ['already_expired', async () => { await insert('f1'); await wiki.expire('e1', 'f1', { at: 500 }); return wiki.expire('e1', 'f1'); }],
+  ])('rejects %s', async (reason, run) => {
+    await expect(run()).rejects.toMatchObject({ name: 'WikiSupersedeError', reason });
+  });
+
+  it('guard order: a superseded row reports already_superseded, never already_expired', async () => {
+    await insert('f1');
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50, superseded_by = 'v2', superseded_at = 60 WHERE id = 'f1'`);
+    await expect(wiki.expire('e1', 'f1')).rejects.toMatchObject({ reason: 'already_superseded' });
+  });
+
+  it('cross_entity rejection leaves the row byte-identical and stages no outbox push', async () => {
+    await insert('x', 'e2');
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 7, valid_to = 9 WHERE id = 'x'`);
+    const before = await db.getFirstAsync<any>(`SELECT * FROM llm_wiki_entries WHERE id = 'x'`);
+    await expect(wiki.expire('e1', 'x')).rejects.toMatchObject({ reason: 'cross_entity' });
+    expect(await db.getFirstAsync<any>(`SELECT * FROM llm_wiki_entries WHERE id = 'x'`)).toEqual(before);
+    expect((await db.getAllAsync(`SELECT 1 FROM llm_wiki_outbox WHERE record_id = 'x'`)).length).toBe(0);
+  });
 });
