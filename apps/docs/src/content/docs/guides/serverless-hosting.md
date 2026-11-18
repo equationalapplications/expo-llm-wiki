@@ -69,13 +69,11 @@ try {
 
 ## Writer lease patterns
 
-The lease only has to guarantee two processes cannot hold it at once. Three proven shapes:
+The lease only has to guarantee two processes cannot hold it at once — but that guarantee holds **only if the lease outlives the request**: set the TTL above the worst-case hold time (including maintenance), or have the holder renew it. A request that outlasts the TTL lets a second writer in, which is exactly the failure this section exists to prevent. On push, check you still hold the lease (a fencing token or holder comparison) before writing. Three workable shapes:
 
 - **DynamoDB conditional write.** `PutItem` with `ConditionExpression: attribute_not_exists(key) OR expires_at < :now`; hold for the request duration; release on push or let it expire on crash.
-- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; delete on push (only if still yours), or let the TTL expire.
-- **S3 object lease.** Write a small lease object with an expiring retention policy next to the data file; its deletion/expiry releases the lease.
-
-Two concurrent pullers cannot both hold the lease. If a holder crashes mid-request, the expiry — not a cleanup step — is what unblocks the next writer.
+- **Redis `SET NX EX`.** `SET lease:<fileKey> <holder> NX EX <ttl>`; delete on push only if still yours (compare the holder value); renew before the TTL lapses on long requests.
+- **S3 conditional writes.** Take the lease with `PutObject` and `If-None-Match: *` (fails if a lease object already exists); renew or release with `If-Match: <etag>`. Store an `expires_at` in the object body — S3 does not expire it for you, so the *next* writer checks it and treats an expired lease as free.
 
 ## Budget sizing
 
@@ -91,5 +89,5 @@ Two concurrent pullers cannot both hold the lease. If a holder crashes mid-reque
 | `<tenantId>:<workspaceId>` — one entity per workspace | Workspace-scoped reads are natural; per-workspace accounting and `forget()` | Users inside a workspace share memory |
 | `<tenantId>` — one constant entity per file | None inside the tenant | Simplest; per-user `forget()` degenerates to "delete the file" |
 
-Whatever the choice, the writer (your auth layer) picks the `entity_id` per request — see the hard rule above. Deletion and retention interplay: `forget({ clearAll: true, includeEvents: true })` also deletes read and unread events before `runPrune` — see [Deleting data](/expo-llm-wiki/guides/deleting-data/) and [Maintenance](/expo-llm-wiki/guides/maintenance/).
+Whatever the choice, the writer (your auth layer) picks the `entity_id` per request — see the hard rule above. Deletion and retention interplay: `forget({ clearAll: true, includeEvents: true })` hard-deletes every event of the entity immediately, read or not, and resets the librarian position — see [Deleting data](/expo-llm-wiki/guides/deleting-data/) and [Maintenance](/expo-llm-wiki/guides/maintenance/).
 

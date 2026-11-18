@@ -71,7 +71,7 @@ by this spec.
 | R3 | v1 supports both ways to get a key: paste a dashboard key, or run the auth.md registration flow from the terminal. | 2026-10-31 |
 | R4 | v1 exposes a curated set of eight tools, not the whole contract. Adding any tool is a spec amendment that names its scope. | 2026-10-31 |
 | R5 | No anonymous credentials. Export and destructive operations are never agent-callable through this server, whatever the stored key could do ("D3"). | standing |
-| R6 | The vendored contract is a pruned OpenAPI subset of exactly the operations this server calls, committed in this repo and regenerated from SynapseTree. | 2026-11-01 |
+| R6 | The vendored contract is a pruned OpenAPI subset of exactly the operations this server calls, committed in this repo and regenerated from the upstream service. | 2026-11-01 |
 | R7 | The registration response carries the poll interval as `poll.interval` (seconds); a pending or slow-down answer may replace it. | 2026-11-01 |
 | R8 | The implementer verifies with mocks only; the live check is manual, before release. | 2026-11-01 |
 | R9 | Tool names stay as shipped in §8 (`memory_*`, `graph_traverse`, `namespaces_list`, `whoami`); they are not renamed to `wiki_*`. The name-to-core-call table lives in §8 below and `__tests__/tool-name-parity.test.ts` locks them (the former `docs/synapsetree-integration.md` §6, removed under issue #405, carried the prose version). This answers the upstream `2026-11-01-wire-memory-operations` §8 naming cleanup. | 2026-11-02 |

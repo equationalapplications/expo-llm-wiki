@@ -255,7 +255,7 @@ Rerun Phase 0 with `strategy: 'ops'`, `maintenance: 'deferred'` (run to quiescen
 
 ### 7.3 Docs
 
-- `docs/synapsetree-integration.md`: recommended config (`ops`, `deferred`, read budget, `onDiagnostic` → metering, `occurred_at` from requests); request lifecycle (pull `.sqlite` from S3 → `new WikiMemory` + `setup()` → handle → optionally `runPendingMaintenance({ tokenBudget, deadlineMs })` → push); single-writer requirement; `entity_id` options.
+- ~~`docs/synapsetree-integration.md`~~ (removed under issue #405; its engine-level content — recommended config, request lifecycle, single-writer requirement, `entity_id` options — now lives in the docs-site guide *Serverless & multi-tenant hosting*): recommended config (`ops`, `deferred`, read budget, `onDiagnostic` → metering, `occurred_at` from requests); request lifecycle (pull `.sqlite` from S3 → `new WikiMemory` + `setup()` → handle → optionally `runPendingMaintenance({ tokenBudget, deadlineMs })` → push); single-writer requirement; `entity_id` options.
 - READMEs for core, expo, react: temporal API, strategies, deferred mode, budgets.
 - OKF profile doc: temporal extension keys.
 
