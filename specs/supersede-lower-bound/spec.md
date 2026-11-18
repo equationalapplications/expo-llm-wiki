@@ -154,15 +154,17 @@ already carries the supersede guard suite. The `insert()` helper defaults
 `created_at` to 100.
 
 1. RED first, per TDD: write the cases below, run them against the
-   unfixed tree, and record each failure. Every case below must fail for
-   the right reason (no `invalid_interval` thrown) before the fix lands.
+   unfixed tree, and record each failure. The `invalid_interval`
+   cases (2, 3, 4, 5, 7, 10) must fail for the right reason (no
+   `invalid_interval` thrown) before the fix lands; cases 6, 8 and 9
+   pin existing behavior and must pass on the unfixed tree.
 2. `t == start` throws `invalid_interval`: insert with default
    `created_at` 100, supersede with `validFrom: 100`.
 3. `t < start` throws `invalid_interval`: `validFrom: 99` on the same
    fact.
 4. A `valid_from` on the old row lowers nothing and hides nothing:
-   give the old fact `valid_from` 500 (direct `setTemporal`), then
-   `validFrom: 400` throws and `validFrom: 600` succeeds.
+   give the old fact `valid_from` 500 (raw `UPDATE`, as in the plan's
+   test), then `validFrom: 400` throws and `validFrom: 600` succeeds.
 5. Default `validFrom` on a future-dated fact throws
    `invalid_interval` (D3 consequence 2).
 6. Guard order: an expired fact (its `valid_to` in the past) superseded

@@ -169,9 +169,13 @@ it('SUPERSEDE whose time is at or before the target start is rejected as invalid
 - [ ] **Step 3: Run the RED check**
 
 Run: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/supersede.test.ts __tests__/opsLibrarian.test.ts`
-Expected: the four guard cases and the ops case FAIL for the right reason
-(no `invalid_interval` thrown — today the calls succeed or link corruptly).
-The scope-boundary case and the existing suite PASS.
+Expected: these six FAIL for the right reason (no `invalid_interval`
+thrown — today the calls succeed or link corruptly): `t == start`,
+`t < start`, `uses valid_from over created_at`, future-dated default,
+`leaves no partial writes`, and the ops case. These two PASS on the
+unfixed tree — they pin existing behavior and must stay green after the
+fix: the guard-order case (`already_expired` fires first) and the
+scope-boundary case. The rest of the existing suite PASSES.
 
 - [ ] **Step 4: Commit**
 
