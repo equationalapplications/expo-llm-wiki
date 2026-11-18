@@ -74,6 +74,35 @@ overrides:
   # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
   # express dependency (new with packages/mcp-server). Same waiver rationale.
   'body-parser@>=2.0.0 <2.4.0': 2.4.0
+  # glob 14.0.2 / minimatch 11.0.1 forced majors — GHSA-3g3m-2fjr-6pw4 /
+  # GHSA-g3hv-75wg-m249 (MODERATE). Patches published 2026-10-27 22:07Z /
+  # 22:26Z, cleared the 14-day age gate 2026-11-10. Reach (all dev/build
+  # time, never shipped): @expo/* CLI tooling (glob ^13.0.0), workbox-build
+  # via vite-plugin-pwa in apps/scopelab (glob ^11.0.1), eslint +
+  # @typescript-eslint/typescript-estree + @expo/fingerprint (minimatch
+  # ^10.2.x). This override forces a MAJOR outside every range declared in
+  # today's resolved graph — owner-approved 2026-11-16 (issue #278,
+  # superseding the 2026-11-09 leave-open park). No glob-14/minimatch-11
+  # behavior change is observable in any repo gate surface (verified:
+  # investigation.md). Residual accepted risk: @expo/fingerprint and
+  # @expo/config ignore semantics are unprobed (no expo app exists in-repo
+  # to test). Drop condition (check only parents whose DECLARED range is
+  # subject to each override, not the whole resolved graph; e.g. filelist's
+  # minimatch 5.1.9 sits below the >=7.0.0 floor and never blocks
+  # retirement): list the parents with `pnpm why glob` / `pnpm why
+  # minimatch`, then remove each
+  # line when no in-scope parent declares a range that excludes
+  # 14.0.2 / 11.0.1 — check each parent's DECLARED range with
+  # `pnpm view <parent>@<locked> dependencies.glob` (or
+  # `dependencies.minimatch`); the workspace importers themselves never
+  # declare glob or minimatch. In-scope parents as of 2026-11-18:
+  # glob — @expo/cli, @expo/config, @expo/config-plugins, @expo/metro-config,
+  # @expo/fingerprint, workbox-build; minimatch — eslint,
+  # @typescript-eslint/typescript-estree, @expo/fingerprint,
+  # @eslint/config-array (still `^10.2.4` at 0.23.5 — line NOT yet
+  # retirable). Re-check in every cooldown sweep.
+  'glob@>=9.0.0 <14.0.2': 14.0.2
+  'minimatch@>=7.0.0 <11.0.1': 11.0.1
   # node-forge 2026-11-01 advisory burst (GHSA-7wch-p9px-956x,
   # GHSA-jc66-7q78-782g, GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx,
   # GHSA-5x38-2vff-x55p HIGH, plus moderate/low siblings): all patched in
