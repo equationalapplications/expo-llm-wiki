@@ -25,7 +25,7 @@ occupies a supersession chain slot.
 
 A second defect rides the same missing check. When the replacement is a
 new fact with no `valid_from`, `supersedeInTx` sets the replacement's
-`valid_from = t` (:52-54). At `t <= start` the replacement starts at or
+`valid_from = t` (:48-50). At `t <= start` the replacement starts at or
 before the fact it replaces, so `history()` orders the successor at or
 before its predecessor.
 
