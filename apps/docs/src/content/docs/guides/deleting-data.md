@@ -105,6 +105,7 @@ FTS5 keeps orphaned full-text content tables whose stored text `erase()` does no
 such runtimes erase refuses with `erase_orphaned_fts_content` until the orphaned content tables
 are removed (remediation is tracked in
 [issue #407](https://github.com/equationalapplications/expo-llm-wiki/issues/407)).
+On runtimes without FTS5, erase() now clears the orphaned index tables itself and completes verified.
 
 Full zeroing is `secure_delete=ON`, and the engine keeps it on unconditionally: there is no
 opt-out.

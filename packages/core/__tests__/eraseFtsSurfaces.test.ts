@@ -181,6 +181,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
       `${P}fts_pending`, `${P}fts_map`, `${P}source_passages_fts_pending`, `${P}source_passages_fts_map`,
     ]);
     expect(report.failedStep).toBeNull();
+    expect(t.diagnostics.some((d) => d.code === 'erase_fts_orphan_cleared')).toBe(true);
   });
 
   it('Path C / never-FTS: a module-less DB that never had FTS tables proceeds with no probe and no entry (AC9)', async () => {
@@ -269,7 +270,11 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
 
   it('Path B: minisearch store with queryable orphan vtabs drops them and forces detached (AC3)', async () => {
     const raw = openTestDatabase();
-    const wiki = new WikiMemory(raw, { llmProvider: llm, config: { indexStrategy: 'minisearch' } } as WikiOptions);
+    const diagnostics: WikiDiagnostic[] = [];
+    const wiki = new WikiMemory(raw, {
+      llmProvider: llm, config: { indexStrategy: 'minisearch' },
+      onDiagnostic: (d: WikiDiagnostic) => { diagnostics.push(d); },
+    } as WikiOptions);
     await wiki.setup();
     vi.spyOn(search(wiki), 'hasStrictDrain').mockReturnValue(false);
     // Orphaned-but-queryable vtabs from an earlier FTS5 life:
@@ -284,6 +289,7 @@ describe('erase() FTS surfaces (spec §2 steps 3/4/7)', () => {
     expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('detached');
     expect(report.ftsOrphansCleared).toContain(`${P}entries_fts`);
     expect(report.failedStep).toBeNull();
+    expect(diagnostics.some((d) => d.code === 'erase_fts_orphan_cleared')).toBe(true);
   });
 
   it('Unavailable honesty: duck-typed unavailable strategy with orphan surfaces refuses to touch tables (AC4)', async () => {
