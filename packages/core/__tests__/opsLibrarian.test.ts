@@ -169,6 +169,38 @@ describe('ops librarian end to end', () => {
     expect(fresh.valid_from).toBe(100);
   });
 
+  it('SUPERSEDE whose time is at or before the target start is rejected as invalid_interval and leaves both facts live', async () => {
+    // Target created_at = 1; the candidate event carries time 1 (via its
+    // source_event label), so supersedeFrom = 1 == the target's start, and
+    // the op must reject instead of linking an empty window. Ops target the
+    // neighbour alias, not the raw row id — use 'n1' like every existing test.
+    const { db, wiki, diagnostics } = mk([
+      () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
+      () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] }),
+    ]);
+    await wiki.setup();
+    await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
+      VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1)`);
+    await wiki.runReembed();
+    await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',1)`);
+    await wiki.runLibrarian('u');
+    const rejected = ofCode(diagnostics, 'librarian_op_rejected');
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as any).detail.reason).toBe('invalid_interval');
+    // Both facts stay live and retrievable (spec D3.4).
+    const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id='seattle'`);
+    expect(old.valid_to).toBeNull();
+    expect(old.superseded_by).toBeNull();
+    const fresh = await db.getFirstAsync<any>(`SELECT id, valid_to, superseded_by, valid_from FROM llm_wiki_entries WHERE id != 'seattle'`);
+    expect(fresh.valid_to).toBeNull();
+    expect(fresh.superseded_by).toBeNull();
+    expect(fresh.valid_from).toBe(1);
+    const read = await wiki.read('u', 'where does the user live');
+    expect(read.facts.length).toBe(2);
+    const asOfRead = await wiki.read('u', 'where does the user live', { asOf: 1 });
+    expect(asOfRead.facts.length).toBe(2);
+  });
+
   it('SUPERSEDE of a fact with a future-dated valid_to succeeds and overwrites the end', async () => {
     const { db, wiki, diagnostics } = mk([
       () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),

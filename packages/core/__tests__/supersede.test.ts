@@ -90,6 +90,65 @@ describe('supersede()', () => {
     await wiki.supersede('e1', 'a', { title: 't', body: 'b' });
     expect((await db.getAllAsync(`SELECT 1 FROM llm_wiki_events`)).length).toBe(0);
   });
+
+  it('rejects an empty interval with invalid_interval (t == start)', async () => {
+    await insert('seattle'); // created_at defaults to 100
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 100 }))
+      .rejects.toMatchObject({ reason: 'invalid_interval' });
+    const t = await temporal('seattle');
+    expect(t.valid_to).toBeNull();
+    expect(t.superseded_by).toBeNull();
+  });
+
+  it('rejects an inverted interval with invalid_interval (t < start)', async () => {
+    await insert('seattle');
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 99 }))
+      .rejects.toMatchObject({ reason: 'invalid_interval' });
+  });
+
+  it('uses valid_from over created_at as the start', async () => {
+    await insert('seattle'); // created_at 100
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 500 WHERE id = 'seattle'`);
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 400 }))
+      .rejects.toMatchObject({ reason: 'invalid_interval' });
+    const { newId } = await wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 600 });
+    const t = await temporal('seattle');
+    expect(t.valid_to).toBe(600);
+    expect(t.superseded_by).toBe(newId);
+  });
+
+  it('reports already_expired before invalid_interval (guard order, spec D2)', async () => {
+    await insert('seattle'); // created_at 100
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50 WHERE id = 'seattle'`);
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 40 }))
+      .rejects.toMatchObject({ reason: 'already_expired' });
+  });
+
+  it('rejects a default validFrom on a future-dated fact until its start', async () => {
+    await insert('seattle'); // created_at 100
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 9999999999999 WHERE id = 'seattle'`);
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }))
+      .rejects.toMatchObject({ reason: 'invalid_interval' });
+  });
+
+  it('leaves no partial writes when the interval rejects', async () => {
+    await insert('seattle');
+    await expect(wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 50 }))
+      .rejects.toMatchObject({ reason: 'invalid_interval' });
+    const rows = await db.getAllAsync<any>(`SELECT id FROM llm_wiki_entries`);
+    expect(rows.map((r) => r.id)).toEqual(['seattle']);
+    const t = await temporal('seattle');
+    expect(t.superseded_by).toBeNull();
+  });
+
+  it('still allows an explicit early valid_from on the replacement (scope boundary, spec D3.3)', async () => {
+    await insert('seattle'); // created_at 100
+    const { newId } = await wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b', valid_from: 50 }, { validFrom: 200 });
+    const fresh = await temporal(newId);
+    expect(fresh.valid_from).toBe(50);
+    const t = await temporal('seattle');
+    expect(t.valid_to).toBe(200);
+  });
 });
 
 describe('history()', () => {
