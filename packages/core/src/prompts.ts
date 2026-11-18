@@ -78,16 +78,23 @@ export function buildTitleCatalogBlock(
 ): string {
   const typed = rows
     .filter((r) => typeof r.title === 'string' && r.title.length > 0 && typeof r.okf_type === 'string' && r.okf_type.length > 0)
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .slice(0, TITLE_CATALOG_MAX_ENTRIES);
-  if (typed.length === 0) {
-    return 'TITLE CATALOG: this memory contains no typed nodes yet — omit "edges" rather than invent a target_title.';
+    // Code-point order, not localeCompare: the catalog bytes must be identical
+    // across runtimes/locales so prompts (and any cap boundary) are stable.
+    .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+  const truncated = typed.length > TITLE_CATALOG_MAX_ENTRIES;
+  const listed = typed.slice(0, TITLE_CATALOG_MAX_ENTRIES);
+  if (listed.length === 0) {
+    return [
+      'TITLE CATALOG: this memory contains no typed nodes yet.',
+      'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
+    ].join('\n');
   }
-  const catalog = typed.map((r) => `- "${r.title}" (${r.okf_type})`).join('\n');
+  const catalog = listed.map((r) => `- ${JSON.stringify(r.title)} (${r.okf_type})`).join('\n');
   return [
-    'TITLE CATALOG: this memory already contains the following typed nodes:',
+    'TITLE CATALOG: existing typed nodes in this memory include:',
     catalog,
-    'A "target_title" is valid only if it is copied verbatim from this catalog.',
+    ...(truncated ? ['(This list is truncated; more typed nodes exist beyond the first 200 titles.)'] : []),
+    'A "target_title" may be copied verbatim from this catalog, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.',
   ].join('\n');
 }
 

@@ -2077,9 +2077,12 @@ export class MaintenanceService {
 
     // #381 fix: the classifier prompt gains the title catalog — the verifiable
     // target pool of already-typed nodes (same index edge resolution uses, so
-    // every catalog title is resolvable by construction). The E1 experiment
-    // measured 0/28 → 28/28 correct-target `about` proposals from this one
-    // change; see results/statement-kinds-e1-title-catalog-2026-11-18.json.
+    // every catalog title is resolvable by construction). NOTE (honesty): the
+    // 0/28 → 28/28 E1 result measured a SEED-ONLY catalog variant via
+    // runner-level promptOverride (results/statement-kinds-e1-title-catalog-
+    // 2026-11-18.json); this shipped block covers all typed nodes and has not
+    // itself been benchmarked yet. The wording is deliberately non-exclusive:
+    // same-batch targets and titles beyond the 200-entry cap remain valid.
     const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId);
     const titleCatalog = buildTitleCatalogBlock(titleRows);
 

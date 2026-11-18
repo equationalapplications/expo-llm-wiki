@@ -234,31 +234,41 @@ describe('PromptService', () => {
   });
 
   describe('buildTitleCatalogBlock (#381)', () => {
-    it('formats typed rows verbatim, skips untyped rows, sorts by title', () => {
+    it('formats typed rows verbatim, skips untyped rows, sorts by code point', () => {
       const block = buildTitleCatalogBlock([
         { title: 'Orbit', okf_type: 'software_application' },
         { title: 'Draft', okf_type: null },
         { title: 'Acme Labs', okf_type: 'organization' },
       ]);
-      expect(block).toContain('TITLE CATALOG: this memory already contains the following typed nodes:');
+      expect(block).toContain('TITLE CATALOG: existing typed nodes in this memory include:');
       expect(block).toContain('- "Orbit" (software_application)');
       expect(block).toContain('- "Acme Labs" (organization)');
       expect(block).not.toContain('Draft');
       expect(block.indexOf('"Acme Labs"')).toBeLessThan(block.indexOf('"Orbit"'));
-      expect(block).toContain('valid only if it is copied verbatim from this catalog');
+      // Non-exclusive wording (review M1): same-batch targets stay valid, so
+      // the block must not claim catalog membership is the only validity.
+      expect(block).not.toContain('valid only if');
+      expect(block).toContain('classified in this same response');
     });
 
-    it('caps the catalog at 200 entries (deterministic title order)', () => {
+    it('escapes titles through JSON.stringify', () => {
+      const block = buildTitleCatalogBlock([{ title: 'Weird "quoted" title', okf_type: 'area' }]);
+      expect(block).toContain('- "Weird \\"quoted\\" title" (area)');
+    });
+
+    it('caps the catalog at 200 entries and discloses the truncation', () => {
       const rows = Array.from({ length: 250 }, (_, i) => ({ title: `n${String(i).padStart(3, '0')}`, okf_type: 'area' as const }));
       const block = buildTitleCatalogBlock(rows);
       expect(block).toContain('"n199"');
       expect(block).not.toContain('"n200"');
+      expect(block).toContain('This list is truncated');
     });
 
-    it('returns an empty catalog note when no typed nodes exist', () => {
+    it('returns an empty catalog note that still allows same-batch targets', () => {
       const block = buildTitleCatalogBlock([{ title: 'Draft', okf_type: null }]);
       expect(block).toContain('TITLE CATALOG: this memory contains no typed nodes yet');
       expect(block).toContain('omit "edges" rather than invent a target_title');
+      expect(block).toContain('classified in this same response');
     });
   });
 

@@ -219,7 +219,7 @@ describe('runOntologyBackfill', () => {
   // #381 fix: the classifier must see which typed nodes exist so a proposed
   // `target_title` is verifiable (offline render + E1 run proved its absence
   // made "propose nothing" the compliant answer).
-  it('title catalog: the classifier system prompt lists existing typed nodes, not untyped ones', async () => {
+  it('title catalog: the classifier system prompt lists existing typed nodes', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
     await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
@@ -231,7 +231,32 @@ describe('runOntologyBackfill', () => {
     const sys = generateText.mock.calls[0][0].systemPrompt as string;
     expect(sys).toContain('TITLE CATALOG');
     expect(sys).toContain('- "Ada" (person)');
-    expect(sys).not.toContain('"Untyped Node"');
+    expect(sys).not.toContain('valid only if');
+  });
+
+  // Review M1 (#381): the catalog must not forbid same-batch targets — with
+  // batchSize >= 2 resolution accepts an edge between two facts classified in
+  // the same pass (intra-batch re-add), so the wording stays non-exclusive.
+  it('batchSize >= 2: an intra-batch edge target is proposed and persists', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_a', title: 'Alpha' });
+    await seedEntry(db, { id: 'fact_b', title: 'Beta' });
+    // Both facts untyped at prompt time; the model classifies them together
+    // and edges a (person) → b (place) by same-response title.
+    generateText.mockResolvedValue(llmJson({
+      classifications: [
+        { id: 'fact_b', okf_type: 'place' },
+        { id: 'fact_a', okf_type: 'person', edges: [{ edge_type: 'lives_in', target_title: 'Beta' }] },
+      ],
+    }));
+    const result = await wiki.runOntologyBackfill('e1', { batchSize: 2 });
+    expect(result.typed).toBe(2);
+    expect(result.edgesAdded).toBe(1);
+    const sys = generateText.mock.calls[0][0].systemPrompt as string;
+    // At prompt time neither fact is typed, so neither title can be in the
+    // catalog — the non-exclusive same-response wording is what allows it.
+    expect(sys).not.toContain('"Beta" (place)');
+    expect(sys).toContain('classified in this same response');
   });
 
   // Spec test 1

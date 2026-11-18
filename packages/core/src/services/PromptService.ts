@@ -353,6 +353,11 @@ export class PromptService {
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT;
     const hasFacts = /\{\{\s*facts\s*\}\}/.test(template);
+    // NOTE (#381, review M5): the {{facts}}/ontology-placeholder branch below
+    // returns BEFORE the title catalog is spliced — a host that overrides the
+    // backfill prompt with a placeholder template silently gets no catalog.
+    // Documented here rather than silently diverging; a {{title_catalog}}
+    // placeholder is the future shape if a host needs the catalog there.
     if (hasFacts || this.hasOntologyPlaceholders(template)) {
       return {
         systemPrompt: this.buildSystemPrompt(template, { facts }, ontologyContext),

@@ -19,7 +19,6 @@ import { readFileSync } from 'fs';
 
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 import type { LLMProvider } from '@equationalapplications/core-llm-wiki';
-import { ONTOLOGY_BACKFILL_SYSTEM_PROMPT } from '@equationalapplications/core-llm-wiki';
 import { schemaSoftwareOrgManifest } from '@equationalapplications/schema-software-org';
 
 import { openDb } from '../db';
@@ -50,28 +49,6 @@ export const SEED_NODES: ReadonlyArray<{ title: string; type: TargetType; body: 
 export const STATEMENT_KINDS_TOKENS_PER_STATEMENT = 6000;
 
 const ENTITY = 'statement-kinds-bench';
-
-/**
- * #381 experiment E1 (`title-catalog`): the diagnosis found the classifier
- * prompt never surfaces the existing node titles, so its strict-mode
- * "omit invalid edges" rules make proposing nothing the fully-compliant
- * answer. This override appends ONLY the verifiable target pool — no
- * attachment directive (that is a separate experiment) — after the untouched
- * base prompt. The manifest appendix still rides via `buildOntologyBackfillPrompt`
- * because the override carries no `{{facts}}` placeholder.
- */
-export function buildTitleCatalogOverride(
-  seeds: ReadonlyArray<{ title: string; type: TargetType }> = SEED_NODES,
-): string {
-  const catalog = seeds.map((s) => `- "${s.title}" (${s.type})`).join('\n');
-  return [
-    ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
-    '',
-    'TITLE CATALOG: this memory already contains the following typed nodes:',
-    catalog,
-    'A "target_title" is valid only if it is copied verbatim from this catalog.',
-  ].join('\n');
-}
 
 /** Load and validate the fixture; throws on any malformed entry. */
 export function parseStatementFixture(raw: string): StatementFixtureEntry[] {

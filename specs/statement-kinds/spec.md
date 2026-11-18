@@ -591,10 +591,15 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   title index edge resolution uses (`buildTitleCatalogBlock`, typed
   rows only, capped at 200 entries; scoped to the backfill prompt —
   other writers' prompts unchanged). One-variable experiment E1
-  (runner-level `promptOverride`, harness `98ad68f1`) measured the fix
-  prompt before it shipped: same 28-fixture, same model
-  (GLM-5.3-flash), **`about` proposed 28/28 with correct target 28/28**,
-  kind accuracy unchanged 28/28, `about_dropped` empty
-  (`results/statement-kinds-e1-title-catalog-2026-11-18.json`). Single
-  run, single model, 28 rows — not a rate claim; second-model and
-  larger-fixture verification still owed per the follow-up rule.
+  (runner-level `promptOverride`, harness `98ad68f1`) measured a
+  SEED-ONLY catalog variant against the same 28-fixture on the same
+  model (GLM-5.3-flash): **`about` proposed 28/28 with correct target
+  28/28**, kind accuracy unchanged 28/28, `about_dropped` empty
+  (`results/statement-kinds-e1-title-catalog-2026-11-18.json`). The
+  shipped block differs from the E1 variant (all typed nodes, sorted,
+  non-exclusive wording, truncation note) and **has not itself been
+  benchmarked yet** — E1 is diagnosis evidence that the structural gap
+  was the blocker, not a measured claim about the shipped prompt.
+  Single run, single model, 28 rows — not a rate claim; second-model,
+  larger-fixture, and shipped-prompt verification still owed per the
+  follow-up rule.

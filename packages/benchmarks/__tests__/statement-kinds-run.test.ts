@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { runStatementKinds, buildTitleCatalogOverride, StatementFixtureEntry, SEED_NODES } from '../src/statementKinds/run';
+import { runStatementKinds, StatementFixtureEntry } from '../src/statementKinds/run';
 
 const ok = (text: string) =>
   new Response(JSON.stringify({ content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } }), {
@@ -43,19 +43,8 @@ describe('runStatementKinds misalignment guard', () => {
   });
 });
 
-describe('#381 E1 title-catalog override', () => {
-  it('lists every seed title with its type and carries no data placeholder', () => {
-    const o = buildTitleCatalogOverride();
-    for (const s of SEED_NODES) {
-      expect(o).toContain(`- "${s.title}" (${s.type})`);
-    }
-    expect(o).toContain('TITLE CATALOG');
-    // A {{facts}} placeholder would hydrate facts into the system prompt and
-    // change the user prompt — the variant must only extend the base prompt.
-    expect(o).not.toContain('{{facts}}');
-  });
-
-  it('a promptOverride rides through as the classifier system prompt next to the ontology appendix', async () => {
+describe('#381 harness: promptOverride ride-through (variant retired)', () => {
+  it('a custom promptOverride rides through next to the production title catalog and appendix', async () => {
     const systems: string[] = [];
     const fetchImpl = vi.fn(async (_u: string, init?: { body?: string }) => {
       const body = JSON.parse(init?.body ?? '{}');
@@ -67,16 +56,18 @@ describe('#381 E1 title-catalog override', () => {
       entries,
       endpoint: { protocol: 'anthropic', baseUrl: 'https://x.test', apiKey: 'k', model: 'm' },
       engine: { version: 't', gitSha: 't', gitDescribe: 't' },
-      promptOverride: buildTitleCatalogOverride(),
-      variant: 'title-catalog',
+      promptOverride: 'CUSTOM-CLASSIFIER-OVERRIDE',
+      variant: 'custom-override',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(systems.length).toBeGreaterThan(0);
     for (const s of systems) {
+      expect(s).toContain('CUSTOM-CLASSIFIER-OVERRIDE');
+      // Core appends the production catalog + ontology appendix regardless of
+      // the override (M4: the title-catalog variant was retired because of this).
       expect(s).toContain('TITLE CATALOG');
-      // The manifest appendix must still be appended (strict rules + manifest).
       expect(s).toContain('Ontology constraints');
     }
-    expect(report.variant).toBe('title-catalog');
+    expect(report.variant).toBe('custom-override');
   });
 });

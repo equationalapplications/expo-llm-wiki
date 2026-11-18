@@ -59,7 +59,7 @@ import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
-import { runStatementKinds, loadStatementFixture, renderStatementKindsSummary, buildTitleCatalogOverride, StatementFixtureEntry, STATEMENT_KINDS_TOKENS_PER_STATEMENT } from './statementKinds/run';
+import { runStatementKinds, loadStatementFixture, renderStatementKindsSummary, StatementFixtureEntry, STATEMENT_KINDS_TOKENS_PER_STATEMENT } from './statementKinds/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
 import { compareReports } from './compare';
 import { writeFileAtomic } from './fsSafe';
@@ -597,9 +597,10 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
   // #381 prompt-variant experiments: validate BEFORE endpoint resolution so a
   // typo never reaches a paid call. One variant = one changed variable.
-  const ABOUT_EXPERIMENTS: Record<string, { promptOverride: string }> = {
-    'title-catalog': { promptOverride: buildTitleCatalogOverride() },
-  };
+  // The 'title-catalog' variant is RETIRED: the fix shipped in core
+  // (d56a70d5), so core now appends the production catalog to every run and
+  // the variant would double-append. The machinery stays for future variants.
+  const ABOUT_EXPERIMENTS: Record<string, { promptOverride: string }> = {};
   const variantArg = typeof parsed.flags['about-experiment'] === 'string' ? parsed.flags['about-experiment'] : undefined;
   let variant: { promptOverride: string } | undefined;
   if (variantArg !== undefined) {

@@ -63,19 +63,18 @@ describe('runStatementKindsCommand guard', () => {
     expect(stdout.mock.calls.map((c) => String(c[0])).join('')).toContain('Re-run with --yes to spend these tokens.');
   });
 
-  it('--about-experiment title-catalog prints the variant in dry-run and never fetches', async () => {
-    const stdout = vi.fn();
+  it('--about-experiment title-catalog is retired (fix shipped in core): exits 2, never fetches', async () => {
+    const stderr = vi.fn();
     const fetchImpl = vi.fn();
     const r = await runStatementKindsCommand({
       argv: ['statement-kinds', '--about-experiment', 'title-catalog', '--dry-run'],
       env: {},
       entries,
       fetchImpl: fetchImpl as unknown as typeof fetch,
-      stdout,
+      stderr,
     });
-    expect(r.exitCode).toBe(0);
-    const out = stdout.mock.calls.map((c) => String(c[0])).join('');
-    expect(out).toContain('variant: title-catalog');
+    expect(r.exitCode).toBe(2);
+    expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toContain('unknown --about-experiment variant');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
