@@ -888,6 +888,7 @@ export type WikiDiagnosticCode =
   | 'erase_secure_delete_off'
   | 'erase_entity_skipped'
   | 'erase_retired_vtab_undroppable'
+  | 'erase_fts_orphan_cleared'
   | 'erase_retired_remaining'
   | 'erase_tombstones_remaining'
   | 'erase_retired_read_failed'
@@ -916,6 +917,8 @@ export type WikiDiagnosticTrigger = 'call' | 'auto';
 
 /** Identifiers only — never titles, bodies, quotes, LLM output, provider messages, or hashes of content. */
 export interface WikiDiagnosticDetail {
+  /** The FTS5 surface the diagnostic names. */
+  table?: string;
   factId?: string;
   sourceRef?: string;
   chunkIndex?: number;

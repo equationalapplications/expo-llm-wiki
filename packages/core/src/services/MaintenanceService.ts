@@ -30,7 +30,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
-import { FTS5_RETIRED_TABLES_KEY, isRetiredTableName } from './search/fts5Sql';
+import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5LedgerDropSql, passageFtsTriggerNames } from './search/fts5Sql';
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
@@ -240,7 +240,9 @@ export interface EraseReport {
   registrySweep: { skipped: boolean; deleted: number };
   /** Retired FTS tables left listed (module-less runtime): shadow tables emptied, DROP deferred to an FTS5-capable open. */
   retiredUndroppable: string[];
-  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | null;
+  /** FTS5 orphan surfaces cleared (Path A/C) or dropped (Path B) by the step-3 remediation (specs/erase-fts-remediation D3). Names are recorded only after the owning transaction commits. */
+  ftsOrphansCleared: string[];
+  failedStep: 'secure_delete' | 'vacuum' | 'checkpoint' | 'prune' | 'registry_sweep' | 'passage_drain' | 'retired_reclaim' | 'index_sync' | 'optimize' | 'rebuild' | 'tombstone_gate' | 'fts_orphan_clear' | null;
   /** JS runtime the erase ran on (no overclaiming: this is not a storage-layer guarantee). */
   runtime: string;
   /** Every step's outcome, in execution order; a failed step is last. `partial` = ran with skipped entities or holds, or was skipped by design (`registry_sweep` on a pre-v9 store; `tombstone_gate` when holds/skips already account for surviving rows). */
@@ -563,7 +565,7 @@ export class MaintenanceService {
     this.jobManager.acquireLock('erase', '*');
     const report: EraseReport = {
       verified: false, secureDelete: null, sqliteVersion: '', entities: [], holds: [],
-      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], failedStep: null,
+      skipped: [], syncedIds: [], registrySweep: { skipped: false, deleted: 0 }, retiredUndroppable: [], ftsOrphansCleared: [], failedStep: null,
       runtime: eraseRuntime(), steps: [],
     };
     const ok = (step: string, outcome: 'ok' | 'partial' = 'ok') => { report.steps.push({ step, outcome }); };
@@ -770,6 +772,124 @@ export class MaintenanceService {
 
   // ── Erase FTS surfaces (spec §2 steps 3/4/6-sync/7). T6 composes these into erase(). ──
 
+  private static readonly FTS_SHADOW_SUFFIXES = ['_content', '_data', '_idx', '_docsize', '_config'] as const;
+
+  /**
+   * Step 3 remediation (specs/erase-fts-remediation): on a runtime without
+   * usable strict drains, clear orphaned FTS5 surfaces so erasure can
+   * complete verified. Per surface: existence gate (vtab OR any shadow) →
+   * strategy check → vtab probe → path body → companions → state write.
+   * Dispatch order is D4; exact-name allowlist interpolation is D2.
+   */
+  async _eraseClearFtsOrphans(report: EraseReport): Promise<void> {
+    const surfaces = [`${this.prefix}entries_fts`, `${this.prefix}source_passages_fts`] as const;
+    let remediationRequired = false;
+    const pathBTargets: string[] = [];
+    try {
+      for (const surface of surfaces) {
+        const vtabExists = await this.sourceTableExists(surface);
+        const shadows: string[] = [];
+        for (const sfx of MaintenanceService.FTS_SHADOW_SUFFIXES) {
+          const name = `${surface}${sfx}`;
+          if (await this.sourceTableExists(name)) shadows.push(name);
+        }
+        if (!vtabExists && shadows.length === 0) continue; // never saw FTS5 or fully detached: no gate, no entry
+        remediationRequired = true;
+        // Honest failure first (D1): an Unavailable strategy is a transient
+        // outage that preserves a healthy index — never drop or clear under it.
+        if (this.searchService.isIndexUnavailable()) {
+          report.failedStep = 'index_sync';
+          throw new EraseStepError('erase_fts_index_unavailable', 'erase stopped at step 3: the index strategy is unavailable and orphaned FTS surfaces remain; erasure is unverified', report);
+        }
+        let moduleLess = false;
+        if (vtabExists) {
+          try {
+            await this.db.getFirstAsync(`SELECT 1 AS x FROM ${surface} LIMIT 1`);
+          } catch (err) {
+            // Mirror createIndexStrategy's probe: some adapters wrap the SQLite message in a cause chain.
+            let absent = false;
+            let cur: unknown = err;
+            for (let depth = 0; depth < 3 && cur != null && !absent; depth++) {
+              let msg = '';
+              try { msg = String((cur as { message?: unknown }).message ?? cur); } catch { break; }
+              absent = /no such module/i.test(msg);
+              try { cur = (cur as { cause?: unknown }).cause; } catch { break; }
+            }
+            if (!absent) {
+              report.failedStep = 'index_sync';
+              throw new EraseStepError('erase_fts_orphan_probe_failed', `erase stopped at step 3: could not classify orphaned vtab ${surface}`, report, err);
+            }
+            moduleLess = true; // Path A: the vtab row is inert
+          }
+        }
+        if (vtabExists && !moduleLess) {
+          if (this.options.config?.indexStrategy !== 'minisearch') {
+            report.failedStep = 'index_sync';
+            throw new EraseStepError('erase_fts_index_unavailable', `erase stopped at step 3: ${surface} is live and queryable but MiniSearch is not the configured strategy; erasure is unverified`, report);
+          }
+          pathBTargets.push(surface); // Path B: defer DROPs to after the per-surface loop
+          continue;
+        }
+        // Path A / Path C: the shadows are plain tables here. The text-bearing
+        // rows go; fts5's structural state stays: %_data ids 1 (AVERAGES record)
+        // and 10 (STRUCTURE record) hold no text, and the %_config table with its
+        // version row stays too — deleting it is what makes the vtab unreadable.
+        // The kept structure record points at deleted segments, so a capable
+        // re-open's retire path must never read segment data; the AC2 canary
+        // proves that holds today (specs/erase-fts-remediation).
+        const cleared: string[] = [];
+        for (const name of shadows) {
+          if (name.endsWith('_config')) continue;
+          const res = await this.db.runAsync(name.endsWith('_data')
+            ? `DELETE FROM ${name} WHERE id NOT IN (1, 10)`
+            : `DELETE FROM ${name}`);
+          if ((res?.changes ?? 0) > 0) cleared.push(name);
+        }
+        for (const name of cleared) {
+          if (!report.ftsOrphansCleared.includes(name)) report.ftsOrphansCleared.push(name);
+          emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: name } });
+        }
+      }
+      if (!remediationRequired) return;
+      // Plain companions that can hold text and have no drain on this runtime (D1, existence-gated).
+      // One transaction for the whole tail (D4): companions, Path B drops, state write.
+      // Cleared names + diagnostics land AFTER the transaction resolves: a rollback
+      // must not leave the report claiming tables were cleared (Tier-4 delta nit).
+      const tailCleared: string[] = [];
+      await this.db.withTransactionAsync(async (tx) => {
+      for (const companion of [`${this.prefix}fts_pending`, `${this.prefix}fts_map`, `${this.prefix}source_passages_fts_pending`, `${this.prefix}source_passages_fts_map`] as const) {
+        if (await this.sourceTableExists(companion, tx)) {
+          const res = await tx.runAsync(`DELETE FROM ${companion}`);
+          if ((res?.changes ?? 0) > 0 && !tailCleared.includes(companion)) tailCleared.push(companion);
+        }
+      }
+      // Path B body (after the surface loop, D4): DROP the queryable vtabs and
+      // the FTS triggers. Path B DELETEs the passage companions' rows where
+      // detachFts5 DROPs the tables — harmless: the next capable init re-creates
+      // them (CREATE IF NOT EXISTS), matching ensurePassageObjects' re-seed.
+      for (const surface of pathBTargets) {
+        await tx.execAsync(`DROP TABLE IF EXISTS ${surface}`);
+        if (!tailCleared.includes(surface)) tailCleared.push(surface);
+      }
+      if (pathBTargets.length > 0) {
+        const [ai, ad] = passageFtsTriggerNames(this.prefix);
+        await tx.execAsync(fts5LedgerDropSql(this.prefix) + `\nDROP TRIGGER IF EXISTS ${ai};\nDROP TRIGGER IF EXISTS ${ad};`);
+      }
+      // Deterministic state (D1/D5): the next capable open must take resetAndRearm, not a corruption path.
+      await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'detached', tx);
+      });
+      for (const name of tailCleared) {
+        if (!report.ftsOrphansCleared.includes(name)) report.ftsOrphansCleared.push(name);
+        emitDiagnostic(this.options, { code: 'erase_fts_orphan_cleared', operation: 'erase', trigger: 'call', entityId: '', detail: { table: name } });
+      }
+      report.steps.push({ step: 'fts_orphan_clear', outcome: 'ok' });
+    } catch (err) {
+      if (err instanceof EraseStepError) throw err;
+      report.failedStep = 'fts_orphan_clear';
+      throw new EraseStepError('erase_fts_orphan_clear', 'erase stopped at step 3: clearing an orphaned FTS surface failed; erasure is unverified', report, err);
+    }
+  }
+
   /**
    * Step 3: chained, surfaced drains (no deadline). Entries-ledger failures are
    * the entries/index-sync step (`index_sync`); passage failures `passage_drain`.
@@ -780,6 +900,7 @@ export class MaintenanceService {
    */
   async _eraseDrainPassages(report: EraseReport): Promise<void> {
     if (!this.searchService.hasStrictDrain()) {
+      await this._eraseClearFtsOrphans(report);
       for (const [table, failedStep, code] of [
         [`${this.prefix}fts_pending`, 'index_sync', 'erase_index_sync_failed'],
         [`${this.prefix}source_passages_fts_pending`, 'passage_drain', 'erase_passage_drain_failed'],
@@ -794,19 +915,6 @@ export class MaintenanceService {
         if (rows) {
           report.failedStep = failedStep;
           throw new EraseStepError(code, `erase stopped at step 3: ${table} holds undrained rows and the FTS index strategy cannot drain them; erasure is unverified`, report);
-        }
-      }
-      for (const suffix of ['entries_fts_content', 'source_passages_fts_content']) {
-        let orphaned = false;
-        try {
-          orphaned = await this.sourceTableExists(`${this.prefix}${suffix}`);
-        } catch (err) {
-          report.failedStep = 'index_sync';
-          throw new EraseStepError('erase_orphaned_fts_content', `erase stopped: could not probe ${this.prefix}${suffix}`, report, err);
-        }
-        if (orphaned) {
-          report.failedStep = 'index_sync';
-          throw new EraseStepError('erase_orphaned_fts_content', 'erase stopped: orphaned full-text content tables may still hold forgotten text', report);
         }
       }
     }
@@ -846,7 +954,10 @@ export class MaintenanceService {
     try {
       for (const name of await this._retiredList()) {
         for (const sfx of ['_content', '_data', '_idx', '_docsize', '_config']) {
-          if (await this.sourceTableExists(`${name}${sfx}`)) await this.db.runAsync(`DELETE FROM ${name}${sfx}`);
+          if (sfx === '_config') continue; // preserve rule (as Path A): keeps the retired vtab readable so a capable re-open can DROP it
+          if (await this.sourceTableExists(`${name}${sfx}`)) {
+            await this.db.runAsync(sfx === '_data' ? `DELETE FROM ${name}_data WHERE id NOT IN (1, 10)` : `DELETE FROM ${name}${sfx}`);
+          }
         }
         if (!report.retiredUndroppable.includes(name)) report.retiredUndroppable.push(name);
         emitDiagnostic(this.options, { code: 'erase_retired_vtab_undroppable', operation: 'erase', trigger: 'call', entityId: '' });
@@ -868,8 +979,8 @@ export class MaintenanceService {
     return Array.isArray(raw) ? raw.filter((n): n is string => isRetiredTableName(this.prefix, n)) : [];
   }
 
-  private sourceTableExists(name: string): Promise<boolean> {
-    return this.metadataRepo.tableExists(name);
+  private sourceTableExists(name: string, tx?: SQLiteAdapter): Promise<boolean> {
+    return this.metadataRepo.tableExists(name, tx);
   }
 
   /** Step 6 sync: `syncEntries` resolving false means the ledger drain failed — a failed step. */

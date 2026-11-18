@@ -365,6 +365,11 @@ export class SearchService {
     return work;
   }
 
+  /** True when the active strategy is the transient outage placeholder (erase orphan remediation, D1: never drop under it). */
+  isIndexUnavailable(): boolean {
+    return this.indexStrategy instanceof UnavailableIndexStrategy;
+  }
+
   /** True when the active strategy has both strict erase drains (FTS5); false for MiniSearch / Unavailable. */
   hasStrictDrain(): boolean {
     const s = this.indexStrategy as unknown as { drainPassagesStrict?: unknown; drainEntriesLedgerStrict?: unknown };

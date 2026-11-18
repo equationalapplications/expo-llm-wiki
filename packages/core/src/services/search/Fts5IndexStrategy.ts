@@ -116,6 +116,13 @@ export class Fts5IndexStrategy implements IndexStrategy {
         // harmless when the table is not stale: in that state it is empty
         // too. The bootstrap is the only writer that runs on an empty map.
         await tx.runAsync(`DELETE FROM ${p}source_passages_fts`);
+        // After a module-less erase (specs/erase-fts-remediation Path A) the
+        // table keeps its fts5 structure record but its segments are gone, so
+        // reads hit "corruption found reading blob". 'rebuild' discards all
+        // index data without reading segments and re-tokenizes from the (empty)
+        // content table, leaving a valid empty index; on a healthy empty table
+        // it is a no-op.
+        await tx.runAsync(`INSERT INTO ${p}source_passages_fts(${p}source_passages_fts) VALUES('rebuild')`);
         await tx.runAsync(
           `INSERT INTO ${p}source_passages_fts_pending (entity_id, doc_id)
            SELECT entity_id, id FROM ${p}source_documents`);
