@@ -269,10 +269,18 @@ FTS content tables (F-MAJOR-1)` (~:166-179) to:
     }
     expect(report.ftsOrphansCleared).toEqual([
       `${P}entries_fts_content`, `${P}entries_fts_data`, `${P}entries_fts_idx`, `${P}entries_fts_docsize`, `${P}entries_fts_config`,
+      `${P}fts_pending`, `${P}fts_map`, `${P}source_passages_fts_pending`, `${P}source_passages_fts_map`,
     ]);
     expect(report.failedStep).toBeNull();
   });
 ```
+
+NOTE (controller ruling 2026-11-18, E3 resume): D1 clears the plain
+companions too and D3 lists every cleared table, so the expectation
+INCLUDES the companions that exist in the fixture (`fts_pending`,
+`fts_map`, `source_passages_fts_pending`, `source_passages_fts_map`, in
+that order, after the five shadows). A companion absent from the fixture
+store is absent from the expectation — check `sqlite_master` first.
 
 Add:
 
