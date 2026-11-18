@@ -366,7 +366,13 @@ export class SearchService {
     return work;
   }
 
-  /** True when the active strategy is positively the config-chosen MiniSearch one (erase orphan remediation, specs/erase-fts-remediation D1). */
+  /**
+   * True when the ACTIVE strategy instance is a MiniSearchIndexStrategy. NOT
+   * proof of a config-chosen choice: the pre-setup placeholder is also a
+   * MiniSearchIndexStrategy. Erase's Path B gates on
+   * `options.config.indexStrategy === 'minisearch'` instead — this method
+   * remains for diagnostics/tests only.
+   */
   usesMiniSearchIndex(): boolean {
     return this.indexStrategy instanceof MiniSearchIndexStrategy;
   }

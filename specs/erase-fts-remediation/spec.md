@@ -1,6 +1,6 @@
 # erase() on module-less runtimes: clear orphaned FTS5 content so erasure completes verified
 
-**Status: Draft (2026-11-17)**  
+**Status: Implemented 2026-11-18 (PR #411) — Path A/B/C shipped; Path A preserves fts5's internal rows so a capable re-open rebuilds (canary-verified)**  
 **Issue:** equationalapplications/expo-llm-wiki#407 (second half — the remediation; the honesty half shipped in PR #404).  
 **Intent check:** INTENT rule 13 ("Erasure is verifiable") — this spec
 extends verified erasure to module-less/config-MiniSearch runtimes and
@@ -70,8 +70,8 @@ classified with the same `/no such module/i` match the codebase already
 uses (`MaintenanceService.ts:840`):
 
 - **Path A — vtab present, module-less (`no such module`):** the vtab is
-  inert. DELETE FROM every existing shadow suffix (`_content _data _idx
-  _docsize _config`) of `entries_fts` and `source_passages_fts`, plus the
+  inert. DELETE the text-bearing rows of every existing shadow suffix of
+  `entries_fts` and `source_passages_fts`, plus the
   plain companions that can hold text and are undrainable here — exact
   names `${prefix}fts_pending`, `${prefix}fts_map`,
   `${prefix}source_passages_fts_pending`,
@@ -143,9 +143,10 @@ to `ftsOrphansCleared` only **after** that surface fully clears; the
 step is recorded via the existing `ok()` helper and emits a new diagnostic
 `erase_fts_orphan_cleared` per cleared table. If any clear or the metadata
 write fails mid-way: `EraseStepError('erase_fts_orphan_clear', ...)`,
-`verified: false`. The existing `erase_orphaned_fts_content` code remains
-for the never-expected case where a probed surface is missing but
-undeletable.
+`verified: false`. The `erase_orphaned_fts_content` code is RETIRED by this spec: its only
+throw site was replaced by the remediation; the honest failures are
+`erase_fts_orphan_probe_failed`, `erase_fts_orphan_clear` and
+`erase_fts_index_unavailable`.
 
 **D4 — gate placement and ordering.** The remediation replaces the
 probe-and-throw blocks inside the existing `!hasStrictDrain()` branch
@@ -170,10 +171,11 @@ hollowed shells in `sqlite_master`. The next capable open sees
 `entries_fts_retired_N` (`:324`), recreates it empty, and arms a rebuild —
 and from then on the renamed table fits `isRetiredTableName`, so the
 existing reclaim machinery DROPs it (`Fts5IndexStrategy.ts:464-479`). No
-new cross-open protocol is introduced. (Belt-and-braces: even without the
-state write, the fast-path probe at `:251-254` classifies hollowed shadows
-as corrupt and lands in the same `resetAndRearm` — D1's deterministic
-state write just makes it non-accidental.)
+new cross-open protocol is introduced. (As implemented, Path A additionally PRESERVES fts5's internal rows —
+`%_data` ids 1 (averages) and 10 (structure) and the `%_config` table;
+none hold user text — so the inert vtab stays readable and the capable
+re-open's retire path works. The canary in this folder proves the
+module-less → capable transition end-to-end.)
 
 **D6 — no consumer changes.** `erase()` and `EraseReport` are exposed only
 on `WikiMemory` (`WikiMemory.ts:39,810-812`); react/expo forwards nothing
