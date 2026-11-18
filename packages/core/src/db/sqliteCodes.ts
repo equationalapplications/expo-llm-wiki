@@ -42,7 +42,19 @@ export function extractSqliteCode(err: unknown): string | undefined {
   if (typeof code === 'string' && code.startsWith('SQLITE_')) return code;
   if (typeof message === 'string') {
     const m = /^Error code (\d+):/.exec(message);
-    if (m) return nameForSqliteResultCode(Number(m[1]));
+    if (m) {
+      const n = Number(m[1]);
+      // expo-sqlite never calls sqlite3_extended_result_codes (#403), so a
+      // UNIQUE violation arrives as the primary code 19 with the
+      // "UNIQUE constraint failed" message text (UNIQUE indexes and PRIMARY
+      // KEYs alike). Refine it to the extended code so callers branch on the
+      // same string the rest of the ecosystem reports; every other constraint
+      // family (CHECK / FOREIGN KEY / NOT NULL) keeps 19 → SQLITE_CONSTRAINT.
+      if (n === 19 && message.includes('UNIQUE constraint failed')) {
+        return nameForSqliteResultCode(2067);
+      }
+      return nameForSqliteResultCode(n);
+    }
   }
   return undefined;
 }
