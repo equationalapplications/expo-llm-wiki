@@ -1,3 +1,9 @@
+## [9.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.3...v9.5.0) (2026-11-18)
+
+### Features
+
+* **core:** forget({ eventId }) — delete librarian facts by source-pointer event id (issue [#386](https://github.com/equationalapplications/expo-llm-wiki/issues/386)) ([b8b8824](https://github.com/equationalapplications/expo-llm-wiki/commit/b8b8824cc350aa06b5930858f8f8c786c237887b))
+
 ## [9.4.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.2...v9.4.3) (2026-11-18)
 
 ### Bug Fixes
