@@ -117,6 +117,15 @@ describe('supersede()', () => {
     expect(t.superseded_by).toBe(newId);
   });
 
+  it('uses created_at only when valid_from is absent (?? not Math.max)', async () => {
+    await insert('seattle'); // created_at 100
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_from = 50 WHERE id = 'seattle'`);
+    const { newId } = await wiki.supersede('e1', 'seattle', { title: 'SF', body: 'b' }, { validFrom: 75 });
+    const t = await temporal('seattle');
+    expect(t.valid_to).toBe(75);
+    expect(t.superseded_by).toBe(newId);
+  });
+
   it('reports already_expired before invalid_interval (guard order, spec D2)', async () => {
     await insert('seattle'); // created_at 100
     await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 50 WHERE id = 'seattle'`);
