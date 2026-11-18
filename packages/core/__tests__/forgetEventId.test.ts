@@ -109,6 +109,11 @@ describe('forget({ eventId }) — frozen surfaces (test 5)', () => {
   it('touches no source_ref_index row and no source_passages row', async () => {
     const t = await make();
     await t.ins('e1', 'a', VALID_POINTER, 'doc-1');
+    // Insert the event the pointer names BEFORE the forget, so the D4 pin
+    // exercises a live mutator path (a post-tombstone forget matches nothing).
+    await t.db.runAsync(
+      `INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('E1', 'e1', 'observation', 'the quoted event', 1)`,
+    );
     await t.db.runAsync(
       `INSERT INTO ${P}source_ref_index (id, entity_id, source_hash, source_ref, created_at) VALUES ('r1', 'e1', ?, 'doc-1', 1)`,
       ['h'.padEnd(64, '0')],
@@ -125,14 +130,10 @@ describe('forget({ eventId }) — frozen surfaces (test 5)', () => {
     const refsBefore = (await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_ref_index`))!.n;
     const passagesBefore = (await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`))!.n;
     await t.wiki.forget('e1', { eventId: 'E1' });
+    expect(await t.live('a')).toBe(0);
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_ref_index`))!.n).toBe(refsBefore);
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}source_passages`))!.n).toBe(passagesBefore);
     // Events row untouched too (D4): the event the pointer names stays.
-    await t.db.runAsync(
-      `INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('E1', 'e1', 'observation', 'the quoted event', 1)`,
-    );
-    await t.wiki.forget('e1', { eventId: 'E1' });
-    expect(await t.live('a')).toBe(0);
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}events WHERE id = 'E1'`))!.n).toBe(1);
   });
 });

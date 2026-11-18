@@ -432,7 +432,7 @@ export class IngestionService {
         // `source_ref_index` is the only UNIQUE that can raise inside this
         // transaction (the edges UNIQUE is insert-OR-IGNORE, and the
         // entries-level one went away in migration v9), so a UNIQUE violation
-        // means another writer claimed this hash first. The transaction rolled
+        // means another writer claimed this hash first. The transaction is
         // rolled back, but the LLM pass already ran for every chunk and the
         // host paid for it — emit the diagnostics that describe that work,
         // and drop the ones tied to the aborted write, which carry `factId`s

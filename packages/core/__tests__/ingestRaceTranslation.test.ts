@@ -230,19 +230,21 @@ describe('IngestionService — UNIQUE violation translation', () => {
     await insertSourceRefIndexRow(db, { entityId: 'entity-1', sourceRef: 'canonical.md', sourceHash: VALID_HASH_A });
     const originalTx = db.withTransactionAsync.bind(db);
     let txAttempts = 0;
-    let expoThrown = false;
+    let thrownMessage = '';
     db.withTransactionAsync = async () => {
       txAttempts++;
-      expoThrown = true;
-      throw new Error('Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash');
+      thrownMessage = 'Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash';
+      throw new Error(thrownMessage);
     };
     try {
       await expect(
         wiki.ingestDocument('entity-1', { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' }),
       ).rejects.toBeInstanceOf(WikiDuplicateHashError);
-      // Pin the injection: exactly one transaction attempt, carrying the expo shape.
+      // Pin the injection: exactly one transaction attempt, and the error it
+      // threw carried the expo primary-code shape (not a symbolic code).
       expect(txAttempts).toBe(1);
-      expect(expoThrown).toBe(true);
+      expect(thrownMessage).toMatch(/^Error code 19: UNIQUE constraint failed/);
+      expect(thrownMessage).not.toMatch(/SQLITE_/);
     } finally {
       db.withTransactionAsync = originalTx;
     }

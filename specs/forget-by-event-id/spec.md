@@ -137,7 +137,7 @@ untested intersections.
 
 - the `includeChain` guard (`MaintenanceService.ts:1161`) gains `eventId`
   in its exclusion list;
-- the dry-run rejection message (`MaintenanceService.ts:1466`) names
+- the dry-run rejection message (`MaintenanceService.ts:1488`) names
   `eventId` alongside sourceRef/sourceHash;
 - the `ForgetParams` JSDoc (`types.ts:1409`: "`clearAll` excludes the
   other selectors"; `includeChain`: "Does not compose with other
@@ -215,14 +215,14 @@ new result field.
 ### D7 — dryRun parity, with its exclusivity checks up front
 
 `forgetDryRun` runs outside any transaction and does not re-run the
-in-transaction selector-group checks (`MaintenanceService.ts:1443-1445`) —
+in-transaction selector-group checks (`MaintenanceService.ts:1465-1467`) —
 so **all `eventId` exclusivity validation lives in public `forget()` beside
 the existing checks (~:1155-1163), before the dry-run dispatch**. Without
 this, a naive `eventId` + `sourceRef` dry run would fall through to the
 source-count branch. The dry run reports the live-only count through
 `countLiveByPointerEvent` (D3) in its existing reporting shape — and the
 `eventId` branch dispatches **before** the no-source-selector early return
-(`MaintenanceService.ts:1488-1490`), so a dry run can never silently
+(`MaintenanceService.ts:1518-1520`), so a dry run can never silently
 report zero for a valid `eventId` call.
 
 ### D8 — Reporting: the return value and the outbox — no new diagnostics
