@@ -49,7 +49,10 @@ number }): Promise<void>`, implemented by
 after the row is read, `at <= (row.valid_from ?? row.created_at)` throws
 `WikiSupersedeError('invalid_interval')` (a new `WikiSupersedeReason`, so
 hosts handling `WikiSupersedeError` catch it — a bare `TypeError` would
-slip past them). Liveness is half-open
+slip past them). **Ordering:** the D3 guard set runs first, in
+`supersedeInTx`'s order; the interval check runs last, immediately before
+the write — an expired row with an inverted interval reports
+`already_expired`, not `invalid_interval`. Liveness is half-open
 (`COALESCE(valid_from, created_at) <= T < valid_to`,
 `utils/temporal.ts:6-7`), so `at == start` is an empty interval, not a
 point-in-time archive. Two documented consequences: a fact recorded today
