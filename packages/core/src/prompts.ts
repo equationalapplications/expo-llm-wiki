@@ -63,6 +63,34 @@ Return ONLY a valid JSON object matching this schema:
 If no manifest type fits a fact, omit that fact from "classifications" entirely — do not guess.
 When echoing an existing fact's title verbatim into "target_title", preserve every JSON escape sequence (\\", \\n, \\\\, \\/) exactly as it appeared in the input body — do not strip backslashes, do not add unescaped quotes. Do not return markdown, just raw JSON.`;
 
+/**
+ * #381 fix: the classifier prompt never surfaced the existing node titles, so
+ * its strict-mode "omit invalid edges" rules made proposing nothing the
+ * fully-compliant answer (0/28 in the statement-kinds measured run). The
+ * title catalog is the verifiable target pool. Rows are typed nodes only —
+ * the caller reads them from the same title index edge resolution uses, so
+ * a catalog title is resolvable by construction.
+ */
+export const TITLE_CATALOG_MAX_ENTRIES = 200;
+
+export function buildTitleCatalogBlock(
+  rows: ReadonlyArray<{ title: string; okf_type: string | null }>,
+): string {
+  const typed = rows
+    .filter((r) => typeof r.title === 'string' && r.title.length > 0 && typeof r.okf_type === 'string' && r.okf_type.length > 0)
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .slice(0, TITLE_CATALOG_MAX_ENTRIES);
+  if (typed.length === 0) {
+    return 'TITLE CATALOG: this memory contains no typed nodes yet — omit "edges" rather than invent a target_title.';
+  }
+  const catalog = typed.map((r) => `- "${r.title}" (${r.okf_type})`).join('\n');
+  return [
+    'TITLE CATALOG: this memory already contains the following typed nodes:',
+    catalog,
+    'A "target_title" is valid only if it is copied verbatim from this catalog.',
+  ].join('\n');
+}
+
 const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {
   ingest: { key: 'facts', source: 'the document chunk' },
   librarian: { key: 'facts', source: 'the "summary" text of the events' },

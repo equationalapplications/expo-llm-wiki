@@ -216,6 +216,24 @@ async function getFactRow(db: SQLiteAdapter, id: string) {
 }
 
 describe('runOntologyBackfill', () => {
+  // #381 fix: the classifier must see which typed nodes exist so a proposed
+  // `target_title` is verifiable (offline render + E1 run proved its absence
+  // made "propose nothing" the compliant answer).
+  it('title catalog: the classifier system prompt lists existing typed nodes, not untyped ones', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [{ id: 'fact_draft', okf_type: 'person' }],
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result.typed).toBe(1);
+    const sys = generateText.mock.calls[0][0].systemPrompt as string;
+    expect(sys).toContain('TITLE CATALOG');
+    expect(sys).toContain('- "Ada" (person)');
+    expect(sys).not.toContain('"Untyped Node"');
+  });
+
   // Spec test 1
   it('types untyped facts, creates edges, reports counts', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');

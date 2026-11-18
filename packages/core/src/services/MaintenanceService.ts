@@ -5,6 +5,7 @@ import { validateClassifierAnswer, classifierStateForFact, type ClassifierReject
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
+import { buildTitleCatalogBlock } from '../prompts';
 import { HISTORY_MAX_DEPTH } from './TemporalService';
 
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
@@ -2074,6 +2075,14 @@ export class MaintenanceService {
 
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
 
+    // #381 fix: the classifier prompt gains the title catalog — the verifiable
+    // target pool of already-typed nodes (same index edge resolution uses, so
+    // every catalog title is resolvable by construction). The E1 experiment
+    // measured 0/28 → 28/28 correct-target `about` proposals from this one
+    // change; see results/statement-kinds-e1-title-catalog-2026-11-18.json.
+    const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId);
+    const titleCatalog = buildTitleCatalogBlock(titleRows);
+
     // Payload guard: cap the full serialized prompt (system + user — manifest,
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
     // a provider's context window. A single fact whose prompt alone exceeds the
@@ -2085,6 +2094,7 @@ export class MaintenanceService {
       facts.map(toPromptShape),
       options?.promptOverride,
       ontologyContext,
+      titleCatalog,
     );
 
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({

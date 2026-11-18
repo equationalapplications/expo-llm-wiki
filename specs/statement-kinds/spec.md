@@ -580,3 +580,21 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   no-proposal/dropped-proposal question in the first run's caveat is
   settled: **no proposals**. #381's diagnosis narrows to prompt
   steering or model behavior, not edge plumbing.
+- **Diagnosis + fix run — 2026-11-18** (issue #381): an offline render of
+  the exact classifier prompt from the built packages showed the
+  verifiable target pool was **invisible** — the prompt names no
+  existing node titles, so the strict-mode "omit invalid edges" rules
+  made proposing nothing the fully-compliant answer. This settles the
+  re-run's prompt-steering question: not dropped plumbing, not weak
+  steering — an unreachable instruction. Fix: the backfill classifier
+  prompt now carries a TITLE CATALOG of typed nodes read from the same
+  title index edge resolution uses (`buildTitleCatalogBlock`, typed
+  rows only, capped at 200 entries; scoped to the backfill prompt —
+  other writers' prompts unchanged). One-variable experiment E1
+  (runner-level `promptOverride`, harness `98ad68f1`) measured the fix
+  prompt before it shipped: same 28-fixture, same model
+  (GLM-5.3-flash), **`about` proposed 28/28 with correct target 28/28**,
+  kind accuracy unchanged 28/28, `about_dropped` empty
+  (`results/statement-kinds-e1-title-catalog-2026-11-18.json`). Single
+  run, single model, 28 rows — not a rate claim; second-model and
+  larger-fixture verification still owed per the follow-up rule.

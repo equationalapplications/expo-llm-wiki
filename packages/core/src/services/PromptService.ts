@@ -349,6 +349,7 @@ export class PromptService {
     facts: unknown[],
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
+    titleCatalog?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT;
     const hasFacts = /\{\{\s*facts\s*\}\}/.test(template);
@@ -358,8 +359,12 @@ export class PromptService {
         userPrompt: hasFacts ? 'Please classify the facts.' : `Facts:\n${JSON.stringify(facts, null, 2)}`,
       };
     }
+    // #381: the title catalog splices in between the base prompt and the
+    // ontology appendix, mirroring the E1 experiment prompt that measured
+    // 28/28 correct-target proposals (results/statement-kinds-e1-*).
+    const effective = titleCatalog !== undefined ? `${template}\n\n${titleCatalog}` : template;
     return {
-      systemPrompt: this.appendOntology(template, ontologyContext),
+      systemPrompt: this.appendOntology(effective, ontologyContext),
       userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
     };
   }

@@ -7,6 +7,7 @@ import {
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
 } from '../../src/prompts';
 import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
+import { buildTitleCatalogBlock } from '../../src/prompts';
 
 describe('PromptService', () => {
   describe('buildIngestPrompt', () => {
@@ -206,6 +207,58 @@ describe('PromptService', () => {
       const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}');
       expect(systemPrompt).toContain('fact_1');
       expect(userPrompt).toBe('Please classify the facts.');
+    });
+  });
+
+  describe('buildOntologyBackfillPrompt title catalog (#381)', () => {
+    const facts = [{ id: 'fact_1', title: 'T', body: 'B', tags: [] }];
+
+    it('splices the catalog between the base prompt and the ontology appendix', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'TITLE CATALOG: x');
+      const base = systemPrompt.indexOf(ONTOLOGY_BACKFILL_SYSTEM_PROMPT);
+      const cat = systemPrompt.indexOf('TITLE CATALOG: x');
+      const appendix = systemPrompt.indexOf(ctx.ontologyModeInstructions);
+      expect(cat).toBeGreaterThan(base);
+      expect(appendix).toBeGreaterThan(cat);
+      expect(userPrompt).toContain('fact_1');
+    });
+
+    it('omits the catalog when none is supplied (baseline prompt unchanged)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      expect(systemPrompt).not.toContain('TITLE CATALOG');
+    });
+  });
+
+  describe('buildTitleCatalogBlock (#381)', () => {
+    it('formats typed rows verbatim, skips untyped rows, sorts by title', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'Draft', okf_type: null },
+        { title: 'Acme Labs', okf_type: 'organization' },
+      ]);
+      expect(block).toContain('TITLE CATALOG: this memory already contains the following typed nodes:');
+      expect(block).toContain('- "Orbit" (software_application)');
+      expect(block).toContain('- "Acme Labs" (organization)');
+      expect(block).not.toContain('Draft');
+      expect(block.indexOf('"Acme Labs"')).toBeLessThan(block.indexOf('"Orbit"'));
+      expect(block).toContain('valid only if it is copied verbatim from this catalog');
+    });
+
+    it('caps the catalog at 200 entries (deterministic title order)', () => {
+      const rows = Array.from({ length: 250 }, (_, i) => ({ title: `n${String(i).padStart(3, '0')}`, okf_type: 'area' as const }));
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('"n199"');
+      expect(block).not.toContain('"n200"');
+    });
+
+    it('returns an empty catalog note when no typed nodes exist', () => {
+      const block = buildTitleCatalogBlock([{ title: 'Draft', okf_type: null }]);
+      expect(block).toContain('TITLE CATALOG: this memory contains no typed nodes yet');
+      expect(block).toContain('omit "edges" rather than invent a target_title');
     });
   });
 
