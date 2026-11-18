@@ -164,6 +164,71 @@ describe('IngestionService — UNIQUE violation translation', () => {
     ).rejects.toBeInstanceOf(WikiDuplicateHashError);
   });
 
+  it("mode 'skip': an expo-sqlite-shaped PRIMARY-code error (19 + message, no `code`) still translates (#403)", async () => {
+    // #403's on-device symptom, end to end: expo-sqlite throws a plain Error
+    // with the primary code 19 and the "UNIQUE constraint failed" text — no
+    // `code` property, no extended 2067. The transactional source_ref_index
+    // upsert must still reach the catch-and-translate through the message
+    // path, not only via better-sqlite3's symbolic string. The better-sqlite3
+    // tests above cover the symbolic path; this covers the shape expo emits.
+    const { wiki, db } = await makeWiki();
+    const sourceRefIndexRepo = (wiki as any).sourceRefIndexRepo;
+    const originalLookup = sourceRefIndexRepo.findActiveByEntityAndHash.bind(sourceRefIndexRepo);
+    const originalRun = db.runAsync.bind(db);
+    let firstCallDone = false;
+    let sriInserts = 0;
+    // The 1st source_ref_index INSERT is the mock's canonical row; the 2nd is
+    // the transactional upsert inside ingestDocument — make THAT one throw the
+    // expo shape.
+    db.runAsync = async (sql: string, args: unknown[] = []) => {
+      if (sql.includes('llm_wiki_source_ref_index')) {
+        sriInserts++;
+        if (sriInserts === 2) {
+          throw new Error('Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash');
+        }
+      }
+      return originalRun(sql, args);
+    };
+    sourceRefIndexRepo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
+      if (!firstCallDone) {
+        firstCallDone = true;
+        await insertSourceRefIndexRow(db, { entityId, sourceRef: 'canonical.md', sourceHash: hash });
+        return null;
+      }
+      return originalLookup(entityId, hash, tx);
+    };
+    try {
+      const result = await wiki.ingestDocument(
+        'entity-1',
+        { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' },
+        { onDuplicateHash: 'skip' },
+      );
+      expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'canonical.md' });
+    } finally {
+      sourceRefIndexRepo.findActiveByEntityAndHash = originalLookup;
+      db.runAsync = originalRun;
+    }
+  });
+
+  it("default mode 'ingest': a RAW (unwrapped) expo-shaped error still raises WikiDuplicateHashError (#403)", async () => {
+    // The direct path: an adapter that surfaces the expo shape without the
+    // serialized-transaction WikiTransactionError wrapper still reaches the
+    // translation through `extractSqliteCode(err)` (the wrapper path above).
+    const { wiki, db } = await makeWiki();
+    await insertSourceRefIndexRow(db, { entityId: 'entity-1', sourceRef: 'canonical.md', sourceHash: VALID_HASH_A });
+    const originalTx = db.withTransactionAsync.bind(db);
+    db.withTransactionAsync = async () => {
+      throw new Error('Error code 19: UNIQUE constraint failed: llm_wiki_source_ref_index.entity_id, llm_wiki_source_ref_index.source_hash');
+    };
+    try {
+      await expect(
+        wiki.ingestDocument('entity-1', { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' }),
+      ).rejects.toBeInstanceOf(WikiDuplicateHashError);
+    } finally {
+      db.withTransactionAsync = originalTx;
+    }
+  });
+
   it('unrelated transaction errors are re-thrown unmodified', async () => {
     const { wiki } = await makeWiki();
     const db2 = (wiki as any).db;
