@@ -59,7 +59,7 @@ import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
-import { runStatementKinds, loadStatementFixture, renderStatementKindsSummary, StatementFixtureEntry, STATEMENT_KINDS_TOKENS_PER_STATEMENT } from './statementKinds/run';
+import { runStatementKinds, loadStatementFixture, renderStatementKindsSummary, buildTitleCatalogOverride, StatementFixtureEntry, STATEMENT_KINDS_TOKENS_PER_STATEMENT } from './statementKinds/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
 import { compareReports } from './compare';
 import { writeFileAtomic } from './fsSafe';
@@ -595,12 +595,27 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   const dryRun = parsed.flags['dry-run'] === true;
   const yes = parsed.flags.yes === true;
   const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+  // #381 prompt-variant experiments: validate BEFORE endpoint resolution so a
+  // typo never reaches a paid call. One variant = one changed variable.
+  const ABOUT_EXPERIMENTS: Record<string, { promptOverride: string }> = {
+    'title-catalog': { promptOverride: buildTitleCatalogOverride() },
+  };
+  const variantArg = typeof parsed.flags['about-experiment'] === 'string' ? parsed.flags['about-experiment'] : undefined;
+  let variant: { promptOverride: string } | undefined;
+  if (variantArg !== undefined) {
+    variant = ABOUT_EXPERIMENTS[variantArg];
+    if (!variant) {
+      stderr(`unknown --about-experiment variant: ${variantArg} (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ')})` + '\n');
+      return { exitCode: 2 };
+    }
+  }
   const tokenEstimate = deps.entries.length * STATEMENT_KINDS_TOKENS_PER_STATEMENT;
   const printEstimate = (model: string): void => {
     stdout(
       [
         `model: ${model}`,
         `statements: ${deps.entries.length}`,
+        ...(variantArg !== undefined ? [`variant: ${variantArg}`] : []),
         `input tokens (estimate): ${tokenEstimate.toLocaleString('en-US')}`,
       ].join('\n') + '\n',
     );
@@ -630,6 +645,7 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
     endpoint,
     engine,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+    ...(variant !== undefined ? { promptOverride: variant.promptOverride, variant: variantArg } : {}),
   });
   const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `statement-kinds-${engine.version}-${nowStamp()}.json`);
   writeFileAtomic(reportFile, JSON.stringify(report, null, 2));

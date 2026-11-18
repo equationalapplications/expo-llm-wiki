@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { runStatementKinds, StatementFixtureEntry } from '../src/statementKinds/run';
+import { runStatementKinds, buildTitleCatalogOverride, StatementFixtureEntry, SEED_NODES } from '../src/statementKinds/run';
 
 const ok = (text: string) =>
   new Response(JSON.stringify({ content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } }), {
@@ -40,5 +40,43 @@ describe('runStatementKinds misalignment guard', () => {
     expect(report.results[1].error).toBeUndefined();
     expect(report.results[1].actual_kind).toBe('rule');
     expect(report.results[1].misaligned).toBeUndefined();
+  });
+});
+
+describe('#381 E1 title-catalog override', () => {
+  it('lists every seed title with its type and carries no data placeholder', () => {
+    const o = buildTitleCatalogOverride();
+    for (const s of SEED_NODES) {
+      expect(o).toContain(`- "${s.title}" (${s.type})`);
+    }
+    expect(o).toContain('TITLE CATALOG');
+    // A {{facts}} placeholder would hydrate facts into the system prompt and
+    // change the user prompt — the variant must only extend the base prompt.
+    expect(o).not.toContain('{{facts}}');
+  });
+
+  it('a promptOverride rides through as the classifier system prompt next to the ontology appendix', async () => {
+    const systems: string[] = [];
+    const fetchImpl = vi.fn(async (_u: string, init?: { body?: string }) => {
+      const body = JSON.parse(init?.body ?? '{}');
+      systems.push(typeof body.system === 'string' ? body.system : JSON.stringify(body.system));
+      const ids = [...JSON.stringify(body.messages).matchAll(/fact_[A-Za-z0-9_-]+|[0-9a-f]{8}-[0-9a-f-]{27}/g)].map((m) => m[0]);
+      return ok(JSON.stringify({ classifications: [...new Set(ids)].map((id) => ({ id, okf_type: 'rule', edges: [] })) }));
+    });
+    const report = await runStatementKinds({
+      entries,
+      endpoint: { protocol: 'anthropic', baseUrl: 'https://x.test', apiKey: 'k', model: 'm' },
+      engine: { version: 't', gitSha: 't', gitDescribe: 't' },
+      promptOverride: buildTitleCatalogOverride(),
+      variant: 'title-catalog',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(systems.length).toBeGreaterThan(0);
+    for (const s of systems) {
+      expect(s).toContain('TITLE CATALOG');
+      // The manifest appendix must still be appended (strict rules + manifest).
+      expect(s).toContain('Ontology constraints');
+    }
+    expect(report.variant).toBe('title-catalog');
   });
 });

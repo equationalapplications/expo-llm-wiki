@@ -62,4 +62,35 @@ describe('runStatementKindsCommand guard', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(stdout.mock.calls.map((c) => String(c[0])).join('')).toContain('Re-run with --yes to spend these tokens.');
   });
+
+  it('--about-experiment title-catalog prints the variant in dry-run and never fetches', async () => {
+    const stdout = vi.fn();
+    const fetchImpl = vi.fn();
+    const r = await runStatementKindsCommand({
+      argv: ['statement-kinds', '--about-experiment', 'title-catalog', '--dry-run'],
+      env: {},
+      entries,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stdout,
+    });
+    expect(r.exitCode).toBe(0);
+    const out = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(out).toContain('variant: title-catalog');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('an unknown --about-experiment variant exits 2 before endpoint resolution', async () => {
+    const stderr = vi.fn();
+    const fetchImpl = vi.fn();
+    const r = await runStatementKindsCommand({
+      argv: ['statement-kinds', '--about-experiment', 'bogus', '--dry-run'],
+      env: {},
+      entries,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toContain('unknown --about-experiment variant');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

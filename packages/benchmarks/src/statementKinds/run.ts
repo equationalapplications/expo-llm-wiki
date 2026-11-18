@@ -19,6 +19,7 @@ import { readFileSync } from 'fs';
 
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 import type { LLMProvider } from '@equationalapplications/core-llm-wiki';
+import { ONTOLOGY_BACKFILL_SYSTEM_PROMPT } from '@equationalapplications/core-llm-wiki';
 import { schemaSoftwareOrgManifest } from '@equationalapplications/schema-software-org';
 
 import { openDb } from '../db';
@@ -49,6 +50,28 @@ export const SEED_NODES: ReadonlyArray<{ title: string; type: TargetType; body: 
 export const STATEMENT_KINDS_TOKENS_PER_STATEMENT = 6000;
 
 const ENTITY = 'statement-kinds-bench';
+
+/**
+ * #381 experiment E1 (`title-catalog`): the diagnosis found the classifier
+ * prompt never surfaces the existing node titles, so its strict-mode
+ * "omit invalid edges" rules make proposing nothing the fully-compliant
+ * answer. This override appends ONLY the verifiable target pool — no
+ * attachment directive (that is a separate experiment) — after the untouched
+ * base prompt. The manifest appendix still rides via `buildOntologyBackfillPrompt`
+ * because the override carries no `{{facts}}` placeholder.
+ */
+export function buildTitleCatalogOverride(
+  seeds: ReadonlyArray<{ title: string; type: TargetType }> = SEED_NODES,
+): string {
+  const catalog = seeds.map((s) => `- "${s.title}" (${s.type})`).join('\n');
+  return [
+    ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
+    '',
+    'TITLE CATALOG: this memory already contains the following typed nodes:',
+    catalog,
+    'A "target_title" is valid only if it is copied verbatim from this catalog.',
+  ].join('\n');
+}
 
 /** Load and validate the fixture; throws on any malformed entry. */
 export function parseStatementFixture(raw: string): StatementFixtureEntry[] {
@@ -105,6 +128,8 @@ export interface StatementKindsReport {
     /** Statements with an `about` edge to the expected target. */
     correctTarget: number;
   };
+  /** Prompt variant under test (e.g. #381 E1 `title-catalog`); absent for the baseline prompt. */
+  variant?: string;
   results: StatementRow[];
 }
 
@@ -116,8 +141,12 @@ export interface RunStatementKindsOpts {
   entries: StatementFixtureEntry[];
   endpoint: ChatEndpoint;
   fetchImpl?: FetchLike;
-  /** Collected once per run by the caller and reused for the report's engine block. */
+  /** Collected once per run by the caller and returned in the report's engine block. */
   engine: Awaited<ReturnType<typeof engineInfo>>;
+  /** Replaces the base classifier system prompt (ontology appendix still appended). */
+  promptOverride?: string;
+  /** Free-form variant label recorded in the report for provenance. */
+  variant?: string;
 }
 
 export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<StatementKindsReport> {
@@ -156,7 +185,11 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
         createdId = fact.id;
         // One fact per pass so each call classifies exactly this statement.
         dropped = [];
-        const bf = await wiki.runOntologyBackfill(ENTITY, { classifier: 'llm', batchSize: 1 });
+        const bf = await wiki.runOntologyBackfill(ENTITY, {
+          classifier: 'llm',
+          batchSize: 1,
+          ...(opts.promptOverride !== undefined ? { promptOverride: opts.promptOverride } : {}),
+        });
         const hood = await wiki.traverseGraph(ENTITY, { sourceId: fact.id, direction: 'outbound', maxDepth: 1, edgeTypes: ['about'] });
         const anchor = hood.nodes.find((n) => n.id === fact.id);
         const targets = hood.edges
@@ -213,6 +246,7 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
         resolvable: rows.length,
         correctTarget: rows.filter((r) => r.about_correct).length,
       },
+      ...(opts.variant !== undefined ? { variant: opts.variant } : {}),
       results: rows,
     };
   } finally {
@@ -226,6 +260,7 @@ export function renderStatementKindsSummary(r: StatementKindsReport): string {
   return [
     `model: ${r.model}`,
     `at: ${r.createdAt}`,
+    ...(r.variant !== undefined ? [`variant: ${r.variant}`] : []),
     `overall kind accuracy: ${pct(r.overall)}`,
     ...STATEMENT_KINDS.map((k) => `  ${k}: ${pct(r.perKind[k])}`),
     `about edge: proposed ${r.aboutRate.proposed}/${r.aboutRate.resolvable}, correct target ${r.aboutRate.correctTarget}/${r.aboutRate.resolvable}`,
