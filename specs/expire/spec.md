@@ -40,7 +40,14 @@ number }): Promise<void>`, implemented by
 `TemporalService.expire(entityId, factId, options?)`. `at` defaults to
 `Date.now()`; validated with `assertEpochMs` (same rule as `supersede`'s
 `validFrom`). A past `at` is legal — expiry is retro-active archiving, and
-`asOf` reads honor it.
+`asOf` reads honor it — but an **inverted interval is rejected**: after the
+row is read, `at < (row.valid_from ?? row.created_at)` throws `TypeError`
+(same convention as `supersede`'s replacement-shape validation); a fact
+whose validity ended before it began would vanish from every read mode
+while being archived under none. `supersede()` has the same pre-existing
+gap (`TemporalService.ts:43` never checks `t` against the old row's start);
+that is a separate concern and is filed as its own issue at
+implementation time, not folded into this MINOR.
 
 **D2 — semantics: one column, nothing else.** Inside a transaction, a single
 `setTemporal(id, entityId, { valid_to: t }, tx)` (the outbox UPDATE is
@@ -50,8 +57,12 @@ pushed by `setTemporal` itself). `expire()` never touches `superseded_by`,
 `T < valid_to` still return it, and `history()` keeps it in the chain. This
 is the "archive, not a deletion" wording of INTENT rule 12.
 
-**D3 — guards (reuse `WikiSupersedeError`, thin).** `expire()` reuses
-`supersedeInTx`'s guard set, without the replacement-side checks:
+**D3 — guards (reuse `WikiSupersedeError`, thin; precedence fixed).**
+`expire()` reuses `supersedeInTx`'s guard set, evaluated in this order:
+`not_found` → `immutable_target` → `already_superseded` → `already_expired`
+(superseded rows also carry `valid_to` — `supersedeInTx` writes it at
+`TemporalService.ts:43` — so precedence decides which reason a host sees;
+`already_superseded` wins, matching supersede's own guard order):
 
 - `not_found` — fact missing or `deleted_at != null`;
 - `immutable_target` — `source_type === 'immutable_document'` (same rule as
@@ -70,10 +81,20 @@ commits: `searchService.syncEntries(entityId, [factId])` (the same call
 the stored fact's embedding stays with it (retrieval already excludes
 non-live facts); there is no vector removal — the fact is not forgotten.
 
-**D5 — prune relationship unchanged.** Expired rows hard-delete only when
-`pruneSupersededAfter` is set (off by default), after their retention window
-(`MaintenanceService.ts:331-353`); retention is host policy. `expire()`
-itself deletes nothing.
+**D5 — prune relationship: stated, and INTENT catches up.** Rows with
+`valid_to` set — expired by this verb **and** superseded rows — enter the
+prune path through `findExpiredIds`
+(`EntryRepository.ts:1158`, "valid_to IS NOT NULL"), which
+`runPrune` soft-deletes only when `pruneSupersededAfter` is set (off by
+default), after their retention window (`MaintenanceService.ts:331-353`);
+retention is host policy. `expire()` itself deletes nothing. The engine
+already documents the expired-or-superseded pairing
+(`packages/core/src/types.ts:309-311`: "expired and superseded history is
+soft-deleted here"), but INTENT rule 12 names only superseded — so this
+PR carries a **one-clause INTENT rule 12 amendment**
+("turn superseded — or expired — into forgotten") so INTENT stays the top
+authority on the new verb's afterlife (AGENTS.md rule). No prune code
+changes.
 
 **D6 — exposure: core only.** The react/expo wrappers do not forward
 `supersede()` today (grep-verified); `expire()` matches. No wrapper, no
@@ -90,6 +111,8 @@ rule 12's wording ("an archive, not a deletion").
   rule 12.
 - `packages/core/src/types.ts` — `WikiSupersedeReason` gains
   `'already_expired'`; `WikiSupersedeError` gains the verb parameter.
+- `INTENT.md` — rule 12, one clause: "turn superseded — or expired — into
+  forgotten" (D5).
 - `packages/core/__tests__/temporalRoundTrip.test.ts` (+ a focused new test
   file if the suite style prefers it) — test plan below.
 - `apps/docs/src/content/docs/` — API page + guide (D7).
@@ -104,9 +127,12 @@ retention changes (D5), `forget`/`erase` behavior.
    returns it, at `valid_to` it does not; current read excludes it. [V]
 2. Guards reject without writing: `not_found` (unknown id), `not_found`
    (soft-deleted fact), `immutable_target`, `already_superseded`,
-   `already_expired` — each leaves the row byte-identical. [V]
+   `already_expired` — each leaves the row byte-identical; a superseded
+   row (has both `superseded_by` and `valid_to`) reports
+   `already_superseded`, never `already_expired` (precedence). [V]
 3. Default `at` = now; explicit past `at` honored; non-epoch `at` throws
-   `TypeError`. [V]
+   `TypeError`; `at` earlier than the row's `valid_from ?? created_at`
+   throws `TypeError` (inverted interval, D1). [V]
 4. Outbox: one UPDATE payload carrying `id`, `entity_id`, `valid_to`. [V]
 5. Search: after `expire()` + sync, search no longer returns the fact
    (mirror the supersede search test). [V]
@@ -131,9 +157,10 @@ retention changes (D5), `forget`/`erase` behavior.
 
 ## Release
 
-MINOR (`core-llm-wiki`), no migration. INTENT rule 12 wording is already
-shipped (PR #404), so this PR closes the gap between INTENT and API without
-an INTENT change.
+MINOR (`core-llm-wiki`), no migration. INTENT rule 12 already names the
+verb; the PR adds the one-clause afterlife amendment (D5) so INTENT stays
+the top authority. This closes the gap between INTENT and API without a
+second intent cycle.
 
 ## Non-goals
 
