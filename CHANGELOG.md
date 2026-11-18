@@ -1,3 +1,26 @@
+## [9.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.3.0...v9.4.0) (2026-11-18)
+
+### Features
+
+* **core:** erase() clears orphaned FTS5 surfaces on module-less and MiniSearch runtimes (spec D1-D4) ([8fc5d7a](https://github.com/equationalapplications/expo-llm-wiki/commit/8fc5d7ae60e1243b0d6dffa0d59bae144e10617d))
+* **core:** EraseReport ftsOrphansCleared + strategy introspection for orphan remediation ([86cc97c](https://github.com/equationalapplications/expo-llm-wiki/commit/86cc97c971abcb4033813c7cf5bf6e623d0700e8))
+* **core:** expire() — archive a fact by setting valid_to only (spec r5) ([d13e793](https://github.com/equationalapplications/expo-llm-wiki/commit/d13e793ea453aeb8b336adf72f8dae2f3ca2fe72))
+* **core:** reject supersede of an expired fact — preserve the archive valid_to (D3b) ([96f405e](https://github.com/equationalapplications/expo-llm-wiki/commit/96f405ef88274b3ee7a268340d8660ea51ef38f7))
+* **core:** widen WikiSupersedeReason (already_expired, invalid_interval) + optional error verb ([fa155b9](https://github.com/equationalapplications/expo-llm-wiki/commit/fa155b9dcc70259e1442fdba4d95796e4341e1f7))
+
+### Bug Fixes
+
+* **core:** convergence nits — diagnostics docs row, CI guard for bootstrap rebuild, tx-forwarding, guide wording ([219238d](https://github.com/equationalapplications/expo-llm-wiki/commit/219238d0b3b5cf946c273993c8c35a2ecabcb524))
+* **core:** drop the stray closure left by the post-commit reporting move ([8fdfd44](https://github.com/equationalapplications/expo-llm-wiki/commit/8fdfd44cf84e6ca5582035f8091dae94de5c0ddd))
+* **core:** erase Path A preserves fts5 structure/config rows so a capable re-open rebuilds (specs/erase-fts-remediation AC2, canary-verified) ([fc4b957](https://github.com/equationalapplications/expo-llm-wiki/commit/fc4b9574ce3e3cbf9735cebb149a0c17edd9c1b1))
+* **core:** gate Path B on the configured strategy + Tier-3 folds (canary committed, comments/diagnostics corrected) ([069b877](https://github.com/equationalapplications/expo-llm-wiki/commit/069b877d936f9f82cbbd079737deb2dd89645513))
+* **core:** guard D3b against now, not validFrom — back-dated supersede cannot rewrite an archive (Tier-4 fold) ([aaecfeb](https://github.com/equationalapplications/expo-llm-wiki/commit/aaecfeb29f84634bad663a7557332cc6de43dff7))
+* **core:** narrow the supersede-after-expire guard to ended archives + review folds (Tier-3 M1/M2, CodeRabbit) ([aeb0830](https://github.com/equationalapplications/expo-llm-wiki/commit/aeb0830443cdf39bda2fc2adf646f08fb21bcaa0))
+* **core:** probe wraps-cause classification, Path B atomicity, cleared-rows honesty + canary passage coverage (CodeRabbit round 2) ([a1a5f28](https://github.com/equationalapplications/expo-llm-wiki/commit/a1a5f28c8eaa747a901d634808f6e904ce47cc15))
+* **core:** read a fresh clock for the already_expired guard inside the transaction (CodeRabbit fold) + guide future-start wording ([bca01ae](https://github.com/equationalapplications/expo-llm-wiki/commit/bca01ae7ff63f585f19327111bef329c6c146132))
+* **core:** retire an unreadable post-erase vtab via writable_schema so a capable re-open rebuilds (specs/erase-fts-remediation AC2) ([765c46e](https://github.com/equationalapplications/expo-llm-wiki/commit/765c46efd06e6d55a18d6ac88b821790287f42f1))
+* **core:** retired-table clear preserves fts5 internal rows + Tier-4 folds (step record, canary committed evidence ordering) ([775fe27](https://github.com/equationalapplications/expo-llm-wiki/commit/775fe27495f7e8ebb9334319308d2afe5a7f740b))
+
 ## [9.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.2.0...v9.3.0) (2026-11-18)
 
 ### Features
