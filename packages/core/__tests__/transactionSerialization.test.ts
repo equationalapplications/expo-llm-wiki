@@ -45,9 +45,10 @@ describe('extractSqliteCode', () => {
     expect(extractSqliteCode({ message: 'Error code 19: UNIQUE constraint failed: llm_wiki_entries.entity_id, llm_wiki_entries.source_hash' }))
       .toBe('SQLITE_CONSTRAINT_UNIQUE');
     // Primary-key violations surface with the same message text — folded into
-    // UNIQUE here on purpose. Node drivers report 1555
-    // (SQLITE_CONSTRAINT_PRIMARYKEY) for the same failure; the message text
-    // cannot distinguish the two, so expo collapses both to the UNIQUE name.
+    // UNIQUE here, forced by the message-only shape. Node drivers report 1555
+    // (SQLITE_CONSTRAINT_PRIMARYKEY) for the same failure and re-raise it past
+    // the duplicate-hash translation; the message text cannot distinguish the
+    // two, so expo collapses both to the UNIQUE name.
     expect(extractSqliteCode({ message: 'Error code 19: UNIQUE constraint failed: llm_wiki_entries.id' }))
       .toBe('SQLITE_CONSTRAINT_UNIQUE');
     // Other code-19 constraint families keep the primary-code mapping.

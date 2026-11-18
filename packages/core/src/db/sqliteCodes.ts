@@ -17,7 +17,8 @@ const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
   // Extended result codes (https://sqlite.org/rescode.html#extended_result_code_list).
   // 2067 = SQLITE_CONSTRAINT_UNIQUE — a UNIQUE index rejecting an INSERT/UPDATE.
   // better-sqlite3 / node:sqlite enable extended result codes and report it
-  // directly. expo-sqlite NEVER emits it: it leaves extended result codes off
+  // directly. expo-sqlite never emits it (as of expo-sqlite 58.0.14, per
+  // #403): it leaves extended result codes off
   // and surfaces the same failure as the primary code 19 with the
   // "UNIQUE constraint failed" message text, which `extractSqliteCode` below
   // refines back to this name (#403).
@@ -52,13 +53,16 @@ export function extractSqliteCode(err: unknown): string | undefined {
       // SQLITE_CONSTRAINT_UNIQUE so callers branch on the same string the
       // rest of the ecosystem reports.
       //
-      // Divergence, on purpose: a PRIMARY KEY clash shares that exact message
-      // text, so expo folds it into SQLITE_CONSTRAINT_UNIQUE here while
-      // better-sqlite3 / node:sqlite report 1555 (SQLITE_CONSTRAINT_PRIMARYKEY)
-      // for the same failure — the message cannot distinguish the two, and the
-      // ingest duplicate-hash translation wants both treated as a claimed
-      // hash. Every other constraint family (CHECK / FOREIGN KEY / NOT NULL)
-      // keeps 19 → SQLITE_CONSTRAINT.
+      // Divergence, forced by the message-only shape: a PRIMARY KEY clash
+      // shares that exact message text, so expo folds it into
+      // SQLITE_CONSTRAINT_UNIQUE here while better-sqlite3 / node:sqlite
+      // report 1555 (SQLITE_CONSTRAINT_PRIMARYKEY) for the same failure and
+      // re-raise it past the duplicate-hash translation. Unavoidable — the
+      // message cannot distinguish the two — and acceptable: no PRIMARY KEY
+      // can realistically clash inside the ingest transaction (ids are
+      // random), so the folded name never misdirects the translation in
+      // practice. Every other constraint family (CHECK / FOREIGN KEY /
+      // NOT NULL) keeps 19 → SQLITE_CONSTRAINT.
       if (n === 19 && message.includes('UNIQUE constraint failed')) {
         return nameForSqliteResultCode(2067);
       }
