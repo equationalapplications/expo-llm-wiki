@@ -55,6 +55,40 @@ never fail the call. JSON1 functions ship in every supported driver build
 a probe test pins availability so a build without JSON1 fails loudly in CI,
 not on a device.
 
+**Canary scope, stated honestly:** the probe runs in vitest against the CI
+adapters (better-sqlite3 and node:sqlite). This repo has no native Expo
+device-runner harness, so the canary cannot itself execute a device SQLite
+binary. On-device coverage rests on a dependency already in production:
+the FTS5 index strategy requires JSON1 on every runtime —
+`createIndexStrategy.ts` probes `SELECT json_valid('[]')` at index creation
+and degrades explicitly on "no such function" — so any device whose SQLite
+can build the search index (all expo-sqlite peer versions bundle SQLite
+where JSON1 is unconditional, ≥ 3.38) can run this selector. D1 introduces
+no new class of driver requirement; the canary formalizes an existing one.
+
+**Count semantics under tombstones:** the mutator carries the same
+`deleted_at IS NULL` guard as `softDeleteBySource`
+(`EntryRepository.ts:600`) — a row already tombstoned by a previous
+operation is a no-op hit and does **not** increment `deleted.entries`
+(the count comes from the UPDATE's transition result, matching the
+by-source branch exactly). The `deletedEntryIds` enumeration stays
+`includeDeleted = true` — deliberately a superset, feeding index sync and
+the ledger backstop for ids tombstoned before the ledger existed, same as
+by-source today.
+
+### Performance envelope (D1/D3)
+
+`entries_entity_idx` (`schema.ts:43`) narrows every match query to one
+entity's rows before any JSON evaluation — the scan is bounded by
+facts-per-entity, never store-wide. Within one entity the `json_extract`
+predicate is an unindexable scan of that entity's rows: accepted for
+on-device latencies at realistic fact counts. The escape hatch — a
+generated column promoting `event_id` with a standard index — is recorded
+here and deliberately **deferred**: no consumer has demonstrated a
+high-frequency `forget({ eventId })` workload, and a performance path
+without a demonstrated need is untested weight (INTENT rule 5 hygiene).
+Revisit only on a measured latency complaint.
+
 ### D2 — Selector grouping: its own exclusive group
 
 `eventId` composes with nothing: mutually exclusive with
@@ -158,10 +192,15 @@ forget-diagnostics flow, same as `sourceRef`/`sourceHash` today.)
    no `source_ref_index` row and no `source_passages` row (sketch 4).
 5. **Malformed-pointer tolerance**: a row with corrupted `source_pointer`
    text neither matches nor errors the call (`json_valid` guard probe).
-6. **JSON1 availability probe** (CI canary for D1).
+6. **JSON1 availability probe** (CI canary for D1 — scope per §Canary
+   scope: CI adapters; on-device covered by the existing index-strategy
+   JSON1 dependency).
 7. **dryRun** reports the match count without mutating.
 8. **Exclusivity**: every forbidden composition throws with the existing
    error-message style; `clearAll` + `eventId` throws.
+9. **Tombstone idempotence**: a second `forget({ eventId })` call on the
+   same entity reports `deleted.entries: 0` (the `IS NULL` guard counts
+   transitions, not matches).
 
 ## Non-goals / #401 boundary
 
