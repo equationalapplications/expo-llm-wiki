@@ -1,6 +1,6 @@
 # expire() — end a fact's validity without a replacement (archive, not deletion)
 
-**Status: Draft (2026-11-17)**  
+**Status: Implemented 2026-11-18 (PR #409) — shipped as a supersede-family verb: sets `valid_to` only, shares the supersede guard stack**  
 **Design ratified by the owner 2026-11-17** ("thin `setTemporal` wrapper,
 archive-without-replacement") as the T11 follow-up lane of the forget-erasure
 cycle; INTENT rule 12 already names the verb. No dedicated issue: the anchor
@@ -121,7 +121,7 @@ accurate without breaking callers.
 
 **D4 — post-commit effects (mirror `supersede`).** After the transaction
 commits: `searchService.syncEntries(entityId, [factId])` (the same call
-`supersede` makes — the index drops the now-non-live row) and
+`supersede` makes — expired rows leave the query results: the ledger rebuild keeps non-deleted rows indexed (liveness is applied at read time), so the drop is behavioral, not a row deletion) and
 `evictCache(entityId)`. No embedding call: `expire()` creates no new row, and
 the stored fact's embedding stays with it (retrieval already excludes
 non-live facts); there is no vector removal — the fact is not forgotten.
