@@ -1,0 +1,12 @@
+# LEDGER — erase() FTS orphan remediation (spec r5)
+
+One checkbox per plan task. Tick only after that task's verification passes.
+
+- [ ] E1 — report shape + strategy introspection (`EraseReport.ftsOrphansCleared`, `SearchService` getters)
+- [ ] E2 — `_eraseClearFtsOrphans` implementation + `_eraseDrainPassages` rewire (D1–D4)
+- [ ] E3 — Path C tests + F-MAJOR-1 flip + never-FTS clean (AC9)
+- [ ] E4 — Path A tests + probe/clear honesty branches (AC1, AC4–AC6)
+- [ ] E5 — Path B tests (AC3) + N2 variant
+- [ ] E6 — determinism + pending-ledger cover (AC2, AC7, AC8)
+- [ ] E7 — docs sentence + diagnostics check (AC10, AC11)
+- [ ] E8 — full gate (typecheck, build, tests, docs build)
