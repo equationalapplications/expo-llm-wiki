@@ -2077,8 +2077,11 @@ export class MaintenanceService {
 
     // #381 fix: the classifier prompt gains the title catalog — the verifiable
     // target pool of already-typed nodes (same index and title normalization
-    // edge resolution uses; the block dedupes on the normalized key, so every
-    // distinct catalog entry resolves). NOTE (honesty): the
+    // edge resolution uses; the block dedupes on the normalized key). Timing
+    // note: the catalog reads the index once per pass outside a transaction,
+    // while resolution re-reads it inside each batch's tx — a node deleted or
+    // retyped in between makes a listed title unresolvable, so entries are
+    // verifiable as of prompt-build time, not write time. NOTE (honesty): the
     // 0/28 → 28/28 E1 result measured a SEED-ONLY catalog variant via
     // runner-level promptOverride (results/statement-kinds-e1-title-catalog-
     // 2026-11-18.json); this shipped block covers all typed nodes and has not

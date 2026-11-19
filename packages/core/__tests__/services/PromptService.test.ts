@@ -260,6 +260,9 @@ describe('PromptService', () => {
       expect(block).toContain('classified in this same response');
     });
 
+    // Last-wins mirrors titleIndex.set, but "last" is unspecified on both
+    // sides (no ORDER BY on the index query) — this test pins the semantics
+    // of the dedupe for a GIVEN row order, not agreement with resolution.
     it('dedupes last-wins on the normalized key, matching edge resolution', () => {
       const block = buildTitleCatalogBlock([
         { title: 'Orbit', okf_type: 'software_application' },
@@ -281,6 +284,18 @@ describe('PromptService', () => {
       expect(block.match(/"orbit"/g)?.length).toBe(1);
       expect(block).toContain('- "orbit" (area)');
       expect(block).not.toContain('(software_application)');
+    });
+
+    it('an oversized first title is skipped, never restated as "no typed nodes" (Opus r3 M1)', () => {
+      const rows = [
+        { title: 'X'.repeat(9000), okf_type: 'area' as const },
+        { title: 'Real Node', okf_type: 'organization' as const },
+      ];
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('TITLE CATALOG');
+      expect(block).not.toContain('no typed nodes yet');
+      expect(block).toContain('- "Real Node" (organization)');
+      expect(block.length).toBeLessThan(9000);
     });
 
     it('caps the catalog by characters as well as entries (payload budget, sonnet N3)', () => {

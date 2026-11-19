@@ -100,14 +100,27 @@ export function buildTitleCatalogBlock(
   let used = 0;
   for (const r of typed) {
     const line = `- ${JSON.stringify(r.title)} (${r.okf_type})`;
-    if (used + line.length + 1 > CHAR_BUDGET || listed.length >= TITLE_CATALOG_MAX_ENTRIES) break;
+    // An oversized line is SKIPPED, not a break: stopping the loop here would
+    // leave the block empty while typed nodes exist, and the empty wording
+    // would then falsely claim there are no targets — the exact failure #381
+    // fixed, restated as fact (Opus r3 delta MAJOR 1).
+    if (listed.length > 0 && used + line.length + 1 > CHAR_BUDGET) break;
+    if (line.length + 1 > CHAR_BUDGET) continue;
+    if (listed.length >= TITLE_CATALOG_MAX_ENTRIES) break;
     listed.push(r);
     used += line.length + 1;
   }
   const truncated = typed.length > listed.length;
-  if (listed.length === 0) {
+  if (typed.length === 0) {
     return [
       'TITLE CATALOG: this memory contains no typed nodes yet.',
+      'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
+    ].join('\n');
+  }
+  if (listed.length === 0) {
+    // Typed nodes exist but none fit the budget — truncated, not empty.
+    return [
+      'TITLE CATALOG: existing typed nodes exist in this memory, but none fit the catalog budget.',
       'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
     ].join('\n');
   }

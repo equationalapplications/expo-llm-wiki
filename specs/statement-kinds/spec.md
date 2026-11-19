@@ -12,9 +12,10 @@ in Errata: kind split 28/28 on GLM-5.3-flash; about-proposal 0/28
 filed as #381; attachment path shipped unproven — the measured run recorded
 0/28 persisted about edges (#381), and test-plan item 6's stub guards the
 plumbing, not model behavior. #381 update: root cause diagnosed (invisible
-target pool) and a title-catalog fix shipped in core via PR #425
-(commits d56a70d5..75ef53ad + T1.5 folds); the shipped prompt is not yet
-benchmarked — see Errata.)
+target pool) and a title-catalog fix implemented on PR #425
+(commits d56a70d5..75ef53ad + T1.5 folds) — pending merge and pending
+the owner's ruling on the catalog data-scope change; the shipped
+prompt is not yet benchmarked — see Errata.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
