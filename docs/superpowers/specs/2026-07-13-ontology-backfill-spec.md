@@ -357,13 +357,18 @@ prompt export. Migration tests follow the existing migrations suite pattern
   Diagnosis and measured evidence live in `specs/statement-kinds/spec.md`
   (Errata) — that spec's test-plan covers the generative path.
 
-## Errata (2026-11-19 — PR1 metering lane; Proposal A step 2)
+## Errata (2026-11-19 UTC — PR1 metering lane; Proposal A step 2)
 
-The accepted Proposal A migration
-(`records/investigations/2026-11-19-consult-ctx-windows-s1/verdict-pass2-system-one.md`,
-§Migration step 2) requires a `fix:` PR first. This errata governs that PR.
-Four amendments follow. All file:line evidence below was re-verified against
-the tree at `ae52abbd` on 2026-11-19.
+**Errata status: proposed — pending [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) (draft).** The
+amendments below are unshipped until that PR merges. The spec's
+`Implemented` status covers only the original spec and the PR #425 errata.
+
+The accepted Proposal A migration lives in the EA Curated Thoughts vault —
+a records store outside this repo, so the path below does not resolve from
+the tree: `records/investigations/2026-11-19-consult-ctx-windows-s1/verdict-pass2-system-one.md`,
+§Migration step 2. That ruling requires a `fix:` PR first. This errata
+governs that PR. Four amendments follow. All file:line evidence below was
+re-verified against the tree at `ae52abbd` on 2026-11-19 (UTC).
 
 ### E1. Classifier calls are metered
 
