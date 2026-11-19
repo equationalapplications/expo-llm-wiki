@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createProvider, endpointFromEnv } from '../src/provider';
 import { instrument, UsageRecorder, classifyCallSite } from '../src/instrument';
 
@@ -111,5 +111,69 @@ describe('instrument', () => {
     expect(classifyCallSite('You are a memory extraction agent.')).toBe('extract');
     expect(classifyCallSite('You are a memory reconciliation agent.')).toBe('resolve');
     expect(classifyCallSite('Something else')).toBe('other');
+  });
+});
+describe('classifier endpoint and context tokens (BENCH_CLASSIFIER_*, BENCH_CONTEXT_TOKENS)', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+  const req: any = { state: 's', questions: [{ id: 'q1' }] };
+  const mkClassify = (body: object, env: Record<string, string> = {}) => {
+    vi.stubEnv('BENCH_CLASSIFIER_URL', 'https://cls.test/classify');
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    const fetchImpl = vi.fn(async () => json(body));
+    return { fetchImpl, p: createProvider(anth, fetchImpl as any) };
+  };
+
+  it('posts the ClassifyRequest with model folded in, to BENCH_CLASSIFIER_URL', async () => {
+    const { fetchImpl, p } = mkClassify({ answers: { q1: 'a' } });
+    expect(p.classify).toBeDefined();
+    expect(await p.classify!(req)).toEqual({ answers: { q1: 'a' }, usage: undefined });
+    const [url, init] = fetchImpl.mock.calls[0] as any;
+    expect(url).toBe('https://cls.test/classify');
+    expect(JSON.parse(init.body)).toEqual({ ...req, model: 'm' });
+    expect(init.headers.authorization).toBeUndefined();
+  });
+  it('BENCH_CLASSIFIER_MODEL overrides the model; BENCH_CLASSIFIER_KEY adds a bearer header', async () => {
+    const { fetchImpl, p } = mkClassify({ answers: {} }, { BENCH_CLASSIFIER_MODEL: 'cm', BENCH_CLASSIFIER_KEY: 'sek' });
+    await p.classify!(req);
+    const [, init] = fetchImpl.mock.calls[0] as any;
+    expect(JSON.parse(init.body).model).toBe('cm');
+    expect(init.headers.authorization).toBe('Bearer sek');
+  });
+  it('is absent when BENCH_CLASSIFIER_URL is unset', () => {
+    expect(createProvider(anth, vi.fn() as any).classify).toBeUndefined();
+  });
+  it.each([
+    ['{}', {}],
+    ['non-object answers', { answers: 'x' }],
+    ['array answers', { answers: [] }],
+    ['chat-completions shape', { choices: [{ message: { content: 'hi' } }] }],
+  ])('rejects a contract-violating response: %s', async (_n, body) => {
+    const { p } = mkClassify(body);
+    await expect(p.classify!(req)).rejects.toThrow(/missing `answers` object/);
+  });
+  it.each([
+    ['prompt/completion_tokens', { prompt_tokens: 3, completion_tokens: 4 }, { inputTokens: 3, outputTokens: 4 }],
+    ['explicit input/outputTokens', { inputTokens: 5, outputTokens: 6 }, { inputTokens: 5, outputTokens: 6 }],
+    ['partial (input only)', { inputTokens: 5 }, undefined],
+    ['partial (completion only)', { completion_tokens: 5 }, undefined],
+    ['negative values', { inputTokens: -1, outputTokens: 2 }, undefined],
+  ])('usage normalization: %s', async (_n, usage, expected) => {
+    const { p } = mkClassify({ answers: {}, usage });
+    expect((await p.classify!(req)).usage).toEqual(expected);
+  });
+
+  it('BENCH_CONTEXT_TOKENS: valid value is passed through', () => {
+    vi.stubEnv('BENCH_CONTEXT_TOKENS', '8192');
+    expect(createProvider(anth, vi.fn() as any).contextTokens).toBe(8192);
+  });
+  it('BENCH_CONTEXT_TOKENS: unset is undefined', () => {
+    vi.stubEnv('BENCH_CONTEXT_TOKENS', '');
+    delete process.env.BENCH_CONTEXT_TOKENS;
+    expect(createProvider(anth, vi.fn() as any).contextTokens).toBeUndefined();
+  });
+  it.each(['abc', '0', '-5'])('BENCH_CONTEXT_TOKENS=%s is ignored without throwing', (v) => {
+    vi.stubEnv('BENCH_CONTEXT_TOKENS', v);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(createProvider(anth, vi.fn() as any).contextTokens).toBeUndefined();
   });
 });
