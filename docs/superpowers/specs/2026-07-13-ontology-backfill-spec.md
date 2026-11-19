@@ -359,10 +359,12 @@ prompt export. Migration tests follow the existing migrations suite pattern
 
 ## Errata (2026-11-19 UTC — PR1 metering lane; Proposal A step 2)
 
-**Errata status: implemented by [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) — unshipped until merge.** The
-amendments below are unshipped until that PR merges. PR #428 carries both
-this errata and the implementation (one-PR lifecycle). The spec's
-`Implemented` status covers only the original spec and the PR #425 errata.
+**Errata status: implemented by [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) (merged); the early-probe amendment ("Early probe (metered)" below) is implemented by [PR #433](https://github.com/equationalapplications/expo-llm-wiki/pull/433).** The
+amendments below ship with PR #428 except the early-probe ordering, which
+ships with PR #433. PR #428 carries this errata and its implementation
+(one-PR lifecycle); PR #433 carries the probe change and the errata update.
+The spec's `Implemented` status covers only the original spec and the PR
+#425 errata.
 
 The accepted Proposal A migration lives in the EA Curated Thoughts vault —
 a records store outside this repo, so the path below does not resolve from
