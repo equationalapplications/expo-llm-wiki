@@ -145,7 +145,9 @@ describe('ops extract overflow retry', () => {
 
   it('the early probe is metered: an exhausted budget surfaces WikiBudgetExhausted at the first overflow, before any retry work', async () => {
     const meter = new UsageMeter(1_000_000);
+    let calls = 0;
     const { deps, ev } = await mk(async (p) => {
+      calls++;
       if (p.userPrompt.includes('POISON')) { meter.used = 1_000_000; throw tooLong(); }
       return JSON.stringify({ facts: [], tasks: [] });
     });
@@ -153,12 +155,15 @@ describe('ops extract overflow retry', () => {
     const ctx: any = { entityId: 'u', trigger: 'call', meter };
     const sel: any = await selectBatch(deps, 'u', null);
     await expect(runExtract(deps, ctx, sel.batch ?? sel)).rejects.toThrow(WikiBudgetExhausted);
+    expect(calls).toBe(1); // initial extractOnce only — the budget-killed probe never reaches the provider
   });
 
   it('the early probe runs exactly once per run across the whole retry tree', async () => {
     let probeCalls = 0;
     const { deps, ev } = await mk(async (p) => {
       // The probe is the lone event with summary 'x'; every other multi-event call overflows.
+      // Line format pinned by PromptService.buildOpsExtractPrompt (PromptService.ts:384):
+      // `${label} [ISO] (event_type) ${summary}`.
       if (/^e\d+ \[[^\]]*\] \(\w+\) x$/m.test(p.userPrompt)) {
         probeCalls++;
         return JSON.stringify({ facts: [], tasks: [] });

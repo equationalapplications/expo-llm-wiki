@@ -359,7 +359,7 @@ prompt export. Migration tests follow the existing migrations suite pattern
 
 ## Errata (2026-11-19 UTC — PR1 metering lane; Proposal A step 2)
 
-**Errata status: implemented by [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) (merged); the early-probe amendment ("Early probe (metered)" below) is implemented by [PR #433](https://github.com/equationalapplications/expo-llm-wiki/pull/433).** The
+**Errata status: implemented by [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) (merged); the early-probe amendment ("Early probe (metered)" below) is implemented by [PR #433](https://github.com/equationalapplications/expo-llm-wiki/pull/433) — unshipped until that PR merges.** The
 amendments below ship with PR #428 except the early-probe ordering, which
 ships with PR #433. PR #428 carries this errata and its implementation
 (one-PR lifecycle); PR #433 carries the probe change and the errata update.
@@ -447,8 +447,10 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   two calls, not several hundred (resolves issue
   [#429](https://github.com/equationalapplications/expo-llm-wiki/issues/429);
   replaces the former all-skipped unmetered probe and its accepted deferral —
-  Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19). Meter exhaustion on
-  the probe surfaces as a `budgetStop` upstream, never a cooldown stamp.
+  Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19). The probe's own
+  output tokens are metered content spend like any model reply. Meter
+  exhaustion on the probe surfaces as a `budgetStop` upstream, never a
+  cooldown stamp.
 - **`skipped` count:** the classifier return's `skipped` count deliberately
   mixes stamped `overflow_skip` facts (retried next pass) with unstamped
   `threw` facts (not retried this lane), per the `types.ts` doc comment.
