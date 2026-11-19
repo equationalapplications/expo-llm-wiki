@@ -287,8 +287,11 @@ describe('PromptService', () => {
     });
 
     it('an oversized first title is skipped, never restated as "no typed nodes" (Opus r3 M1)', () => {
+      // 'A…' sorts FIRST in UTF-16 order — this exercises the oversized line
+      // before anything is listed (the delta re-review caught the old test
+      // using 'X…', which sorted second and passed under the old break code).
       const rows = [
-        { title: 'X'.repeat(9000), okf_type: 'area' as const },
+        { title: 'A'.repeat(9000), okf_type: 'area' as const },
         { title: 'Real Node', okf_type: 'organization' as const },
       ];
       const block = buildTitleCatalogBlock(rows);
@@ -296,6 +299,18 @@ describe('PromptService', () => {
       expect(block).not.toContain('no typed nodes yet');
       expect(block).toContain('- "Real Node" (organization)');
       expect(block.length).toBeLessThan(9000);
+    });
+
+    it('an oversized title between two short ones does not hide later short titles (haiku delta residual)', () => {
+      const rows = [
+        { title: 'Alpha', okf_type: 'area' as const },
+        { title: 'B'.repeat(9000), okf_type: 'area' as const },
+        { title: 'Gamma', okf_type: 'organization' as const },
+      ];
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('- "Alpha" (area)');
+      expect(block).toContain('- "Gamma" (organization)');
+      expect(block).not.toContain('no typed nodes yet');
     });
 
     it('caps the catalog by characters as well as entries (payload budget, sonnet N3)', () => {

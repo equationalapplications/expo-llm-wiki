@@ -100,13 +100,14 @@ export function buildTitleCatalogBlock(
   let used = 0;
   for (const r of typed) {
     const line = `- ${JSON.stringify(r.title)} (${r.okf_type})`;
-    // An oversized line is SKIPPED, not a break: stopping the loop here would
-    // leave the block empty while typed nodes exist, and the empty wording
-    // would then falsely claim there are no targets — the exact failure #381
-    // fixed, restated as fact (Opus r3 delta MAJOR 1).
-    if (listed.length > 0 && used + line.length + 1 > CHAR_BUDGET) break;
+    // Non-fitting lines are SKIPPED (continue), never a break: a break would
+    // hide every shorter title sorting after an oversized one, and stopping
+    // on the first line could empty the block while typed nodes exist — the
+    // empty wording would then falsely claim there are no targets (Opus r3
+    // delta M1 + haiku delta residual). Only the entry-count cap breaks.
     if (line.length + 1 > CHAR_BUDGET) continue;
     if (listed.length >= TITLE_CATALOG_MAX_ENTRIES) break;
+    if (used + line.length + 1 > CHAR_BUDGET) continue;
     listed.push(r);
     used += line.length + 1;
   }
