@@ -155,14 +155,17 @@ describe('ops extract overflow retry', () => {
     const ctx: any = { entityId: 'u', trigger: 'call', meter };
     const sel: any = await selectBatch(deps, 'u', null);
     await expect(runExtract(deps, ctx, sel.batch ?? sel)).rejects.toThrow(WikiBudgetExhausted);
-    expect(calls).toBe(1); // initial extractOnce only — the budget-killed probe never reaches the provider
+    // calls === 1 only because callLlm's PRE-CALL budget check (llmCall.ts) throws
+    // before reaching the provider; if that check ever moved after the provider call,
+    // calls would become 2 and this assertion would catch the move.
+    expect(calls).toBe(1);
   });
 
   it('the early probe runs exactly once per run across the whole retry tree', async () => {
     let probeCalls = 0;
     const { deps, ev } = await mk(async (p) => {
       // The probe is the lone event with summary 'x'; every other multi-event call overflows.
-      // Line format pinned by PromptService.buildOpsExtractPrompt (PromptService.ts:384):
+      // Line format pinned by PromptService.buildOpsExtractPrompt:
       // `${label} [ISO] (event_type) ${summary}`.
       if (/^e\d+ \[[^\]]*\] \(\w+\) x$/m.test(p.userPrompt)) {
         probeCalls++;
