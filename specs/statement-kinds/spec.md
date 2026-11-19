@@ -615,7 +615,8 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   each backfill call (previously only the batch's facts and the type
   manifest did) — surfaced to the owner with the PR; the catalog is
   bounded at 8k chars (~2k tokens) per call on top of the prior prompt,
-  cap ranking is alphabetical by title, truncation disclosed. OWNER
+  cap ranking is UTF-16 code-unit order (deterministic, not
+  locale-sensitive), truncation disclosed. OWNER
   RULING 2026-11-19 (Kurt, in-thread "Approved"): scope accepted as-is
   — all typed nodes, capped — as a TEMPORARY scope; the ctx-window
   consultation (records/investigations/2026-11-19-consult-ctx-windows-s1)

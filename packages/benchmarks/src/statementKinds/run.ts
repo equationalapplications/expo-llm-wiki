@@ -120,7 +120,7 @@ export interface RunStatementKindsOpts {
   fetchImpl?: FetchLike;
   /** Collected once per run by the caller and returned in the report's engine block. */
   engine: Awaited<ReturnType<typeof engineInfo>>;
-  /** Replaces the base classifier system prompt (ontology appendix still appended). */
+  /** Replaces the base classifier system prompt (the production title catalog and the ontology appendix are still appended by core). */
   promptOverride?: string;
   /** Free-form variant label recorded in the report for provenance (e.g. 'custom-override'). */
   variant?: string;

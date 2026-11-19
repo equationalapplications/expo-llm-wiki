@@ -612,9 +612,9 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   const variantArg = typeof variantFlag === 'string' ? variantFlag : undefined;
   let variant: { promptOverride: string } | undefined;
   if (variantArg !== undefined) {
-    // Object.hasOwn, not truthiness: a plain-object table returns inherited
-    // keys ('constructor', 'toString') truthily, which would skip the guard
-    // and spend a mislabelled paid run (T1.5 sonnet-xhigh rung N1).
+    // hasOwnProperty.call, not truthiness: a plain-object table returns
+    // inherited keys ('constructor', 'toString') truthily, which would skip
+    // the guard and spend a mislabelled paid run (T1.5 sonnet-xhigh rung N1).
     variant = Object.prototype.hasOwnProperty.call(ABOUT_EXPERIMENTS, variantArg) ? ABOUT_EXPERIMENTS[variantArg] : undefined;
     if (!variant) {
       stderr(`unknown --about-experiment variant: ${variantArg} (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ') || 'none'})` + '\n');

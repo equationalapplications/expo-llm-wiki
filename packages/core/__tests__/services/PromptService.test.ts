@@ -5,9 +5,9 @@ import {
   LIBRARIAN_SYSTEM_PROMPT,
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
+  buildTitleCatalogBlock,
 } from '../../src/prompts';
 import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
-import { buildTitleCatalogBlock } from '../../src/prompts';
 
 describe('PromptService', () => {
   describe('buildIngestPrompt', () => {

@@ -335,3 +335,24 @@ prompt export. Migration tests follow the existing migrations suite pattern
   needs one.
 - **Server-side extraction in host agents** (Option B from the Clanker
   investigation) — superseded by this library-level pass.
+
+## Errata (2026-11-19 — PR #425, issue #381)
+
+- **§4 signature amended:** `buildOntologyBackfillPrompt` now takes a fourth
+  parameter, `titleCatalog?: string`. When present (and the template carries
+  no `{{facts}}`/ontology placeholders), a TITLE CATALOG block is spliced
+  between the base prompt and the ontology appendix.
+- **§5 amended:** the title index is now read a **second** time per pass,
+  outside the transaction (`findTitleIndexByEntityId(entityId)`), to build
+  that catalog — resolution still reads it inside each batch's tx, so a node
+  deleted/retyped between the two reads makes a listed title unresolvable
+  (verifiable as of prompt-build time). The block is deduped last-wins on
+  `normalizeTitleKey`, capped at 200 entries and 8000 characters, sorted in
+  UTF-16 code-unit order, with truncation disclosed in-prompt.
+- **Data scope (owner-ruled):** typed node titles now leave the device to
+  the provider on each backfill call. Kurt ruled this acceptable 2026-11-19
+  as a temporary scope; the accepted ctx-window architecture (Proposal A,
+  records/investigations/2026-11-19-consult-ctx-windows-s1) narrows the
+  catalog to per-fact shortlist scope in a follow-up PR, superseding this.
+  Diagnosis and measured evidence live in `specs/statement-kinds/spec.md`
+  (Errata) — that spec's test-plan covers the generative path.
