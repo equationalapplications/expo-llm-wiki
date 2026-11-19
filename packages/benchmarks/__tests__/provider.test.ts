@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createProvider, endpointFromEnv } from '../src/provider';
 import { instrument, UsageRecorder, classifyCallSite } from '../src/instrument';
 
@@ -113,7 +113,17 @@ describe('instrument', () => {
     expect(classifyCallSite('Something else')).toBe('other');
   });
 });
+
 describe('classifier endpoint and context tokens (BENCH_CLASSIFIER_*, BENCH_CONTEXT_TOKENS)', () => {
+  beforeEach(() => {
+    // '' is falsy at the URL/KEY truthiness checks and falsy-checked CONTEXT parse,
+    // so those behave as unset; MODEL is read with ?? (nullish), so it must be
+    // DELETED, not blanked — vi.stubEnv(name, undefined) removes the variable.
+    vi.stubEnv('BENCH_CLASSIFIER_URL', '');
+    vi.stubEnv('BENCH_CLASSIFIER_KEY', '');
+    vi.stubEnv('BENCH_CONTEXT_TOKENS', '');
+    vi.stubEnv('BENCH_CLASSIFIER_MODEL', undefined as unknown as string);
+  });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
   const req: any = { state: 's', questions: [{ id: 'q1' }] };
   const mkClassify = (body: object, env: Record<string, string> = {}) => {
@@ -167,8 +177,6 @@ describe('classifier endpoint and context tokens (BENCH_CLASSIFIER_*, BENCH_CONT
     expect(createProvider(anth, vi.fn() as any).contextTokens).toBe(8192);
   });
   it('BENCH_CONTEXT_TOKENS: unset is undefined', () => {
-    vi.stubEnv('BENCH_CONTEXT_TOKENS', '');
-    delete process.env.BENCH_CONTEXT_TOKENS;
     expect(createProvider(anth, vi.fn() as any).contextTokens).toBeUndefined();
   });
   it.each(['abc', '0', '-5'])('BENCH_CONTEXT_TOKENS=%s is ignored without throwing', (v) => {

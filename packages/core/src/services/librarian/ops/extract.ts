@@ -194,9 +194,10 @@ async function extractWithOverflowRetry(
       const probePrompt = deps.promptService.buildOpsExtractPrompt(
         [{ ...batch[0], event: { ...batch[0].event, summary: 'x' } }], ontologyContext, ctx.guidance,
       );
-      // Unmetered on purpose: the probe is a window measurement, not content spend.
+      // Metered like every other model call (INTENT rule 7, one token budget):
+      // exhaustion throws WikiBudgetExhausted, which surfaces upstream as a budgetStop.
       try {
-        await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: undefined }, probePrompt);
+        await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: ctx.meter }, probePrompt);
       } catch (e) {
         if (!isContextOverflowError(e)) throw e;
         throw new Error('ops extract: minimal-prompt probe also overflowed (fixed prompt part exceeds the model window?)');
