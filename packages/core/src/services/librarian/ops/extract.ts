@@ -105,7 +105,10 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
     throw new Error('ops extract: merge corpus invariant violated (only one half has a grounding corpus)');
   }
   const partOffset = a.groundingCorpus?.length ?? a.batch.length;
-  const indexOffset = a.candidates.reduce((m, c) => Math.max(m, c.index + 1), 0);
+  // Candidates and fact_rejected diagnostics share the raw per-response fact-index
+  // space (both are indices into parsed.facts), and diagnostics are already shifted
+  // by a.factItems below — so b's candidates must shift by the same amount.
+  const indexOffset = a.factItems;
   const candidates = [
     ...a.candidates,
     ...b.candidates.map((c) => ({
