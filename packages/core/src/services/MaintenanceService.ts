@@ -2076,8 +2076,9 @@ export class MaintenanceService {
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
 
     // #381 fix: the classifier prompt gains the title catalog — the verifiable
-    // target pool of already-typed nodes (same index edge resolution uses, so
-    // every catalog title is resolvable by construction). NOTE (honesty): the
+    // target pool of already-typed nodes (same index and title normalization
+    // edge resolution uses; the block dedupes on the normalized key, so every
+    // distinct catalog entry resolves). NOTE (honesty): the
     // 0/28 → 28/28 E1 result measured a SEED-ONLY catalog variant via
     // runner-level promptOverride (results/statement-kinds-e1-title-catalog-
     // 2026-11-18.json); this shipped block covers all typed nodes and has not

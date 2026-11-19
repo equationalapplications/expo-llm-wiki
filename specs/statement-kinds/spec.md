@@ -602,4 +602,10 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   was the blocker, not a measured claim about the shipped prompt.
   Single run, single model, 28 rows — not a rate claim; second-model,
   larger-fixture, and shipped-prompt verification still owed per the
-  follow-up rule.
+  follow-up rule. The retired E1 variant is not re-runnable from HEAD
+  (the CLI rejects the name now that the fix ships in core); the
+  artifact plus harness commit `98ad68f1` are the record. Catalog scope
+  ruling: typed node titles now leave the device to the provider with
+  each backfill call (previously only the batch's facts and the type
+  manifest did) — surfaced to the owner with the PR; cap ranking is
+  alphabetical by title, truncation disclosed.

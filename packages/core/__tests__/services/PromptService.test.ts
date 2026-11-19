@@ -251,6 +251,17 @@ describe('PromptService', () => {
       expect(block).toContain('classified in this same response');
     });
 
+    it('dedupes titles that normalize to the same key (edge resolution is last-wins on the key)', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'orbit ', okf_type: 'software_application' },
+        { title: 'Deploy', okf_type: 'area' },
+      ]);
+      expect(block.match(/- "Orbit"/g)?.length).toBe(1);
+      expect(block).not.toContain('"orbit "');
+      expect(block).toContain('- "Deploy" (area)');
+    });
+
     it('escapes titles through JSON.stringify', () => {
       const block = buildTitleCatalogBlock([{ title: 'Weird "quoted" title', okf_type: 'area' }]);
       expect(block).toContain('- "Weird \\"quoted\\" title" (area)');

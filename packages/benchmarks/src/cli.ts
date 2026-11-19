@@ -601,12 +601,20 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   // (d56a70d5), so core now appends the production catalog to every run and
   // the variant would double-append. The machinery stays for future variants.
   const ABOUT_EXPERIMENTS: Record<string, { promptOverride: string }> = {};
-  const variantArg = typeof parsed.flags['about-experiment'] === 'string' ? parsed.flags['about-experiment'] : undefined;
+  // A valueless --about-experiment (parseArgs stores `true`) would otherwise
+  // skip the variant path entirely and spend a PAID run as an unlabeled
+  // baseline (T1.5 haiku-high rung finding 1).
+  const variantFlag = parsed.flags['about-experiment'];
+  if (variantFlag !== undefined && typeof variantFlag !== 'string') {
+    stderr(`--about-experiment requires a variant value (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ') || 'none'})\n`);
+    return { exitCode: 2 };
+  }
+  const variantArg = typeof variantFlag === 'string' ? variantFlag : undefined;
   let variant: { promptOverride: string } | undefined;
   if (variantArg !== undefined) {
     variant = ABOUT_EXPERIMENTS[variantArg];
     if (!variant) {
-      stderr(`unknown --about-experiment variant: ${variantArg} (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ')})` + '\n');
+      stderr(`unknown --about-experiment variant: ${variantArg} (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ') || 'none'})` + '\n');
       return { exitCode: 2 };
     }
   }

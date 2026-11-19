@@ -1,4 +1,5 @@
 import type { GroundingWriter, ResolvedGrounding } from './utils/grounding';
+import { normalizeTitleKey } from './utils/ontology';
 
 /**
  * Specs/librarian-guidance. The general leave-out rule, ruled by the
@@ -76,10 +77,20 @@ export const TITLE_CATALOG_MAX_ENTRIES = 200;
 export function buildTitleCatalogBlock(
   rows: ReadonlyArray<{ title: string; okf_type: string | null }>,
 ): string {
+  // Dedupe by normalized title key: edge resolution keys the index the same
+  // way (normalizeTitleKey, last-wins), so two nodes sharing a key would list
+  // two catalog lines while only one is resolvable (T1.5 finding 3).
+  const seen = new Set<string>();
   const typed = rows
     .filter((r) => typeof r.title === 'string' && r.title.length > 0 && typeof r.okf_type === 'string' && r.okf_type.length > 0)
-    // Code-point order, not localeCompare: the catalog bytes must be identical
-    // across runtimes/locales so prompts (and any cap boundary) are stable.
+    .filter((r) => {
+      const key = normalizeTitleKey(r.title);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    // UTF-16 code-unit order via `<` — deterministic across runtimes/locales
+    // (not locale-sensitive), so prompts (and any cap boundary) are stable.
     .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
   const truncated = typed.length > TITLE_CATALOG_MAX_ENTRIES;
   const listed = typed.slice(0, TITLE_CATALOG_MAX_ENTRIES);
