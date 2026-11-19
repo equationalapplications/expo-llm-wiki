@@ -52,6 +52,7 @@ const wiki = createWiki(db, {
 | `heal_skipped` | Heal skipped work |
 | `grounding_missing` / `grounding_failed` | [Grounding](/expo-llm-wiki/guides/drafts-and-grounding/#grounding) didn't pass |
 | `classification_low_confidence` / `classification_invalid` | A classifier backfill answer was rejected |
+| `context_overflow_skipped` | An item's prompt overflowed the model's context window and the item was skipped. Emitted by heal, generative ontology backfill, classifier backfill, and the ops librarian (extract and resolve). `detail` is `{ factId }` for a fact, `{ sourceRef }` for a librarian event, or `{ itemIndex }` for an ops-resolve candidate |
 | `librarian_gate` / `librarian_op_rejected` / `resolve_failed` / `contradicts_document` | Outcomes of the ops librarian |
 | `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one |
 | `source_pointer_invalid` | A dump import met a malformed source pointer value and stored a null pointer (OKF frontmatter reports malformed pointers differently: check `dropped_pointer_values` on the `parseOkfBundle` result) |

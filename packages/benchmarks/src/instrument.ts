@@ -1,12 +1,14 @@
-import type { ChatProvider, TextParams, TextWithUsage } from './provider';
+import { validUsage } from '@equationalapplications/core-llm-wiki';
+import type { ChatProvider, TextParams, TextWithUsage, ClassifyParams, ClassifyResult } from './provider';
 
 /** Minimal provider contract — `generateTextWithUsage` is optional. */
 export interface ProviderLike {
   generateText(p: TextParams): Promise<string>;
   generateTextWithUsage?(p: TextParams): Promise<TextWithUsage>;
+  classify?(p: ClassifyParams): Promise<ClassifyResult>;
 }
 
-export type CallSite = 'librarian' | 'extract' | 'resolve' | 'heal' | 'ingest' | 'ontology' | 'answer' | 'judge' | 'other';
+export type CallSite = 'librarian' | 'extract' | 'resolve' | 'heal' | 'ingest' | 'ontology' | 'answer' | 'judge' | 'classify' | 'other';
 
 export interface UsageRecord {
   calls: number;
@@ -22,7 +24,7 @@ export class UsageRecorder {
   private data: Record<CallSite, UsageRecord>;
 
   constructor() {
-    const sites: CallSite[] = ['librarian', 'extract', 'resolve', 'heal', 'ingest', 'ontology', 'answer', 'judge', 'other'];
+    const sites: CallSite[] = ['librarian', 'extract', 'resolve', 'heal', 'ingest', 'ontology', 'answer', 'judge', 'classify', 'other'];
     this.data = {} as Record<CallSite, UsageRecord>;
     for (const site of sites) {
       this.data[site] = { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCalls: 0, ms: 0 };
@@ -83,7 +85,7 @@ export function instrument(inner: ProviderLike, recorder: UsageRecorder, forcedS
     return forcedSite ?? classifyCallSite(p.systemPrompt);
   }
 
-  return {
+  const wrapped: ChatProvider = {
     async generateText(p: TextParams): Promise<string> {
       const start = Date.now();
       const text = await inner.generateText(p);
@@ -117,6 +119,24 @@ export function instrument(inner: ProviderLike, recorder: UsageRecorder, forcedS
       return result;
     },
   };
+
+  if (typeof inner.classify === 'function') {
+    wrapped.classify = async (p: ClassifyParams): Promise<ClassifyResult> => {
+      const start = Date.now();
+      const result = await inner.classify!(p);
+      const ms = Date.now() - start;
+      const reported = validUsage(result.usage);
+      const estimated = !reported;
+      const usage = reported ? result.usage! : {
+        // Same rule as callClassify: each part rounded separately, questions always counted.
+        inputTokens: Math.ceil(p.state.length / 4) + Math.ceil(JSON.stringify(p.questions).length / 4),
+        outputTokens: Math.ceil(JSON.stringify(result.answers ?? {}).length / 4),
+      };
+      recorder.record('classify', usage.inputTokens, usage.outputTokens, estimated, ms);
+      return result;
+    };
+  }
+  return wrapped;
 }
 
 export type { InstrumentOptions };

@@ -933,7 +933,7 @@ export class WikiMemory {
    */
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
   ): Promise<OntologyBackfillResult> {
     return this.maintenanceService.runOntologyBackfill(entityId, options);
   }

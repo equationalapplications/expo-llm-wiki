@@ -50,6 +50,53 @@ const TRUNCATION_PATTERNS: RegExp[] = [
 // being absorbed into a pile of skipped items.
 const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?limit/i;
 
+// Transient rate-limit wording (429 / tokens-per-minute quota / retry-after /
+// quota exceeded). A rate-limited call recovers by waiting, not by splitting
+// the batch or waiting out a cooldown, so it must never classify as overflow,
+// truncation, or a model-configuration error. Checked BEFORE
+// EXCEEDS_LIMIT_PATTERN, whose loose "exceeds ... limit" match would
+// otherwise swallow bodies like "Input exceeds the tokens-per-minute limit.
+// Please retry after 30 seconds." (CodeRabbit minor, PR #428).
+const RATE_LIMIT_PATTERN =
+  /\b(?:status|http|code|error)[^\d]{0,10}429\b|\b429[ _-]?too[ _-]?many[ _-]?requests\b|\b(rate[ _-]?limit|too many requests|(tokens?|requests?)[ _-]?per[ _-]?(minute|min)\b|retry[ _-]?after|quota exceeded)\b/i;
+
+// Input-overflow: the PROMPT (messages/state) exceeded the model's context
+// window. Distinct from TRUNCATION_PATTERNS (the model cut its OUTPUT short)
+// and from EXCEEDS_LIMIT_PATTERN (a request-config error: the caller asked
+// for more max_tokens than the model allows). Ordering with those two checks
+// is load-bearing — see runBatched's onFailure.
+const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
+  /maximum context length/i,
+  /context[_ ]?length[_ ]?exceeded/i,
+  /prompt is too long/i,
+  /input (token count|is too long)/i,
+  /exceeds? the (available )?context( size)?/i,
+  // Tail requires a context-window clause (context|maximum), NOT bare `token`:
+  // a 429 body like "input exceeds the tokens-per-minute limit" must NOT
+  // classify as input overflow (it would split the batch and stamp a cooldown).
+  /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|maximum)/i,
+  /context limit/i,
+  /too long for (the )?requested model/i,
+  // vLLM dual-match wording (errata E2 ruling): the regex ENFORCES the dual-match —
+  // "max_tokens ... too large" PLUS a context clause; a bare message is NOT overflow
+  /max[_ ]?tokens?.{0,40}too large.{0,80}context/i,
+];
+
+/**
+ * Whether a thrown error means the INPUT exceeded the model's context window.
+ * Must be checked BEFORE isTruncationError and isConfigError — OpenAI's
+ * blended message and vLLM's dual-match message intentionally classify as
+ * overflow (errata E2 rulings). Never throws.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const message = getErrorMessage(err);
+  if (message === undefined) return false;
+  // Rate-limit wording is transient and must never classify as overflow —
+  // see the invariant comment above RATE_LIMIT_PATTERN.
+  if (RATE_LIMIT_PATTERN.test(message)) return false;
+  return CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(message));
+}
+
 /**
  * Whether a thrown error looks like the provider cut the response short.
  *
@@ -78,6 +125,9 @@ function getErrorMessage(err: unknown): string | undefined {
 export function isTruncationError(err: unknown): boolean {
   const message = getErrorMessage(err);
   if (message === undefined) return false;
+  // Rate-limit wording (429 / tokens-per-minute) is transient and must never
+  // read as truncation either, so the item falls through to call_error.
+  if (RATE_LIMIT_PATTERN.test(message)) return false;
   if (EXCEEDS_LIMIT_PATTERN.test(message)) return false;
   return TRUNCATION_PATTERNS.some((pattern) => pattern.test(message));
 }
@@ -86,11 +136,13 @@ export function isTruncationError(err: unknown): boolean {
  * Whether a thrown error looks like a model-config error — the caller
  * requested more output than the model allows, and re-running it in the
  * next pass produces the same failure. Distinguished from transient
- * provider failures (`ECONNRESET`, auth blip, 5xx) so the cooldown-stamp
- * filter in `doRunHeal` / `doRunOntologyBackfill` does not exclude these
- * facts from eligibility: a model-config bug is the host's problem to
- * fix, and a fact that errored this way can recover only when the host
- * does, so the cooldown stamp is the right behavior.
+ * provider failures (`ECONNRESET`, auth blip, 5xx, 429 rate limits) so the
+ * cooldown-stamp filter in `doRunHeal` / `doRunOntologyBackfill` does not
+ * exclude these facts from eligibility: a model-config bug is the host's
+ * problem to fix, and a fact that errored this way can recover only when the
+ * host does, so the cooldown stamp is the right behavior. Rate-limit wording
+ * (429 / tokens-per-minute quota / retry-after) is transient and therefore
+ * NOT a config error — see RATE_LIMIT_PATTERN.
  *
  * Same Proxy-safety contract as `isTruncationError`: hostile
  * `getPrototypeOf` trap must not propagate out of this function.
@@ -98,6 +150,9 @@ export function isTruncationError(err: unknown): boolean {
 export function isConfigError(err: unknown): boolean {
   const message = getErrorMessage(err);
   if (message === undefined) return false;
+  // Rate-limit bodies mentioning "exceeds ... tokens-per-minute limit" would
+  // match EXCEEDS_LIMIT_PATTERN below; they are transient, so check first.
+  if (RATE_LIMIT_PATTERN.test(message)) return false;
   return EXCEEDS_LIMIT_PATTERN.test(message);
 }
 
@@ -132,6 +187,12 @@ export interface RunBatchedArgs<TItem, TResult> {
   maxOutputTokens?: number;
   /** Input bound, applied independently of output sizing. */
   maxPromptChars: number;
+  /**
+   * True when the caller's buildPrompt sheds context per attemptLevel, so
+   * escalating after an input-overflow error at size 1 can actually help.
+   * Default false: overflow at size 1 then skips as 'non_convergent'.
+   */
+  supportsEscalation?: boolean;
   /** Called once per skipped item, for operator-legible logging. */
   onSkip?: (item: TItem, err: unknown) => void;
 }
@@ -175,7 +236,7 @@ const promptLength = (prompts: BuiltPrompt): number =>
 export async function runBatched<TItem, TResult>(
   args: RunBatchedArgs<TItem, TResult>,
 ): Promise<RunBatchedOutcome<TItem, TResult>> {
-  const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip } = args;
+  const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip, supportsEscalation } = args;
 
   const results: TResult[] = [];
   const skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }> = [];
@@ -251,7 +312,7 @@ export async function runBatched<TItem, TResult>(
       // context-shedding (the JSON desync shape is the same at L1, L2, and L3);
       // escalating would burn three calls before reaching skip. The gate
       // prevents that.
-      if (fromCall && isTruncationError(err) && attemptLevel < 3) {
+      if (fromCall && (isContextOverflowError(err) ? supportsEscalation : isTruncationError(err)) && attemptLevel < 3) {
         // Bypass trim: its prebuilt prompt is the L0 form, invalid at the new
         // level. attempt() will call buildPrompt(batch, attemptLevel + 1) to
         // produce the level-appropriate prompt.
@@ -268,7 +329,9 @@ export async function runBatched<TItem, TResult>(
         // docs/superpowers/specs/2026-08-17-...-design.md §"Revision 1 —
         // call_error subreason".
         const reason: 'non_convergent' | 'call_error' =
-          fromCall && !isTruncationError(err) && !isConfigError(err) ? 'call_error' : 'non_convergent';
+          fromCall && !isTruncationError(err) && !isConfigError(err) && !isContextOverflowError(err)
+            ? 'call_error'
+            : 'non_convergent';
         skipped.push({ item: batch[0], reason });
         settled.add(batch[0]);
         onSkip?.(batch[0], err);
@@ -278,7 +341,7 @@ export async function runBatched<TItem, TResult>(
     // Non-truncation call errors at batch.length > 1 are real errors (network,
     // auth) and must propagate rather than silently split/skip the corpus.
     // Parse errors always split — the JSON may parse after shedding context.
-    if (fromCall && !isTruncationError(err)) throw err;
+    if (fromCall && !isTruncationError(err) && !isContextOverflowError(err)) throw err;
     // batch.length > 1: split path, unchanged. Sticky-down batchSize
     // adaptation and the inner trim/attempt loop at level 0 are preserved.
     const mid = Math.ceil(batch.length / 2);

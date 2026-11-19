@@ -65,6 +65,14 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   diagnostics.push(gateDiagnostic);
 
   const res = await runResolve(deps, ctx, gated.filter((g) => g.decision.kind === 'ambiguous'));
+  // Resolve reported overflow skips without emitting (so a budget stop can
+  // discard them with the pass buffer); buffer them BEFORE the budgetStop check.
+  for (const itemIndex of res.overflowSkipped) {
+    diagnostics.push({
+      entityId, operation: 'librarian', trigger, code: 'context_overflow_skipped',
+      detail: { itemIndex }, // (index into the merged extract batch)
+    });
+  }
   if (res.budgetStop) {
     diagnostics.discard();
     return { processedThrough: null, factsWritten: 0, budgetStop: res.budgetStop };
@@ -98,7 +106,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   }
   deps.searchService.evictCache(entityId);
 
-  const last = sel.batch[sel.batch.length - 1].event;
+  const last = ex.batch[ex.batch.length - 1].event;
   return {
     processedThrough: { at: last.created_at, id: last.id },
     factsWritten: written.length + updatedIds.length,

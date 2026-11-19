@@ -14,6 +14,7 @@ export { parseEmbedding } from './utils/embedding';
 export { validateManifest } from './utils/ontology';
 export { buildOntologyPromptAppendix } from './prompts/ontology';
 export { configureRandomSource } from './utils/ids';
+export { validUsage } from './utils/llmCall';
 export { chunkText, safeSlice } from './utils/pure';
 export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './utils/chunkingDefaults';
 export { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from './utils/embedDefaults';

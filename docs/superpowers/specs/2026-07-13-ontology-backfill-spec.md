@@ -356,3 +356,275 @@ prompt export. Migration tests follow the existing migrations suite pattern
   catalog to per-fact shortlist scope in a follow-up PR, superseding this.
   Diagnosis and measured evidence live in `specs/statement-kinds/spec.md`
   (Errata) — that spec's test-plan covers the generative path.
+
+## Errata (2026-11-19 UTC — PR1 metering lane; Proposal A step 2)
+
+**Errata status: implemented by [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) — unshipped until merge.** The
+amendments below are unshipped until that PR merges. PR #428 carries both
+this errata and the implementation (one-PR lifecycle). The spec's
+`Implemented` status covers only the original spec and the PR #425 errata.
+
+The accepted Proposal A migration lives in the EA Curated Thoughts vault —
+a records store outside this repo, so the path below does not resolve from
+the tree: `records/investigations/2026-11-19-consult-ctx-windows-s1/verdict-pass2-system-one.md`,
+§Migration step 2. That ruling requires a `fix:` PR first. This errata
+governs that PR. Four amendments follow. All file:line evidence below was
+re-verified against the tree at `ae52abbd` on 2026-11-19 (UTC).
+
+### E1. Classifier calls are metered
+
+**Problem (verified).** `_runClassifierBackfill` calls `provider.classify`
+directly (`packages/core/src/services/MaintenanceService.ts:2250`). This path
+sits outside `callLlm` (`packages/core/src/utils/llmCall.ts`), the only
+metered path. It records no usage and emits no `llm_usage` diagnostic.
+`ClassifyResponse` (`packages/core/src/types.ts:784-786`) has no field to
+carry usage. Provider-reported usage exists — Curated Thoughts' Jev fixture
+returns it (`curated-thoughts/src-tauri/src/inference/classifier.rs:750`).
+Rule 7 (INTENT): nothing spends the allowance invisibly.
+
+**Amendment.**
+
+- `ClassifyResponse` gains `usage?: { inputTokens: number; outputTokens: number }`.
+- `utils/llmCall.ts` gains one shared wrapper, `callClassify(options, ctx,
+  request): Promise<ClassifyResponse>`. It must wrap the `provider.classify`
+  call (not run after it): pre-flight the input estimate against the meter
+  the way `callLlm` does; make the call; record provider-reported usage when
+  present and well-formed (export `validUsage` — module-private in
+  `llmCall.ts` today — and reuse it; `callClassify` lives in the same
+  module, and E4's benchmark wrapper imports it from the package entry if
+  it needs it); estimate otherwise (input = chars/4 over state
+  plus instructions; output = chars/4 over the serialized answers); emit the
+  `llm_usage` diagnostic when `reportLlmUsage === true`, with the caller's
+  `WikiDiagnosticOperation` (the backfill site passes `'ontologyBackfill'`).
+  Every future `classify` call site must go through this wrapper.
+- **Meter plumbing (verified absent today):** `runOntologyBackfill` and
+  `doRunOntologyBackfill` take no meter, the generative backfill calls
+  `callLlm` with no meter (`MaintenanceService.ts:2113`), and the
+  maintenance scheduler never runs backfill (its job set is `librarian`,
+  `heal`, `reembed`, `externalDeletions`). So the public
+  `runOntologyBackfill` options gain `tokenBudget?: number`; the pass
+  builds `new UsageMeter(tokenBudget)` — the scheduler's per-run pattern
+  (`MaintenanceScheduler.ts:109`) — and threads it to both the classifier
+  wrapper and the generative `callLlm` call. No host-reachable budget
+  today means the budget-stop branch below is otherwise dead code.
+- **Budget-stop semantics (verified swallow today):** the per-fact
+  `try/catch` turns any throw into `classification_invalid` /
+  `classify_threw` (`MaintenanceService.ts:2248-2253`). A
+  `WikiBudgetExhausted` must NOT take that path. The stop must: halt new
+  classify launches and WAIT for every in-flight call to settle before the
+  write transaction runs; persist the settled outcomes — successes stamp
+  as today; a settled `WikiBudgetExhausted` joins the un-attempted set;
+  any other settled throw keeps today's `classify_threw` path — and leave
+  unlaunched facts unstamped, with no cooldown stamp and no
+  `classification_invalid` diagnostic. This matches the `runBatched`
+  contract, which keeps earlier results and surfaces un-attempted items
+  unskipped (`BoundedLlmCall.ts:323-330`). The halt is a shared stop flag
+  each task checks before calling `callClassify` — `withConcurrency`
+  itself takes plain task functions and has no cancel path, so it stays
+  unchanged. An un-attempted fact (unlaunched, or stopped by a settled
+  budget error) is excluded from `scanned` — the field counts facts sent
+  to the model — and stays in `remaining`, keeping the
+  `scanned − typed − failedValidation` arithmetic intact. The pass reports
+  the stop as
+  `budgetStop?: { requiredEstimate: number }` — a new field on
+  `OntologyBackfillResult` (`types.ts:129`), copying heal's field and
+  loop-guard doc comment (`types.ts:242`): a host loop runs while
+  `remaining > 0 && !budgetStop`, else a fixed budget never converges.
+  The generative path reports the same way: lift `runBatched`'s
+  `budgetStop` into `OntologyBackfillResult.budgetStop`, and never
+  cooldown-stamp `unattempted` facts.
+- **Overshoot honesty:** the pre-flight checks the input estimate only
+  (`llmCall.ts:29-31`); the meter records real input plus output
+  (`usage.ts:39`). Overshoot is therefore bounded only by in-flight
+  concurrency (`chunkConcurrency`), not by any estimate.
+- **Unmetered probe (sanctioned):** the all-skipped probe in `extract.ts` is a
+  deliberate unmetered minimal-window measurement; it emits no budget spend.
+- **Probe ordering (accepted deferral — issue [#429](https://github.com/equationalapplications/expo-llm-wiki/issues/429)):**
+  the probe runs only after the halving/segmentation retry tree is exhausted, so
+  a fixed-prompt overflow can spend several hundred metered failing calls
+  before the visible throw with the watermark held. The end state is correct,
+  so the early-probe ordering change is deferred to #429 rather than shipped
+  here (Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19).
+- **`skipped` count:** the classifier return's `skipped` count deliberately
+  mixes stamped `overflow_skip` facts (retried next pass) with unstamped
+  `threw` facts (not retried this lane), per the `types.ts` doc comment.
+
+### E2. Input-overflow errors are classified deterministically
+
+**Problem (verified).** `TRUNCATION_PATTERNS` and `EXCEEDS_LIMIT_PATTERN`
+(`packages/core/src/services/BoundedLlmCall.ts:37-51`) do not match common
+provider input-overflow phrasings ("prompt is too long", "maximum context
+length exceeded"). `runBatched` then treats such an error as a transient
+`call_error` at batch size 1 — no cooldown stamp, so the same oversized batch
+retries every pass — and throws it at batch size > 1, which kills the whole
+pass.
+
+**Amendment.**
+
+- `BoundedLlmCall.ts` gains `isContextOverflowError(err)` with a documented
+  pattern set. The overflow check must run before the truncation check and
+  the config check.
+- A corpus test must lock the patterns against real provider messages
+  (OpenAI/vLLM, Anthropic, llama.cpp, Gemini, Bedrock wording). The corpus
+  must lock two deliberate rulings:
+  - OpenAI's blended message — "maximum context length is N tokens.
+    However, you requested M tokens (A in the messages, B in the
+    completion)" — classifies as overflow: the overflow check runs first,
+    and shedding input context is the safe remedy.
+  - vLLM's dual-match message — "`max_tokens` … is too large … maximum
+    context length is N" — matches both a truncation pattern and the
+    overflow set, and its cause is really a config error. It classifies as
+    overflow anyway: the overflow check runs first, so the outcome is a
+    split or a cooldown skip, not propagation. Recorded as deliberate. The
+    regex enforces the dual-match: the bare `max_tokens is too large`
+    message (no context clause) is ruled NOT overflow and surfaces as a
+    config error.
+  - Anthropic's "input length and `max_tokens` exceed context limit"
+    message is a second deliberate dual-match ruling, same style as the
+    vLLM one: it matches both a truncation pattern and the overflow set,
+    and classifies as overflow because the overflow check runs first.
+- `runBatched` must treat overflow at batch size > 1 as a split trigger.
+  This needs three `onFailure` edits, all spelled out here:
+  - The escalation gate at `BoundedLlmCall.ts:254` becomes
+    `fromCall && (isContextOverflowError(err) ? supportsEscalation : isTruncationError(err)) && attemptLevel < 3`
+    — both existing guards stay. Dual-match messages skip after one call for
+    opted-out callers (overflow wins over truncation at the gate).
+  - The give-up reason at `BoundedLlmCall.ts:271` must classify overflow as
+    `non_convergent` at every ladder level — today's expression
+    (`!isTruncationError && !isConfigError` → `call_error`) would stamp no
+    cooldown and retry the identical overflow every pass.
+  - The re-throw at `BoundedLlmCall.ts:281` must exempt overflow, or the
+    split path never runs.
+- **Escalation is gated (verified dead today for two of three callers):**
+  only heal's `buildPrompt` sheds context per ladder level
+  (`MaintenanceService.ts:1773`); ontology backfill and ops resolve pass
+  `buildPrompt` functions that ignore `attemptLevel`, so escalating them
+  re-sends a byte-identical prompt and overflows again. `RunBatchedArgs`
+  gains `supportsEscalation?: boolean`. Overflow at batch size 1 escalates
+  the ladder only when the caller opts in (heal does); otherwise it skips
+  immediately as `non_convergent` with the cooldown stamp and a new
+  diagnostic code, `context_overflow_skipped` — a new member of the
+  `WikiDiagnosticCode` union (`packages/core/src/types.ts:866`; the
+  `skipped[].reason` value stays `'non_convergent'` — the skip-reason
+  unions at `types.ts:212` and `BoundedLlmCall.ts:151` are a different
+  type and gain nothing). Existing
+  truncation escalation is unchanged (compat lock).
+- Behavior change, accepted with Proposal A: an overflow skip now takes the
+  cooldown stamp. Today's `call_error` skip does not.
+
+### E3. Ops-extract overflow cannot stall the librarian
+
+**Problem (verified).** An overflow inside `runExtract` throws and keeps the
+watermark (`packages/core/src/services/librarian/ops/index.ts:46-53`). Every
+later pass re-sends the same oversized batch. The librarian never advances.
+
+**Amendment (consult §4).**
+
+- New overflow-driven retry logic must wrap the extract call. The existing
+  halving loop at `ops/extract.ts:60-66` is a pre-flight estimator — it runs
+  only when a meter budget is set and never catches errors — so the retry
+  must be new code around `runExtract` (or in `ops/index.ts:46-53`) and
+  must halve the batch on an overflow-shaped error independent of
+  `meter.budget`.
+- **Watermark follows the batch actually extracted.** The pass advances the
+  watermark from the extracted outcome's batch (`ex.batch`), not from
+  `sel.batch` (`ops/index.ts:101` today) — events in a dropped half are
+  otherwise skipped silently, which breaks conservation.
+- **Segmented events are all-or-nothing.** A lone oversized event splits
+  into labeled segments (`e1#1`, `e1#2`, …) extracted in separate calls —
+  one call holding all segments would overflow again. Either every segment
+  extracts, or the event is skipped with `context_overflow_skipped` and the
+  watermark advances — deterministic overflow is not a budget stop; the hold
+  result remains reserved for `WikiBudgetExhausted`. A segment-label → event-id map must
+  back the `byLabel` lookup that resolves `source_event` (`extract.ts:80`,
+  `:107-110`), and the grounding corpus must map each segment to its
+  corpus part.
+- **Resolve overflow needs no new work:** E2 already covers it — resolve is
+  an opted-out `runBatched` caller, so an overflow splits at batch size
+  > 1 and skips as `non_convergent` with the cooldown stamp at size 1. No
+  stall, no new code.
+- Conservation: every event must end up extracted, budget-stopped, or
+  skipped with a diagnostic. None may disappear. When the pass cannot
+  extract ANY event — the fixed prompt part (ontology context, guidance)
+  alone overflows the window — the pass throws visibly and holds the
+  watermark: a config-shaped failure must surface, not silently drain the log.
+
+### E4. Benchmarks can see classifier calls
+
+**Problem (verified).** The `CallSite` union
+(`packages/benchmarks/src/instrument.ts:9`) has no `classify` entry, and the
+recorder would stay at zero even with one: `instrument()` only wraps
+`generateText` and `generateTextWithUsage` and buckets them by system-prompt
+regex (`instrument.ts:4-7`, `:56-61`, `:81-119`) — `provider.classify` has
+no system prompt and never reaches a bucket. System One cost and latency
+would read as zero, which looks like a measurement. Rule 11 (INTENT) bars
+claims until measurement exists.
+
+**Amendment.**
+
+- Add `'classify'` to the `CallSite` union and to the recorder's site list,
+  plus every exhaustive consumer (verified: `report.ts:95`,
+  `longmemeval/run.ts:188-189`; `compare.ts` iterates keys and needs no
+  edit; `promptVolume.ts` uses a `Partial` record and needs no edit).
+- `instrument()` must wrap `classify` when the provider has one: time the
+  call, record it under `'classify'`, use `response.usage` when valid, and
+  fall back to the same estimate rule as E1. A test must prove the
+  `'classify'` bucket is non-zero with a classifier present.
+- The benchmark provider gains an optional classifier endpoint, configured
+  by `BENCH_CLASSIFIER_URL`, `BENCH_CLASSIFIER_MODEL` and
+  `BENCH_CLASSIFIER_KEY` (its own key; when unset, no Authorization
+  header is sent). The scripted
+  provider used by tests (`scriptedProvider.ts`, which keys on the system
+  prompt today) must gain a `classify` stub so the non-zero-bucket test
+  needs no real endpoint.
+- Add a `BENCH_CONTEXT_TOKENS` passthrough so a runner can simulate a small
+  window.
+
+### Test plan (delta)
+
+- Metering: provider-reported usage wins; the fallback estimate applies when
+  usage is absent; the meter debits; the diagnostic emits under
+  `reportLlmUsage` with operation `'ontologyBackfill'`; a pass with no
+  `tokenBudget` still emits estimates and records usage without a cap.
+- Budget stop: `WikiBudgetExhausted` at the classify site halts new
+  launches and waits for in-flight calls to settle. Two tests: (a) a stub
+  throws `WikiBudgetExhausted` on call 2 (injected, NOT meter-driven —
+  with concurrency 4 every task pre-flights the same meter state before
+  any records, so a real meter cannot produce this shape) with
+  concurrency 4 — calls 1, 3, and 4 all settle and persist; (b) a real
+  meter with a pinned budget (concretely: the full request estimate —
+  state plus instructions — of the smallest fact's call) and differing
+  input sizes per fact, where later
+  pre-flights fail `fits()` and land unattempted. Both: completed
+  outcomes persist (stamped), unlaunched facts
+  unstamped, `budgetStop` set on `OntologyBackfillResult` — no
+  `classification_invalid` diagnostic, no cooldown on unattempted facts,
+  unattempted facts excluded from `scanned` and still counted in
+  `remaining`. A host loop `while (remaining > 0 && !budgetStop)`
+  terminates. The generative path
+  gets the same coverage: `runBatched`'s `budgetStop` and `unattempted`
+  lift into `OntologyBackfillResult` with no cooldown stamps.
+- Overflow corpus: each corpus message classifies as overflow, and as
+  neither truncation nor config error; the blended OpenAI message and the
+  vLLM dual-match message classify as overflow.
+- `runBatched`: overflow at batch size > 1 splits (the `:281` re-throw
+  exempts overflow); overflow at batch size 1 escalates only for an opt-in
+  caller and lands `non_convergent` with the cooldown stamp at every level
+  including L3 give-up (`:271` covers overflow); opted-out callers skip
+  immediately with the `context_overflow_skipped` diagnostic; no infinite
+  retry; truncation behavior unchanged.
+- Ops extract: an overflowing batch halves without a meter budget; the
+  watermark advances to the batch actually extracted; a lone oversized
+  event segments all-or-nothing and the label map resolves `source_event`;
+  conservation holds.
+- Benchmarks: the `'classify'` bucket records non-zero calls, tokens, and
+  ms with a classifier present.
+- When no overflow occurs, existing prompt snapshots stay byte-identical
+  (REQ-COMPAT lock).
+
+### Out of scope
+
+- Ingest chunk re-splitting (Proposal A PR7, `context.budget`).
+- `contextWindowTokens`, `classifyLimits`, and the `systemOne.*` config
+  surface (Proposal A PR2 and later).
+- Curated Thoughts Rust changes (`classifier.rs`) — CT owns them.

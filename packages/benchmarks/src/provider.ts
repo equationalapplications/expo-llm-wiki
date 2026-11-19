@@ -13,6 +13,8 @@
  * include the API key in the error message.
  */
 
+import { validUsage, type ClassifyRequest } from '@equationalapplications/core-llm-wiki';
+
 export interface ChatEndpoint {
   protocol: 'anthropic' | 'openai';
   baseUrl: string;
@@ -30,9 +32,19 @@ export interface TextWithUsage {
   usage?: { inputTokens: number; outputTokens: number };
 }
 
+export type ClassifyParams = ClassifyRequest;
+
+export interface ClassifyResult {
+  answers: Record<string, unknown>;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
 export interface ChatProvider {
   generateText(p: TextParams): Promise<string>;
   generateTextWithUsage(p: TextParams): Promise<TextWithUsage>;
+  classify?(p: ClassifyParams): Promise<ClassifyResult>;
+  /** Passthrough of BENCH_CONTEXT_TOKENS for later lane PRs; nothing else consumes it yet. */
+  contextTokens?: number;
 }
 
 type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<Response>;
@@ -187,8 +199,53 @@ function openaiProvider(ep: ChatEndpoint, fetchImpl: FetchLike): ChatProvider {
 }
 
 export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): ChatProvider {
-  if (ep.protocol === 'anthropic') return anthropicProvider(ep, fetchImpl);
-  return openaiProvider(ep, fetchImpl);
+  const provider = ep.protocol === 'anthropic' ? anthropicProvider(ep, fetchImpl) : openaiProvider(ep, fetchImpl);
+  const classifierUrl = process.env.BENCH_CLASSIFIER_URL;
+  if (classifierUrl) {
+    const model = process.env.BENCH_CLASSIFIER_MODEL ?? ep.model;
+    provider.classify = async (p: ClassifyParams): Promise<ClassifyResult> => {
+      // Contract: the endpoint receives the `ClassifyRequest` JSON (`{ state, questions, ... }`) as the
+      // request body (not a chat-completions body) plus `model`, and must return
+      // `{ answers: Record<string, ClassifierAnswer>, usage? }`.
+      const body = { ...p, model };
+      const classifierKey = process.env.BENCH_CLASSIFIER_KEY;
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (classifierKey) headers.authorization = `Bearer ${classifierKey}`;
+      const response = await sendWithRetry(
+        classifierUrl,
+        { method: 'POST', headers, body: JSON.stringify(body) },
+        fetchImpl,
+      );
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(errMessage(response.status, text));
+      }
+      // Contract: BENCH_CLASSIFIER_URL must return `{ answers: Record<string, unknown>, usage? }`
+      // (not a chat-completions body); anything else is an error, never an empty result.
+      const data = (await response.json()) as {
+        answers?: Record<string, unknown>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number; inputTokens?: number; outputTokens?: number };
+      };
+      if (!data || typeof data.answers !== 'object' || data.answers === null || Array.isArray(data.answers)) {
+        throw new Error('classifier endpoint response missing `answers` object (expected { answers, usage? })');
+      }
+      const u = data.usage;
+      // Both fields or nothing: a partial report is never zero-filled into a "measured" count.
+      const inTok = u?.inputTokens ?? u?.prompt_tokens;
+      const outTok = u?.outputTokens ?? u?.completion_tokens;
+      const candidate = inTok !== undefined && outTok !== undefined ? { inputTokens: inTok, outputTokens: outTok } : undefined;
+      const usage = validUsage(candidate) ? candidate : undefined;
+      return { answers: data.answers, usage };
+    };
+  }
+  // Passthrough read by later lane PRs; nothing else consumes it yet.
+  const rawCtx = process.env.BENCH_CONTEXT_TOKENS;
+  if (rawCtx) {
+    const n = Number(rawCtx);
+    if (Number.isFinite(n) && n > 0) provider.contextTokens = n;
+    else console.warn(`[benchmarks] ignoring BENCH_CONTEXT_TOKENS=${JSON.stringify(rawCtx)}: not a positive finite number`);
+  }
+  return provider;
 }
 
 // --------------------------------------------------------------------------

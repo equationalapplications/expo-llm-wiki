@@ -98,6 +98,30 @@ describe('runResolve', () => {
     expect(out.budgetStop).toBeUndefined();
   });
 
+  it('carries overflow-skipped candidate indexes on the outcome without emitting diagnostics directly', async () => {
+    const db = openTestDatabase();
+    const diags: any[] = [];
+    const generateText = vi.fn(async () => {
+      throw new Error("This model's maximum context length is 8192 tokens. However, you requested 10020 tokens.");
+    });
+    const wiki = new WikiMemory(db, {
+      llmProvider: { generateText },
+      onDiagnostic: (d: any) => diags.push(d),
+      config: { autoLibrarianThreshold: 1000 },
+    });
+    await wiki.setup();
+    const deps = (wiki.__testAccess.maintenanceService as any).librarianDeps();
+
+    const g = mkGated(mkCandidate(7, 'User moved to SF'), 'fact_item0', 'n1');
+    const out = await runResolve(deps, { entityId: 'u', trigger: 'call' }, [g]);
+
+    // The outcome reports the skipped candidate indexes; the pass-level
+    // DiagnosticBuffer in ops/index.ts owns emission (so a budget stop can
+    // discard them instead of re-emitting across passes).
+    expect(out.overflowSkipped).toEqual([7]);
+    expect(diags).toEqual([]);
+  });
+
   it('a tight meter sets budgetStop without calling the LLM', async () => {
     const db = openTestDatabase();
     const generateText = vi.fn(async () => JSON.stringify({ ops: [] }));

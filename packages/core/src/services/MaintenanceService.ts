@@ -17,7 +17,7 @@ import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
 import { removalGate, type VectorRemovalService } from './VectorRemovalService';
 import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, ClassifyResponse, OntologyManifest, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
 import { EdgeRepository } from '../repositories/EdgeRepository';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -29,13 +29,13 @@ import { CheckpointIncompleteError, entitySummaryMetaKey, START_OF_LOG_WATERMARK
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
-import { runBatched } from './BoundedLlmCall';
+import { runBatched, isContextOverflowError } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
 import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5LedgerDropSql, passageFtsTriggerNames } from './search/fts5Sql';
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
-import { callLlm } from '../utils/llmCall';
-import type { UsageMeter } from '../utils/usage';
+import { callLlm, callClassify } from '../utils/llmCall';
+import { WikiBudgetExhausted, UsageMeter } from '../utils/usage';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
@@ -1032,11 +1032,14 @@ export class MaintenanceService {
 
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
   ): Promise<OntologyBackfillResult> {
     this.jobManager.acquireLock('ontologyBackfill', entityId);
     try {
-      return await this.doRunOntologyBackfill(entityId, options);
+      return await this.doRunOntologyBackfill(entityId, {
+        ...options,
+        meter: new UsageMeter(options?.tokenBudget),
+      });
     } finally {
       this.jobManager.releaseLock('ontologyBackfill', entityId);
     }
@@ -1810,7 +1813,16 @@ export class MaintenanceService {
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      // heal's buildPrompt sheds anchors per attemptLevel — escalation is real (errata E2)
+      supportsEscalation: true,
       onSkip: (fact, err) => {
+        if (isContextOverflowError(err)) {
+          emitDiagnostic(this.options, {
+            entityId, operation: 'heal', trigger, code: 'context_overflow_skipped',
+            detail: { factId: fact.id },
+          });
+          return;
+        }
         console.warn(
           `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
@@ -2033,7 +2045,13 @@ export class MaintenanceService {
   /** Core ontology backfill pass (locks handled by {@link runOntologyBackfill}). Package-internal orchestration hook. */
   async doRunOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      classifier?: 'auto' | 'llm';
+      tokenBudget?: number;
+      meter?: UsageMeter;
+    },
   ): Promise<OntologyBackfillResult> {
     const batchSize = options?.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
     if (!Number.isInteger(batchSize) || batchSize < 1) {
@@ -2069,7 +2087,7 @@ export class MaintenanceService {
     if (classifierMode === 'auto' && typeof classify === 'function') {
       const slugs = effectiveManifest.node_types.map((n) => n.type);
       if (slugs.length > 0 && slugs.length <= 255) {
-        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff);
+        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter);
       }
     }
 
@@ -2110,7 +2128,7 @@ export class MaintenanceService {
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
       items: candidates,
       buildPrompt,
-      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call' }, prompts),
+      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call', meter: options?.meter }, prompts),
       parse: (responseText, batch) => {
         const parsed = parseJsonResponse<{
           classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
@@ -2125,6 +2143,13 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
+        if (isContextOverflowError(err)) {
+          emitDiagnostic(this.options, {
+            entityId, operation: 'ontologyBackfill', trigger: 'call', code: 'context_overflow_skipped',
+            detail: { factId: fact.id },
+          });
+          return;
+        }
         console.warn(
           `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
@@ -2169,6 +2194,7 @@ export class MaintenanceService {
         skipped: outcome.skipped.length,
         remaining: 0,
         deferred: counts.deferred,
+        ...(outcome.budgetStop ? { budgetStop: outcome.budgetStop } : {}),
       };
     }
 
@@ -2205,6 +2231,7 @@ export class MaintenanceService {
       skipped: outcome.skipped.length,
       remaining: counts.eligible,
       deferred: counts.deferred,
+      ...(outcome.budgetStop ? { budgetStop: outcome.budgetStop } : {}),
     };
   }
 
@@ -2220,9 +2247,8 @@ export class MaintenanceService {
     manifest: OntologyManifest,
     now: number,
     recheckCutoff: number,
+    meter?: UsageMeter,
   ): Promise<OntologyBackfillResult> {
-    // Call through the provider so a class-based provider keeps its `this`.
-    const provider = this.options.llmProvider;
     const rawMin = this.options.config?.ontology?.classifyMinConfidence;
     const minConfidence = typeof rawMin === 'number' && Number.isFinite(rawMin) && rawMin >= 0 && rawMin <= 1 ? rawMin : 0.5;
     const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
@@ -2241,14 +2267,27 @@ export class MaintenanceService {
       | { fact: WikiFact; kind: 'accepted'; okfType: string }
       | { fact: WikiFact; kind: 'low_confidence' }
       | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
-      | { fact: WikiFact; kind: 'threw' };
+      | { fact: WikiFact; kind: 'threw' }
+      | { fact: WikiFact; kind: 'overflow_skip' }
+      | { fact: WikiFact; kind: 'unattempted' };
 
+    let stopped: WikiBudgetExhausted | undefined;
     const outcomes = await withConcurrency<Outcome>(
       candidates.map((fact) => async (): Promise<Outcome> => {
-        let response: unknown;
+        if (stopped) return { fact, kind: 'unattempted' as const };
+        let response: ClassifyResponse;
         try {
-          response = await provider.classify!({ state: classifierStateForFact(fact), questions: { okf_type: question } });
-        } catch {
+          response = await callClassify(
+            this.options,
+            { operation: 'ontologyBackfill', entityId, trigger: 'call', meter },
+            { state: classifierStateForFact(fact), questions: { okf_type: question } },
+          );
+        } catch (err) {
+          if (err instanceof WikiBudgetExhausted) {
+            stopped ??= err;
+            return { fact, kind: 'unattempted' as const };
+          }
+          if (isContextOverflowError(err)) return { fact, kind: 'overflow_skip' };
           return { fact, kind: 'threw' };
         }
         const checked = validateClassifierAnswer(response, 'okf_type', question);
@@ -2261,8 +2300,12 @@ export class MaintenanceService {
     );
 
     // Thrown calls are transient (like `call_error`): no cooldown stamp.
-    const attempted = outcomes.filter((o) => o.kind !== 'threw').map((o) => o.fact);
-    const skipped = outcomes.length - attempted.length;
+    const attempted = outcomes.filter((o) => o.kind !== 'threw' && o.kind !== 'unattempted').map((o) => o.fact);
+    const unattemptedCount = outcomes.filter((o) => o.kind === 'unattempted').length;
+    // Overflow skips are deterministic, so they ARE stamped (in `attempted`;
+    // errata E2) to avoid re-paying for the same oversized fact every pass.
+    // Mixes unstamped `threw` (pre-existing) with stamped `overflow_skip` (this PR); the result-field doc's "stamped" wording covers the overflow kind only.
+    const skipped = outcomes.filter((o) => o.kind === 'threw' || o.kind === 'overflow_skip').length;
     const classifications = outcomes
       .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
       .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
@@ -2295,6 +2338,8 @@ export class MaintenanceService {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: o.reason } });
       } else if (o.kind === 'threw') {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
+      } else if (o.kind === 'overflow_skip') {
+        diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id } });
       }
     }
     // After the apply transaction committed (spec §4.2.4). Classifier answers
@@ -2305,17 +2350,18 @@ export class MaintenanceService {
     const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
     if (aborted) {
       // Mirrors the LLM path: nothing from the aborted batch was written; the host loop terminates.
-      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred };
+      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred, ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}) };
     }
     this.searchService.evictCache(entityId);
     return {
-      scanned: candidates.length,
+      scanned: candidates.length - unattemptedCount,
       typed,
       failedValidation,
       edgesAdded,
       skipped,
       remaining: counts.eligible,
       deferred: counts.deferred,
+      ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}),
     };
   }
 
