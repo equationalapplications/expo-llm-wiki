@@ -356,3 +356,112 @@ prompt export. Migration tests follow the existing migrations suite pattern
   catalog to per-fact shortlist scope in a follow-up PR, superseding this.
   Diagnosis and measured evidence live in `specs/statement-kinds/spec.md`
   (Errata) — that spec's test-plan covers the generative path.
+
+## Errata (2026-11-19 — PR1 metering lane; Proposal A step 2)
+
+The accepted Proposal A migration
+(`records/investigations/2026-11-19-consult-ctx-windows-s1/verdict-pass2-system-one.md`,
+§Migration step 2) requires a `fix:` PR first. This errata governs that PR.
+Four amendments follow. All file:line evidence below was re-verified against
+the tree at `ae52abbd` on 2026-11-19.
+
+### E1. Classifier calls are metered
+
+**Problem (verified).** `_runClassifierBackfill` calls `provider.classify`
+directly (`packages/core/src/services/MaintenanceService.ts:2250`). This path
+sits outside `callLlm` (`packages/core/src/utils/llmCall.ts`), the only
+metered path. It records no usage and emits no `llm_usage` diagnostic.
+`ClassifyResponse` (`packages/core/src/types.ts:784-786`) has no field to
+carry usage. Provider-reported usage exists — Curated Thoughts' Jev fixture
+returns it (`curated-thoughts/src-tauri/src/inference/classifier.rs:750`).
+Rule 7 (INTENT): nothing spends the allowance invisibly.
+
+**Amendment.**
+
+- `ClassifyResponse` gains `usage?: { inputTokens: number; outputTokens: number }`.
+- `utils/llmCall.ts` gains one shared helper, `recordClassifyUsage`. The
+  helper must: pre-flight the prompt estimate against the meter the way
+  `callLlm` does; record provider-reported usage when present and
+  well-formed; estimate otherwise (input = chars/4 over state plus
+  instructions; output = chars/4 over the serialized answers); emit the
+  `llm_usage` diagnostic when `reportLlmUsage === true`.
+- `_runClassifierBackfill` must receive the pass's meter and call the helper.
+- Every future `classify` call site must use the same helper.
+
+### E2. Input-overflow errors are classified deterministically
+
+**Problem (verified).** `TRUNCATION_PATTERNS` and `EXCEEDS_LIMIT_PATTERN`
+(`packages/core/src/services/BoundedLlmCall.ts:37-51`) do not match common
+provider input-overflow phrasings ("prompt is too long", "maximum context
+length exceeded"). `runBatched` then treats such an error as a transient
+`call_error` at batch size 1 — no cooldown stamp, so the same oversized batch
+retries every pass — and throws it at batch size > 1, which kills the whole
+pass.
+
+**Amendment.**
+
+- `BoundedLlmCall.ts` gains `isContextOverflowError(err)` with a documented
+  pattern set. The overflow check must run before the truncation check and
+  the config check.
+- A corpus test must lock the patterns against real provider messages
+  (OpenAI/vLLM, Anthropic, llama.cpp, Gemini, Bedrock wording).
+- `runBatched` must treat overflow at batch size > 1 as a split trigger, the
+  same as truncation.
+- `runBatched` must treat overflow at batch size 1 as ladder escalation while
+  ladder levels remain. An exhausted ladder skips the item as
+  `non_convergent` with the cooldown stamp and a distinct diagnostic.
+- Behavior change, accepted with Proposal A: an overflow skip now takes the
+  cooldown stamp. Today's `call_error` skip does not.
+
+### E3. Ops-extract overflow cannot stall the librarian
+
+**Problem (verified).** An overflow inside `runExtract` throws and keeps the
+watermark (`packages/core/src/services/librarian/ops/index.ts:46-53`). Every
+later pass re-sends the same oversized batch. The librarian never advances.
+
+**Amendment (consult §4).**
+
+- The extract batch-halving loop (`ops/extract.ts:60-66`) must also halve on
+  an overflow-shaped error.
+- A lone oversized event must split into labeled segments (`e1#1`, `e1#2`,
+  …) that map back to one event id. The grounding corpus must map each
+  segment to its corpus part.
+- Conservation: every event must end up extracted, budget-stopped, or
+  skipped with a diagnostic. None may disappear.
+
+### E4. Benchmarks can see classifier calls
+
+**Problem (verified).** The `CallSite` union
+(`packages/benchmarks/src/instrument.ts:9`) has no `classify` entry. System
+One cost and latency are unmeasurable. Rule 11 (INTENT) bars claims until
+measurement exists.
+
+**Amendment.**
+
+- Add `'classify'` to the `CallSite` union and to the recorder's site list.
+- The benchmark provider gains an optional classifier endpoint, configured
+  by `BENCH_CLASSIFIER_URL` and `BENCH_CLASSIFIER_MODEL`.
+- Add a `BENCH_CONTEXT_TOKENS` passthrough so a runner can simulate a small
+  window.
+
+### Test plan (delta)
+
+- Metering: provider-reported usage wins; the fallback estimate applies when
+  usage is absent; the meter debits; the diagnostic emits under
+  `reportLlmUsage`.
+- Overflow corpus: each corpus message classifies as overflow, and as
+  neither truncation nor config error.
+- `runBatched`: overflow at batch size > 1 splits; overflow at batch size 1
+  escalates the ladder, then skips with the cooldown stamp; no infinite
+  retry.
+- Ops extract: an overflowing batch halves; a lone oversized event
+  segments; the watermark advances; conservation holds.
+- When no overflow occurs, existing prompt snapshots stay byte-identical
+  (REQ-COMPAT lock).
+
+### Out of scope
+
+- Ingest chunk re-splitting (Proposal A PR7, `context.budget`).
+- `contextWindowTokens`, `classifyLimits`, and the `systemOne.*` config
+  surface (Proposal A PR2 and later).
+- Curated Thoughts Rust changes (`classifier.rs`) — CT owns them.
