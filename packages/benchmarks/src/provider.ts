@@ -205,9 +205,12 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
     const model = process.env.BENCH_CLASSIFIER_MODEL ?? ep.model;
     provider.classify = async (p: ClassifyParams): Promise<ClassifyResult> => {
       const body = { model, temperature: 0, messages: [{ role: 'user', content: JSON.stringify(p) }] };
+      const classifierKey = process.env.BENCH_CLASSIFIER_KEY;
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (classifierKey) headers.authorization = `Bearer ${classifierKey}`;
       const response = await sendWithRetry(
         classifierUrl,
-        { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.apiKey}` }, body: JSON.stringify(body) },
+        { method: 'POST', headers, body: JSON.stringify(body) },
         fetchImpl,
       );
       if (!response.ok) {
@@ -220,18 +223,23 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
         answers?: Record<string, unknown>;
         usage?: { prompt_tokens?: number; completion_tokens?: number; inputTokens?: number; outputTokens?: number };
       };
+      if (!data || typeof data.answers !== 'object' || data.answers === null || Array.isArray(data.answers)) {
+        throw new Error('classifier endpoint response missing `answers` object (expected { answers, usage? })');
+      }
       const u = data.usage;
       const usage = u
         ? { inputTokens: u.inputTokens ?? u.prompt_tokens ?? 0, outputTokens: u.outputTokens ?? u.completion_tokens ?? 0 }
         : undefined;
-      if (!data || typeof data.answers !== 'object' || data.answers === null || Array.isArray(data.answers)) {
-        throw new Error('classifier endpoint response missing `answers` object (expected { answers, usage? })');
-      }
       return { answers: data.answers, usage };
     };
   }
   // Passthrough read by later lane PRs; nothing else consumes it yet.
-  if (process.env.BENCH_CONTEXT_TOKENS) provider.contextTokens = Number(process.env.BENCH_CONTEXT_TOKENS);
+  const rawCtx = process.env.BENCH_CONTEXT_TOKENS;
+  if (rawCtx) {
+    const n = Number(rawCtx);
+    if (Number.isFinite(n) && n > 0) provider.contextTokens = n;
+    else console.warn(`[benchmarks] ignoring BENCH_CONTEXT_TOKENS=${JSON.stringify(rawCtx)}: not a positive finite number`);
+  }
   return provider;
 }
 

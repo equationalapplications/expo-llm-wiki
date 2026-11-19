@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isContextOverflowError } from '../../src/services/BoundedLlmCall';
+import { isConfigError, isContextOverflowError, isTruncationError } from '../../src/services/BoundedLlmCall';
 
 // Real provider messages. Each must classify as overflow and as NEITHER
 // truncation-shaped nor config-error-shaped by the pre-existing helpers.
@@ -37,6 +37,14 @@ describe('isContextOverflowError', () => {
   it('classifies every corpus overflow message as overflow', () => {
     for (const m of OVERFLOW_MESSAGES) {
       expect(isContextOverflowError(new Error(m)), m).toBe(true);
+    }
+  });
+  it('corpus overflow messages are neither truncation- nor config-error-shaped (except the vLLM dual-match)', () => {
+    for (const m of OVERFLOW_MESSAGES) {
+      // Deliberate dual-matches (mention max_tokens): overflow is checked first, so these classify as overflow.
+      if (m.startsWith('max_tokens is too large') || m.startsWith('input length and `max_tokens`')) continue;
+      expect(isTruncationError(new Error(m)), m).toBe(false);
+      expect(isConfigError(new Error(m)), m).toBe(false);
     }
   });
   it('rejects non-overflow errors', () => {

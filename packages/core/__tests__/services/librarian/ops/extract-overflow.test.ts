@@ -36,24 +36,39 @@ describe('ops extract overflow retry', () => {
   it('segments a lone oversized event into #1/#2 resolving to the same event id', async () => {
     const { deps, ev } = await mk(async (p) => {
       if (p.userPrompt.length > 3000) throw tooLong();
-      const label = /^(e\d+#\d) \[/m.exec(p.userPrompt)![1];
+      const label = /^(e\d+(?:#[\d.]+)?) \[/m.exec(p.userPrompt)![1];
       return JSON.stringify({ facts: [fact(`Fact from ${label} here`, label)], tasks: [] });
     });
-    await ev('evt_1', 10, 'word '.repeat(800));
+    // >2x the window: needs recursive halving (16000 chars -> 8 segments of ~2000)
+    await ev('evt_1', 10, 'word '.repeat(3200));
     const sel: any = await selectBatch(deps, 'u', null);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
-    expect(out.candidates.map((c) => c.sourceLabel)).toEqual(['e1#1', 'e1#2']);
-    expect(out.candidates.map((c) => c.sourceEventId)).toEqual(['evt_1', 'evt_1']);
+    expect(out.candidates.map((c) => c.sourceLabel)).toEqual([
+      'e1#1.1.1', 'e1#1.1.2', 'e1#1.2.1', 'e1#1.2.2', 'e1#2.1.1', 'e1#2.1.2', 'e1#2.2.1', 'e1#2.2.2',
+    ]);
+    expect(new Set(out.candidates.map((c) => c.sourceEventId))).toEqual(new Set(['evt_1']));
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1']);
   });
 
-  it('skips the event with a diagnostic and advances the watermark when a segment still overflows', async () => {
+  it('skips below the segment floor with a diagnostic, and the watermark still advances when other events were extracted', async () => {
     const diags: any[] = [];
-    const { wiki, ev } = await mk(async () => { throw tooLong(); }, (d) => diags.push(d));
-    await ev('evt_1', 10, 'word '.repeat(100));
+    const { wiki, ev } = await mk(async (p) => {
+      if (p.userPrompt.includes('POISON')) throw tooLong();
+      return JSON.stringify({ facts: labelsOf(p).map((l) => fact(`Fact from ${l} here`, l)), tasks: [] });
+    }, (d) => diags.push(d));
+    await ev('evt_1', 10, 'fine summary');
+    await ev('evt_2', 20, `POISON ${'word '.repeat(100)}`);
     await wiki.runLibrarian('u');
     expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(1);
-    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 10, id: 'evt_1' });
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 20, id: 'evt_2' });
+  });
+
+  it('throws and holds the watermark when the fixed prompt part alone overflows (every event skipped)', async () => {
+    const { wiki, ev } = await mk(async () => { throw tooLong(); });
+    await ev('evt_1', 10, 'word '.repeat(100));
+    await ev('evt_2', 20, 'other words');
+    await expect(wiki.runLibrarian('u')).rejects.toThrow(/skipped for context overflow/);
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
   });
 
   it('pass watermark follows the batch actually extracted', async () => {

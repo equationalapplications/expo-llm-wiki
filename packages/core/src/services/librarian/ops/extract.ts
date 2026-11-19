@@ -33,7 +33,15 @@ export interface ExtractOutcome {
   ontologyUpdates?: OntologyUpdates;
   groundingCorpus: string[] | null;
   diagnostics: WikiDiagnosticInput[];
+  /** Events in `batch` skipped for context overflow (nothing extracted from them). */
+  skippedEvents: number;
+  /** Raw fact / task item counts in the model response(s), for merged diagnostic itemIndex offsets. */
+  factItems: number;
+  taskItems: number;
 }
+
+/** Floor for recursive segmentation: a segment below this many chars is skipped, not split. */
+const MIN_SEGMENT_CHARS = 500;
 
 const estimatePrompt = (p: { systemPrompt: string; userPrompt: string }) =>
   estimateTokens(p.systemPrompt) + estimateTokens(p.userPrompt);
@@ -83,6 +91,11 @@ function splitSummary(summary: string): [string, string] {
   return [summary.slice(0, cut), summary.slice(cut)];
 }
 
+function dedupeByType<T extends { type: string }>(xs: T[]): T[] {
+  const seen = new Set<string>();
+  return xs.filter((x) => (seen.has(x.type) ? false : (seen.add(x.type), true)));
+}
+
 function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
   const partOffset = a.groundingCorpus?.length ?? a.batch.length;
   const indexOffset = a.candidates.reduce((m, c) => Math.max(m, c.index + 1), 0);
@@ -94,16 +107,31 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
       sourcePartIndex: c.sourcePartIndex === null ? null : c.sourcePartIndex + partOffset,
     })),
   ];
-  const ontologyUpdates = a.ontologyUpdates || b.ontologyUpdates
-    ? ({ ...(a.ontologyUpdates ?? {}), ...(b.ontologyUpdates ?? {}) } as OntologyUpdates)
-    : undefined;
+  let ontologyUpdates: OntologyUpdates | undefined;
+  if (a.ontologyUpdates || b.ontologyUpdates) {
+    const nodes = dedupeByType([...(a.ontologyUpdates?.node_types ?? []), ...(b.ontologyUpdates?.node_types ?? [])]);
+    const edges = dedupeByType([...(a.ontologyUpdates?.edge_types ?? []), ...(b.ontologyUpdates?.edge_types ?? [])]);
+    ontologyUpdates = {
+      ...(nodes.length ? { node_types: nodes } : {}),
+      ...(edges.length ? { edge_types: edges } : {}),
+    };
+  }
+  const shiftedDiags = b.diagnostics.map((d) => {
+    const detail = d.detail as { itemIndex?: number } | undefined;
+    if (typeof detail?.itemIndex !== 'number') return d;
+    const off = d.code === 'fact_rejected' ? a.factItems : d.code === 'task_rejected' ? a.taskItems : 0;
+    return off ? { ...d, detail: { ...detail, itemIndex: detail.itemIndex + off } } : d;
+  });
   return {
     batch: [...a.batch, ...b.batch],
     candidates,
     tasks: [...a.tasks, ...b.tasks],
     ...(ontologyUpdates ? { ontologyUpdates } : {}),
     groundingCorpus: a.groundingCorpus || b.groundingCorpus ? [...(a.groundingCorpus ?? []), ...(b.groundingCorpus ?? [])] : null,
-    diagnostics: [...a.diagnostics, ...b.diagnostics],
+    diagnostics: [...a.diagnostics, ...shiftedDiags],
+    skippedEvents: a.skippedEvents + b.skippedEvents,
+    factItems: a.factItems + b.factItems,
+    taskItems: a.taskItems + b.taskItems,
   };
 }
 
@@ -132,30 +160,49 @@ async function extractWithOverflowRetry(
       return mergeOutcomes(a, b);
     }
     const lone = batch[0];
-    const [h1, h2] = splitSummary(lone.event.summary);
-    const skipped = (): ExtractOutcome => ({
-      batch: [lone], candidates: [], tasks: [], groundingCorpus: null,
-      diagnostics: [{
-        entityId: ctx.entityId, operation: 'librarian', trigger: ctx.trigger,
-        code: 'context_overflow_skipped', detail: { sourceRef: lone.event.id },
-      }],
+    const skipDiag = (): WikiDiagnosticInput => ({
+      entityId: ctx.entityId, operation: 'librarian', trigger: ctx.trigger,
+      code: 'context_overflow_skipped', detail: { sourceRef: lone.event.id },
     });
-    if (h1.length === 0 || h2.length === 0) return skipped();
-    const seg = (n: number, text: string): LabeledEvent => ({ label: `${lone.label}#${n}`, at: lone.at, event: { ...lone.event, summary: text } });
-    try {
-      const a = await extractOnce(deps, ctx, ontologyContext, [seg(1, h1)]);
-      const b = await extractOnce(deps, ctx, ontologyContext, [seg(2, h2)]);
-      return { ...mergeOutcomes(a, b), batch: [lone] };
-    } catch (segErr) {
-      if (!isContextOverflowError(segErr)) throw segErr;
-      return skipped();
+    const segLabel = (label: string, n: number) => (label.includes('#') ? `${label}.${n}` : `${label}#${n}`);
+    let skippedSegments = 0;
+    // Returns null when the segment (and every sub-segment) was skipped.
+    const extractSegment = async (label: string, text: string, alreadyOverflowed: boolean): Promise<ExtractOutcome | null> => {
+      if (!alreadyOverflowed) {
+        try {
+          return await extractOnce(deps, ctx, ontologyContext, [{ label, at: lone.at, event: { ...lone.event, summary: text } }]);
+        } catch (e) {
+          if (!isContextOverflowError(e)) throw e;
+        }
+      }
+      if (text.length < 2 * MIN_SEGMENT_CHARS) { skippedSegments++; return null; }
+      const [h1, h2] = splitSummary(text);
+      if (h1.length < MIN_SEGMENT_CHARS || h2.length < MIN_SEGMENT_CHARS) { skippedSegments++; return null; }
+      const a = await extractSegment(segLabel(label, 1), h1, false);
+      const b = await extractSegment(segLabel(label, 2), h2, false);
+      if (!a || !b) return a ?? b;
+      return mergeOutcomes(a, b);
+    };
+    const merged = await extractSegment(lone.label, lone.event.summary, true);
+    if (!merged) {
+      return {
+        batch: [lone], candidates: [], tasks: [], groundingCorpus: null, diagnostics: [skipDiag()],
+        skippedEvents: 1, factItems: 0, taskItems: 0,
+      };
     }
+    return { ...merged, batch: [lone], diagnostics: [...merged.diagnostics, ...Array.from({ length: skippedSegments }, skipDiag)] };
   }
 }
 
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
-  return extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
+  const out = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
+  if (out.skippedEvents > 0 && out.skippedEvents === out.batch.length) {
+    // Nothing extractable: the fixed prompt part (ontology context, guidance) alone
+    // overflows the window. Surface it and hold the watermark rather than drain the log.
+    throw new Error(`ops extract: all ${out.skippedEvents} selected events were skipped for context overflow (fixed prompt part exceeds the model window?)`);
+  }
+  return out;
 }
 
 async function extractOnce(deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[]): Promise<ExtractOutcome> {
@@ -220,5 +267,8 @@ async function extractOnce(deps: LibrarianDeps, ctx: LibrarianPassContext, ontol
     ...(parsed.ontology_updates ? { ontologyUpdates: parsed.ontology_updates } : {}),
     groundingCorpus: prompt.groundingCorpus ?? null,
     diagnostics,
+    skippedEvents: 0,
+    factItems: Array.isArray(parsed.facts) ? parsed.facts.length : 0,
+    taskItems: Array.isArray(parsed.tasks) ? parsed.tasks.length : 0,
   };
 }

@@ -2338,7 +2338,6 @@ export class MaintenanceService {
       } else if (o.kind === 'threw') {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
       } else if (o.kind === 'overflow_skip') {
-        diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
         diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id } });
       }
     }

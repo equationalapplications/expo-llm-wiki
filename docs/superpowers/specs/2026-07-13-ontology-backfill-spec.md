@@ -524,7 +524,10 @@ later pass re-sends the same oversized batch. The librarian never advances.
   > 1 and skips as `non_convergent` with the cooldown stamp at size 1. No
   stall, no new code.
 - Conservation: every event must end up extracted, budget-stopped, or
-  skipped with a diagnostic. None may disappear.
+  skipped with a diagnostic. None may disappear. When the pass cannot
+  extract ANY event — the fixed prompt part (ontology context, guidance)
+  alone overflows the window — the pass throws visibly and holds the
+  watermark: a config-shaped failure must surface, not silently drain the log.
 
 ### E4. Benchmarks can see classifier calls
 
