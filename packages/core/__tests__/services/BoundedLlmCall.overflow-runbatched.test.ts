@@ -95,4 +95,14 @@ describe('runBatched overflow', () => {
     expect(outcome.results).toEqual([]);
     expect(outcome.skipped).toEqual([{ item: 7, reason: 'non_convergent' }]);
   });
+
+  it('singleton batch, rate-limit wording skips as transient call_error (not non_convergent cooldown)', async () => {
+    const rateLimitErr = new Error('Input exceeds the tokens-per-minute limit. Please retry after 30 seconds.');
+    const outcome = await runBatched<number, number[]>(makeArgs({
+      items: [7],
+      call: async () => { throw rateLimitErr; },
+    }));
+    expect(outcome.results).toEqual([]);
+    expect(outcome.skipped).toEqual([{ item: 7, reason: 'call_error' }]);
+  });
 });

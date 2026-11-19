@@ -66,3 +66,17 @@ describe('isContextOverflowError', () => {
     expect(isContextOverflowError('maximum context length exceeded')).toBe(true);
   });
 });
+
+describe('rate-limit wording is transient (CodeRabbit minor, PR #428)', () => {
+  // The two 429 bodies in NOT_OVERFLOW must fall through to call_error: they
+  // are neither truncation- nor config-error-shaped, or runBatched would stamp
+  // a cooldown on a transient rate limit.
+  for (const [label, m] of NOT_OVERFLOW.filter(([l]) => l.startsWith('429'))) {
+    it(`isTruncationError is false for: ${label}`, () => {
+      expect(isTruncationError(new Error(m)), m).toBe(false);
+    });
+    it(`isConfigError is false for: ${label}`, () => {
+      expect(isConfigError(new Error(m)), m).toBe(false);
+    });
+  }
+});
