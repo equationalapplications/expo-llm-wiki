@@ -1,7 +1,6 @@
 import { callLlm } from '../../../utils/llmCall';
 import { clip, parseJsonResponse, safeSlice } from '../../../utils/pure';
 import { runBatched, isContextOverflowError } from '../../BoundedLlmCall';
-import { emitDiagnostic } from '../../../utils/diagnostics';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import type { GatedCandidate } from './gate';
 import { OPS_NEIGHBOUR_BODY_CHARS, parseValidFrom } from './text';
@@ -18,6 +17,8 @@ export interface ResolveOutcome {
   ops: Map<GatedCandidate, ResolvedOp>;
   rejected: GatedCandidate[];
   failed: GatedCandidate[];
+  /** Merged-extract batch indexes of candidates skipped for context overflow; the pass-level DiagnosticBuffer owns their emission. */
+  overflowSkipped: number[];
   budgetStop?: { requiredEstimate: number };
 }
 
@@ -70,7 +71,7 @@ export async function runResolve(
   ctx: LibrarianPassContext,
   ambiguous: GatedCandidate[],
 ): Promise<ResolveOutcome> {
-  const out: ResolveOutcome = { ops: new Map(), rejected: [], failed: [] };
+  const out: ResolveOutcome = { ops: new Map(), rejected: [], failed: [], overflowSkipped: [] };
   if (ambiguous.length === 0) return out;
   const { entityId, trigger } = ctx;
 
@@ -95,12 +96,10 @@ export async function runResolve(
       return { batch, ops: parsed.ops };
     },
     onSkip: (g, err) => {
-      if (isContextOverflowError(err)) {
-        emitDiagnostic(deps.options, {
-          entityId, operation: 'librarian', trigger, code: 'context_overflow_skipped',
-          detail: { itemIndex: g.candidate.index }, // (index into the merged extract batch)
-        });
-      }
+      // No direct emission: the pass-level DiagnosticBuffer in ops/index.ts
+      // pushes these so a budget stop discards them with the pass instead of
+      // re-emitting the same diagnostic on the next pass.
+      if (isContextOverflowError(err)) out.overflowSkipped.push(g.candidate.index);
     },
     maxPromptChars: OPS_RESOLVE_MAX_PROMPT_CHARS,
     maxOutputTokens: deps.options.llmProvider.maxOutputTokens,

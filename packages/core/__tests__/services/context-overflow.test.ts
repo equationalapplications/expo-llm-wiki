@@ -37,6 +37,9 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   // classify as input overflow despite the token wording (Sonnet review minor).
   ['429 tokens-per-minute', 'Input exceeds the tokens-per-minute limit. Please retry after 30 seconds.'],
   ['429 rate limit body', 'Rate limit reached for model gpt-x: 429 Too Many Requests, tokens per min: 80000'],
+  // Blended 429 quota body: the overflow-shaped wording sits behind a rate-limit
+  // status line, so the guard must win (Haiku max review, PR #428).
+  ['429 mixed quota body', '429 Too Many Requests: input token count exceeds the per-minute quota'],
 ];
 
 describe('isContextOverflowError', () => {
@@ -72,6 +75,9 @@ describe('rate-limit wording is transient (CodeRabbit minor, PR #428)', () => {
   // are neither truncation- nor config-error-shaped, or runBatched would stamp
   // a cooldown on a transient rate limit.
   for (const [label, m] of NOT_OVERFLOW.filter(([l]) => l.startsWith('429'))) {
+    it(`isContextOverflowError is false for: ${label}`, () => {
+      expect(isContextOverflowError(new Error(m)), m).toBe(false);
+    });
     it(`isTruncationError is false for: ${label}`, () => {
       expect(isTruncationError(new Error(m)), m).toBe(false);
     });
@@ -79,4 +85,18 @@ describe('rate-limit wording is transient (CodeRabbit minor, PR #428)', () => {
       expect(isConfigError(new Error(m)), m).toBe(false);
     });
   }
+});
+
+describe('bare 429 in a message is not a rate limit (Haiku max review, PR #428)', () => {
+  it('a message mentioning the token count 429 still classifies as truncation', () => {
+    expect(isTruncationError(new Error('response truncated at 429 tokens'))).toBe(true);
+  });
+  it('a max_tokens config error whose value is 429 still classifies as config error', () => {
+    expect(isConfigError(new Error('max_tokens: 429 exceeds the model limit'))).toBe(true);
+  });
+  it('a genuine 429 status line still matches RATE_LIMIT_PATTERN via HTTP context', () => {
+    expect(isTruncationError(new Error('Error: status 429, tokens per min: 80000'))).toBe(false);
+    expect(isConfigError(new Error('Error: status 429, tokens per min: 80000'))).toBe(false);
+    expect(isContextOverflowError(new Error('Error: status 429, tokens per min: 80000'))).toBe(false);
+  });
 });

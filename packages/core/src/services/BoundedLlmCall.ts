@@ -58,7 +58,7 @@ const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?lim
 // otherwise swallow bodies like "Input exceeds the tokens-per-minute limit.
 // Please retry after 30 seconds." (CodeRabbit minor, PR #428).
 const RATE_LIMIT_PATTERN =
-  /\b(429|rate[ _-]?limit|too many requests|(tokens?|requests?)[ _-]?per[ _-]?(minute|min)\b|retry[ _-]?after|quota exceeded)\b/i;
+  /\b(?:status|http|code|error)[^\d]{0,10}429\b|\b429[ _-]?too[ _-]?many[ _-]?requests\b|\b(rate[ _-]?limit|too many requests|(tokens?|requests?)[ _-]?per[ _-]?(minute|min)\b|retry[ _-]?after|quota exceeded)\b/i;
 
 // Input-overflow: the PROMPT (messages/state) exceeded the model's context
 // window. Distinct from TRUNCATION_PATTERNS (the model cut its OUTPUT short)
@@ -91,6 +91,9 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
 export function isContextOverflowError(err: unknown): boolean {
   const message = getErrorMessage(err);
   if (message === undefined) return false;
+  // Rate-limit wording is transient and must never classify as overflow —
+  // see the invariant comment above RATE_LIMIT_PATTERN.
+  if (RATE_LIMIT_PATTERN.test(message)) return false;
   return CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(message));
 }
 
