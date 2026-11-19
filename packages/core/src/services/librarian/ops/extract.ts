@@ -99,6 +99,30 @@ function dedupeByType<T extends { type: string }>(xs: T[]): T[] {
   return xs.filter((x) => (seen.has(x.type) ? false : (seen.add(x.type), true)));
 }
 
+/**
+ * Model-supplied `ontology_updates` is untrusted: fields may be missing, non-arrays,
+ * or contain null entries. Normalize to the shape mergeOutcomes/mergeOntologyUpdates
+ * expect (arrays of objects with a non-empty string `type`), mirroring the
+ * `if (!type) continue` contract in utils/ontology.ts. Non-object input → undefined
+ * (absent), so 'ontology_updates absent' semantics are preserved.
+ */
+function normalizeOntologyUpdates(raw: unknown): OntologyUpdates | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as { node_types?: unknown; edge_types?: unknown };
+  // Filter keeps whole entries; the predicate only validates `type`, other
+  // properties pass through untouched for downstream application.
+  const pick = (v: unknown) =>
+    (Array.isArray(v) ? v : []).filter(
+      (x): x is { type: string } => !!x && typeof x === 'object' && typeof (x as { type?: unknown }).type === 'string' && (x as { type: string }).type.length > 0,
+    ) as unknown[];
+  const node_types = pick(r.node_types) as NonNullable<OntologyUpdates['node_types']>;
+  const edge_types = pick(r.edge_types) as NonNullable<OntologyUpdates['edge_types']>;
+  return {
+    ...(node_types.length ? { node_types } : {}),
+    ...(edge_types.length ? { edge_types } : {}),
+  };
+}
+
 function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
   // Invariant: both halves carry a corpus or neither does, so the offset equals a's corpus length.
   if ((a.groundingCorpus === null) !== (b.groundingCorpus === null)) {
@@ -287,11 +311,12 @@ async function extractOnce(deps: LibrarianDeps, ctx: LibrarianPassContext, ontol
     else diagnostics.push({ ...base, code: 'task_rejected', detail: { itemIndex: index, reason: taskRejectionReason(raw) } });
   });
 
+  const ontologyUpdates = normalizeOntologyUpdates(parsed.ontology_updates);
   return {
     batch,
     candidates,
     tasks,
-    ...(parsed.ontology_updates ? { ontologyUpdates: parsed.ontology_updates } : {}),
+    ...(ontologyUpdates ? { ontologyUpdates } : {}),
     groundingCorpus: prompt.groundingCorpus ?? null,
     diagnostics,
     skippedEvents: 0,
