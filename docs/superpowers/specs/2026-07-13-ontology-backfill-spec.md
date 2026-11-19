@@ -399,7 +399,7 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   Every future `classify` call site must go through this wrapper.
 - **Meter plumbing (verified absent today):** `runOntologyBackfill` and
   `doRunOntologyBackfill` take no meter, the generative backfill calls
-  `callLlm` with no meter (`MaintenanceService.ts:2112`), and the
+  `callLlm` with no meter (`MaintenanceService.ts:2113`), and the
   maintenance scheduler never runs backfill (its job set is `librarian`,
   `heal`, `reembed`, `externalDeletions`). So the public
   `runOntologyBackfill` options gain `tokenBudget?: number`; the pass
@@ -418,7 +418,14 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   unlaunched facts unstamped, with no cooldown stamp and no
   `classification_invalid` diagnostic. This matches the `runBatched`
   contract, which keeps earlier results and surfaces un-attempted items
-  unskipped (`BoundedLlmCall.ts:323-330`). The pass reports the stop as
+  unskipped (`BoundedLlmCall.ts:323-330`). The halt is a shared stop flag
+  each task checks before calling `callClassify` — `withConcurrency`
+  itself takes plain task functions and has no cancel path, so it stays
+  unchanged. An un-attempted fact (unlaunched, or stopped by a settled
+  budget error) is excluded from `scanned` — the field counts facts sent
+  to the model — and stays in `remaining`, keeping the
+  `scanned − typed − failedValidation` arithmetic intact. The pass reports
+  the stop as
   `budgetStop?: { requiredEstimate: number }` — a new field on
   `OntologyBackfillResult` (`types.ts:129`), copying heal's field and
   loop-guard doc comment (`types.ts:242`): a host loop runs while
@@ -470,7 +477,7 @@ pass.
     split path never runs.
 - **Escalation is gated (verified dead today for two of three callers):**
   only heal's `buildPrompt` sheds context per ladder level
-  (`MaintenanceService.ts:1775`); ontology backfill and ops resolve pass
+  (`MaintenanceService.ts:1773`); ontology backfill and ops resolve pass
   `buildPrompt` functions that ignore `attemptLevel`, so escalating them
   re-sends a byte-identical prompt and overflows again. `RunBatchedArgs`
   gains `supportsEscalation?: boolean`. Overflow at batch size 1 escalates
@@ -551,14 +558,20 @@ claims until measurement exists.
   `reportLlmUsage` with operation `'ontologyBackfill'`; a pass with no
   `tokenBudget` still emits estimates and records usage without a cap.
 - Budget stop: `WikiBudgetExhausted` at the classify site halts new
-  launches and waits for in-flight calls to settle (test: concurrency 4,
-  budget hit on call 2 — calls 1, 3, and 4 all persist), persists completed
-  outcomes (stamped), leaves unlaunched facts
-  unstamped, returns `budgetStop` on `OntologyBackfillResult` — no
-  `classification_invalid` diagnostic, no cooldown on unattempted facts. A
-  host loop `while (remaining > 0 && !budgetStop)` terminates when the test
-  sets `tokenBudget` small enough to stop mid-batch (pin a concrete value,
-  e.g. the estimate of the first classify call only). The generative path
+  launches and waits for in-flight calls to settle. Two tests: (a) a stub
+  throws `WikiBudgetExhausted` on call 2 (injected, NOT meter-driven —
+  with concurrency 4 every task pre-flights the same meter state before
+  any records, so a real meter cannot produce this shape) with
+  concurrency 4 — calls 1, 3, and 4 all settle and persist; (b) a real
+  meter with a pinned budget (concretely: the input estimate of the
+  smallest fact) and differing input sizes per fact, where later
+  pre-flights fail `fits()` and land unattempted. Both: completed
+  outcomes persist (stamped), unlaunched facts
+  unstamped, `budgetStop` set on `OntologyBackfillResult` — no
+  `classification_invalid` diagnostic, no cooldown on unattempted facts,
+  unattempted facts excluded from `scanned` and still counted in
+  `remaining`. A host loop `while (remaining > 0 && !budgetStop)`
+  terminates. The generative path
   gets the same coverage: `runBatched`'s `budgetStop` and `unattempted`
   lift into `OntologyBackfillResult` with no cooldown stamps.
 - Overflow corpus: each corpus message classifies as overflow, and as
