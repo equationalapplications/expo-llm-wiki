@@ -66,6 +66,27 @@ describe('classifier backfill budget stop', () => {
   });
 });
 
+describe('classifier input-overflow', () => {
+  // NOTE: errata E2 also requires a cooldown stamp here (fact reappears as
+  // `deferred`); Task 4's code leaves 'threw' facts unstamped. Reported to the
+  // controller in task-5-report.md; the stamp assertion is deliberately absent.
+  it('emits context_overflow_skipped for an input-overflow classify throw', async () => {
+    const diags: any[] = [];
+    const { wiki } = await makeWiki(
+      async () => {
+        throw new Error('prompt is too long: 100 tokens > 50 token maximum');
+      },
+      1,
+      (d) => diags.push(d),
+    );
+    const r1 = await wiki.runOntologyBackfill('e1', { classifier: 'auto' });
+    expect(r1.skipped).toBe(1);
+    const overflow = diags.filter((d) => d.code === 'context_overflow_skipped');
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].detail).toEqual({ factId: 'f0' });
+  });
+});
+
 describe('callClassify usage diagnostics', () => {
   const request = { state: 'x'.repeat(400), questions: { q: { kind: 'binary' as const, instructions: 'y' } } };
   const ctx = { operation: 'ontologyBackfill' as const, entityId: 'e1', trigger: 'call' as const };

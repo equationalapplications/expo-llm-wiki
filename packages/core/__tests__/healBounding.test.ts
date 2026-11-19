@@ -404,6 +404,28 @@ describe('doRunHeal — ladder orchestration', () => {
     );
   });
 
+  it('emits context_overflow_skipped (not the ordinary skip warning) for an input-overflow skip', async () => {
+    const generateText = vi.fn(async () => {
+      throw new Error('prompt is too long: 100 tokens > 50 token maximum');
+    });
+    const diags: any[] = [];
+    const db = openTestDatabase();
+    const wiki = createWiki(db, {
+      llmProvider: { generateText },
+      config: { orphanAfterDays: null, staleInferredAfterDays: null },
+      onDiagnostic: (d: any) => diags.push(d),
+    } as any);
+    await wiki.setup();
+    await seedFact(db, { id: 'toolong' });
+
+    await wiki.runHeal('e1', { batchSize: 1 });
+
+    const overflow = diags.filter((d) => d.code === 'context_overflow_skipped');
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0].detail).toMatchObject({ factId: 'toolong' });
+    expect(consoleWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('heal skipped e1/toolong'));
+  });
+
   it('mixed: mutually exclusive on id and exhaustive partition of candidates', async () => {
     // Three facts, each climbing its own ladder because batchSize === 1.
     // The LLM fates are driven from the prompt: the candidate's id appears

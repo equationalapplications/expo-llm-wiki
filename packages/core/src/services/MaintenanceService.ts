@@ -35,7 +35,7 @@ import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5Ledger
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm, callClassify } from '../utils/llmCall';
-import { WikiBudgetExhausted, type UsageMeter } from '../utils/usage';
+import { WikiBudgetExhausted, UsageMeter } from '../utils/usage';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
@@ -1032,11 +1032,14 @@ export class MaintenanceService {
 
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
   ): Promise<OntologyBackfillResult> {
     this.jobManager.acquireLock('ontologyBackfill', entityId);
     try {
-      return await this.doRunOntologyBackfill(entityId, options);
+      return await this.doRunOntologyBackfill(entityId, {
+        ...options,
+        meter: new UsageMeter(options?.tokenBudget),
+      });
     } finally {
       this.jobManager.releaseLock('ontologyBackfill', entityId);
     }
@@ -2042,7 +2045,13 @@ export class MaintenanceService {
   /** Core ontology backfill pass (locks handled by {@link runOntologyBackfill}). Package-internal orchestration hook. */
   async doRunOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      classifier?: 'auto' | 'llm';
+      tokenBudget?: number;
+      meter?: UsageMeter;
+    },
   ): Promise<OntologyBackfillResult> {
     const batchSize = options?.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
     if (!Number.isInteger(batchSize) || batchSize < 1) {
@@ -2078,7 +2087,7 @@ export class MaintenanceService {
     if (classifierMode === 'auto' && typeof classify === 'function') {
       const slugs = effectiveManifest.node_types.map((n) => n.type);
       if (slugs.length > 0 && slugs.length <= 255) {
-        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff);
+        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter);
       }
     }
 
@@ -2119,7 +2128,7 @@ export class MaintenanceService {
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
       items: candidates,
       buildPrompt,
-      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call' }, prompts),
+      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call', meter: options?.meter }, prompts),
       parse: (responseText, batch) => {
         const parsed = parseJsonResponse<{
           classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
@@ -2185,6 +2194,7 @@ export class MaintenanceService {
         skipped: outcome.skipped.length,
         remaining: 0,
         deferred: counts.deferred,
+        ...(outcome.budgetStop ? { budgetStop: outcome.budgetStop } : {}),
       };
     }
 
@@ -2221,6 +2231,7 @@ export class MaintenanceService {
       skipped: outcome.skipped.length,
       remaining: counts.eligible,
       deferred: counts.deferred,
+      ...(outcome.budgetStop ? { budgetStop: outcome.budgetStop } : {}),
     };
   }
 

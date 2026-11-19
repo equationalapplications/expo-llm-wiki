@@ -143,6 +143,10 @@ export interface OntologyBackfillResult {
   /** Facts a batch could not process even alone, skipped so the pass could finish.
    * Stamped with the recheck cooldown, so they reappear as `deferred` next pass. */
   skipped: number;
+  /** Present when a token budget stopped the pass early (spec §10.5). Unattempted facts stay
+   * eligible (never cooldown-stamped). A host loop runs while `remaining > 0 && !budgetStop`,
+   * else a fixed budget never converges. */
+  budgetStop?: { requiredEstimate: number };
 }
 
 /** Result of a single `runReembed` sweep. */
