@@ -2304,6 +2304,7 @@ export class MaintenanceService {
     const unattemptedCount = outcomes.filter((o) => o.kind === 'unattempted').length;
     // Overflow skips are deterministic, so they ARE stamped (in `attempted`;
     // errata E2) to avoid re-paying for the same oversized fact every pass.
+    // Mixes unstamped `threw` (pre-existing) with stamped `overflow_skip` (this PR); the result-field doc's "stamped" wording covers the overflow kind only.
     const skipped = outcomes.filter((o) => o.kind === 'threw' || o.kind === 'overflow_skip').length;
     const classifications = outcomes
       .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')

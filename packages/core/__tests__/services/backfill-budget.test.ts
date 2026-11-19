@@ -21,17 +21,21 @@ const ok = (): ClassifyResponse => ({
   answers: { okf_type: { kind: 'choice', choice: 'person', confidence: 0.9, probabilities: { person: 0.9 } } },
 });
 
-async function makeWiki(count: number, onDiagnostic?: (d: any) => void) {
+async function makeWiki(count: number, onDiagnostic?: (d: any) => void, opts: { varied?: boolean } = {}) {
   const db = openTestDatabase();
   const wiki = createWiki(db, {
     llmProvider: { generateText: vi.fn(async () => '{}'), classify: vi.fn(async () => ok()) },
-    // Serial classification keeps the budget-stop point deterministic.
-    config: { chunkConcurrency: 1, reportLlmUsage: true },
+    // Serial classification keeps the budget-stop point deterministic, unless `varied`.
+    config: opts.varied ? { reportLlmUsage: true } : { chunkConcurrency: 1, reportLlmUsage: true },
     ...(onDiagnostic ? { onDiagnostic } : {}),
   });
   await wiki.setup();
   await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
-  for (let i = 0; i < count; i++) await seed(db, `f${i}`, 100 + i);
+  for (let i = 0; i < count; i++) {
+    await seed(db, `f${i}`, 100 + i);
+    // Differing input sizes per fact (default chunkConcurrency): pre-flights of different sizes share one meter state.
+    if (opts.varied) await db.runAsync(`UPDATE ${PREFIX}entries SET body = ? WHERE id = ?`, ['x'.repeat(200 * (i + 1) * (i + 1)), `f${i}`]);
+  }
   return { db, wiki };
 }
 
@@ -58,6 +62,25 @@ describe('runOntologyBackfill tokenBudget', () => {
       `SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NULL`,
     );
     expect(unstamped.map((r) => r.id)).toEqual(['f1']);
+  });
+
+  it('stops on a real meter with differing fact sizes at default concurrency', async () => {
+    const probeDiags: any[] = [];
+    const probe = await makeWiki(6, (d) => probeDiags.push(d), { varied: true });
+    await probe.wiki.runOntologyBackfill('e1', { classifier: 'auto' });
+    const used = probeDiags.filter((d) => d.code === 'llm_usage').map((d) => d.detail.inputTokens + d.detail.outputTokens);
+    expect(used).toHaveLength(6);
+    expect(new Set(used).size).toBeGreaterThan(1); // sizes really differ
+    const budget = Math.floor(used.reduce((a, b) => a + b, 0) / 3);
+
+    const { db, wiki } = await makeWiki(6, undefined, { varied: true });
+    const result = await wiki.runOntologyBackfill('e1', { classifier: 'auto', tokenBudget: budget });
+    expect(result.budgetStop).toBeDefined();
+    expect(result.scanned).toBeGreaterThan(0);
+    expect(result.scanned).toBeLessThan(6);
+    expect(result.scanned + result.remaining).toBe(6);
+    const unstamped = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NULL`);
+    expect(unstamped).toHaveLength(6 - result.scanned);
   });
 
   it('omits budgetStop when no budget is set', async () => {

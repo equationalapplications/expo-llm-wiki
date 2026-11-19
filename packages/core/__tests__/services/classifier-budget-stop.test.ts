@@ -43,10 +43,12 @@ async function makeWiki(
 describe('classifier backfill budget stop', () => {
   it('waits for in-flight calls, persists settled successes, excludes unattempted from scanned', async () => {
     let call = 0;
+    const order: string[] = [];
     const diags: any[] = [];
     const { db, wiki } = await makeWiki(
-      async () => {
+      async (r) => {
         call += 1;
+        order.push(/f\d+/.exec(JSON.stringify(r))![0]);
         if (call === 2) throw new WikiBudgetExhausted(100, 0);
         return ok();
       },
@@ -55,13 +57,14 @@ describe('classifier backfill budget stop', () => {
     );
     const result: any = await wiki.runOntologyBackfill('e1', { classifier: 'auto' });
     expect(result.budgetStop).toEqual({ requiredEstimate: 100 });
-    expect(result.scanned).toBeLessThan(12);
-    expect(result.typed).toBeGreaterThan(0);
-    expect(result.remaining).toBeGreaterThan(0);
+    expect(call).toBe(4);
+    expect(result.scanned).toBe(3);
+    expect(result.typed).toBe(3);
     const stamped = await db.getAllAsync<{ id: string }>(
       `SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NOT NULL`,
     );
-    expect(stamped.length).toBeLessThanOrEqual(result.scanned);
+    // Calls 1, 3 and 4 settle and persist; call 2 (budget stop) is not stamped.
+    expect(stamped.map((r) => r.id).sort()).toEqual([order[0], order[2], order[3]].sort());
     expect(diags.some((d) => d.code === 'classification_invalid' && d.detail?.reason === 'classify_threw')).toBe(false);
   });
 });

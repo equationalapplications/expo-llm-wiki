@@ -230,9 +230,10 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
         throw new Error('classifier endpoint response missing `answers` object (expected { answers, usage? })');
       }
       const u = data.usage;
-      const usage = u
-        ? { inputTokens: u.inputTokens ?? u.prompt_tokens ?? 0, outputTokens: u.outputTokens ?? u.completion_tokens ?? 0 }
-        : undefined;
+      // Both fields or nothing: a partial report is never zero-filled into a "measured" count.
+      const inTok = u?.inputTokens ?? u?.prompt_tokens;
+      const outTok = u?.outputTokens ?? u?.completion_tokens;
+      const usage = inTok !== undefined && outTok !== undefined ? { inputTokens: inTok, outputTokens: outTok } : undefined;
       return { answers: data.answers, usage };
     };
   }

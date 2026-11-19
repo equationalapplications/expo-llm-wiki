@@ -1,3 +1,4 @@
+import { validUsage } from '@equationalapplications/core-llm-wiki';
 import type { ChatProvider, TextParams, TextWithUsage, ClassifyParams, ClassifyResult } from './provider';
 
 /** Minimal provider contract — `generateTextWithUsage` is optional. */
@@ -124,8 +125,9 @@ export function instrument(inner: ProviderLike, recorder: UsageRecorder, forcedS
       const start = Date.now();
       const result = await inner.classify!(p);
       const ms = Date.now() - start;
-      const estimated = result.usage === undefined;
-      const usage = result.usage ?? {
+      const reported = validUsage(result.usage);
+      const estimated = !reported;
+      const usage = reported ? result.usage! : {
         // Same rule as callClassify: each part rounded separately, questions always counted.
         inputTokens: Math.ceil(p.state.length / 4) + Math.ceil(JSON.stringify(p.questions).length / 4),
         outputTokens: Math.ceil(JSON.stringify(result.answers ?? {}).length / 4),

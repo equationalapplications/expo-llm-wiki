@@ -66,6 +66,17 @@ describe('runBatched overflow', () => {
     }))).rejects.toBe(netErr);
   });
 
+  it('opt-out caller: vLLM dual-match message at size 1 makes exactly one call, then skips', async () => {
+    let calls = 0;
+    const dual = new Error('max_tokens is too large: 4096 tokens. This model supports at most 8192 context length tokens.');
+    const outcome = await runBatched<number, number[]>(makeArgs({
+      items: [7],
+      call: async () => { calls += 1; throw dual; },
+    }));
+    expect(calls).toBe(1);
+    expect(outcome.skipped).toEqual([{ item: 7, reason: 'non_convergent' }]);
+  });
+
   it('opt-in caller: overflow at size 1 escalates then skips (ladder still capped at 3)', async () => {
     let calls = 0;
     const outcome = await runBatched<number, number[]>({

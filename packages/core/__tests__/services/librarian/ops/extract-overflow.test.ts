@@ -63,7 +63,7 @@ describe('ops extract overflow retry', () => {
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 20, id: 'evt_2' });
   });
 
-  it('holds the watermark before an event only partly extractable (one segment skipped, sibling extracted)', async () => {
+  it('skips an event only partly extractable (one segment skipped, sibling extracted) and advances past it, never throwing', async () => {
     const diags: any[] = [];
     const { wiki, ev } = await mk(async (p) => {
       if (/\bb b\b/.test(p.userPrompt)) throw tooLong();
@@ -73,9 +73,16 @@ describe('ops extract overflow retry', () => {
     // Halves at ~900 chars: the 'a' half extracts, the half carrying 'b's overflows and is below 2x floor.
     await ev('evt_2', 20, 'a '.repeat(600) + 'b '.repeat(300));
     await ev('evt_3', 30, 'later summary');
+    const wm = () => (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u');
+    // Pass 1: the whole event is skipped with a diagnostic, its extracted segment dropped.
     await wiki.runLibrarian('u');
-    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 10, id: 'evt_1' });
-    expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(0);
+    const skips = diags.filter((d) => d.code === 'context_overflow_skipped');
+    expect(skips).toHaveLength(1);
+    expect(skips[0].detail).toEqual({ sourceRef: 'evt_2' });
+    expect(await wm()).toEqual({ at: 30, id: 'evt_3' });
+    // Pass 2: nothing stalls; the watermark stays past the skipped event.
+    await expect(wiki.runLibrarian('u')).resolves.not.toThrow();
+    expect(await wm()).toEqual({ at: 30, id: 'evt_3' });
   });
 
   it('keeps grounding corpus aligned when a lone oversized event is skipped ahead of a normal one', async () => {

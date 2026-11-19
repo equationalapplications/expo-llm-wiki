@@ -169,7 +169,6 @@ async function extractWithOverflowRetry(
       code: 'context_overflow_skipped', detail: { sourceRef: lone.event.id },
     });
     const segLabel = (label: string, n: number) => (label.includes('#') ? `${label}.${n}` : `${label}#${n}`);
-    let skippedSegments = 0;
     // Returns null when the segment (and every sub-segment) was skipped.
     const extractSegment = async (label: string, text: string, alreadyOverflowed: boolean): Promise<ExtractOutcome | null | 'partial'> => {
       if (!alreadyOverflowed) {
@@ -179,9 +178,9 @@ async function extractWithOverflowRetry(
           if (!isContextOverflowError(e)) throw e;
         }
       }
-      if (text.length < 2 * MIN_SEGMENT_CHARS) { skippedSegments++; return null; }
+      if (text.length < 2 * MIN_SEGMENT_CHARS) return null;
       const [h1, h2] = splitSummary(text);
-      if (h1.length < MIN_SEGMENT_CHARS || h2.length < MIN_SEGMENT_CHARS) { skippedSegments++; return null; }
+      if (h1.length < MIN_SEGMENT_CHARS || h2.length < MIN_SEGMENT_CHARS) return null;
       const a = await extractSegment(segLabel(label, 1), h1, false);
       const b = await extractSegment(segLabel(label, 2), h2, false);
       if (a === 'partial' || b === 'partial') return 'partial';
@@ -190,11 +189,8 @@ async function extractWithOverflowRetry(
       return mergeOutcomes(a, b);
     };
     const merged = await extractSegment(lone.label, lone.event.summary, true);
-    if (merged === 'partial') {
-      // E3: every segment extracts, or the watermark holds before this event.
-      return { batch: [], candidates: [], tasks: [], groundingCorpus: null, diagnostics: [], skippedEvents: 0, factItems: 0, taskItems: 0, hold: true };
-    }
-    if (!merged) {
+    // E3: every segment extracts, or the whole event is skipped (partial candidates dropped).
+    if (!merged || merged === 'partial') {
       // Carry this event's own corpus entry so merged partOffset math stays aligned to batch slots.
       const corpus = deps.promptService.buildOpsExtractPrompt([lone], ontologyContext, ctx.guidance).groundingCorpus ?? null;
       return {
@@ -202,7 +198,7 @@ async function extractWithOverflowRetry(
         skippedEvents: 1, factItems: 0, taskItems: 0,
       };
     }
-    return { ...merged, batch: [lone], diagnostics: [...merged.diagnostics, ...Array.from({ length: skippedSegments }, skipDiag)] };
+    return { ...merged, batch: [lone] };
   }
 }
 

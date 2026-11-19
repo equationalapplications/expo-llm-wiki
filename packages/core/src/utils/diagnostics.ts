@@ -76,7 +76,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   grounding_failed: 'A fact carried evidence not found in its source and was stored as a draft.',
   classification_low_confidence: 'A classifier answer was below the confidence threshold and was not applied.',
   classification_invalid: 'A classifier answer was invalid and was not applied.',
-  context_overflow_skipped: 'A fact was skipped because the model input exceeded its context window.',
+  context_overflow_skipped: 'An item (fact or event) was skipped because the model input exceeded its context window.',
   llm_usage: 'An LLM call completed; token usage attached.',
   librarian_gate: 'Librarian gate outcome counts for one pass.',
   librarian_op_rejected: 'A librarian reconciliation op was invalid and the candidate was added instead.',
