@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../../../../src/WikiMemory';
 import { selectBatch, runExtract } from '../../../../src/services/librarian/ops/extract';
-import { UsageMeter } from '../../../../src/utils/usage';
+import { UsageMeter, WikiBudgetExhausted } from '../../../../src/utils/usage';
 import { openTestDatabase } from '../../../helpers/sqliteAdapter';
 
 type P = { systemPrompt: string; userPrompt: string };
@@ -104,10 +104,12 @@ describe('ops extract overflow retry', () => {
   });
 
   it('throws and holds the watermark when the fixed prompt part alone overflows (every event skipped)', async () => {
-    const { wiki, ev } = await mk(async () => { throw tooLong(); });
+    let calls = 0;
+    const { wiki, ev } = await mk(async () => { calls++; throw tooLong(); });
     await ev('evt_1', 10, 'word '.repeat(100));
     await ev('evt_2', 20, 'other words');
-    await expect(wiki.runLibrarian('u')).rejects.toThrow(/skipped for context overflow/);
+    await expect(wiki.runLibrarian('u')).rejects.toThrow(/minimal-prompt probe also overflowed/);
+    expect(calls).toBe(2); // initial batch call + probe, before any retry tree
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
   });
 
@@ -141,18 +143,43 @@ describe('ops extract overflow retry', () => {
     expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
   });
 
-  it('the all-skipped probe runs unmetered: an exhausted budget does not turn skip+advance into WikiBudgetExhausted', async () => {
+  it('the early probe is metered: an exhausted budget surfaces WikiBudgetExhausted at the first overflow, before any retry work', async () => {
     const meter = new UsageMeter(1_000_000);
+    let calls = 0;
     const { deps, ev } = await mk(async (p) => {
+      calls++;
       if (p.userPrompt.includes('POISON')) { meter.used = 1_000_000; throw tooLong(); }
       return JSON.stringify({ facts: [], tasks: [] });
     });
-    await ev('evt_1', 10, `POISON ${'word '.repeat(119)}`); // below segment floor: skipped without segment calls
+    await ev('evt_1', 10, `POISON ${'word '.repeat(119)}`);
     const ctx: any = { entityId: 'u', trigger: 'call', meter };
     const sel: any = await selectBatch(deps, 'u', null);
-    const out = await runExtract(deps, ctx, sel.batch ?? sel);
-    expect(out.skippedEvents).toBe(1);
-    expect(out.diagnostics.map((d: any) => d.code)).toContain('context_overflow_skipped');
+    await expect(runExtract(deps, ctx, sel.batch ?? sel)).rejects.toThrow(WikiBudgetExhausted);
+    // calls === 1 only because callLlm's PRE-CALL budget check (llmCall.ts) throws
+    // before reaching the provider; if that check ever moved after the provider call,
+    // calls would become 2 and this assertion would catch the move.
+    expect(calls).toBe(1);
+  });
+
+  it('the early probe runs exactly once per run across the whole retry tree', async () => {
+    let probeCalls = 0;
+    const { deps, ev } = await mk(async (p) => {
+      // The probe is the lone event with summary 'x'; every other multi-event call overflows.
+      // Line format pinned by PromptService.buildOpsExtractPrompt:
+      // `${label} [ISO] (event_type) ${summary}`.
+      if (/^e\d+ \[[^\]]*\] \(\w+\) x$/m.test(p.userPrompt)) {
+        probeCalls++;
+        return JSON.stringify({ facts: [], tasks: [] });
+      }
+      if (eventCount(p) > 1) throw tooLong();
+      return JSON.stringify({ facts: labelsOf(p).map((l) => fact(`Fact from ${l} here`, l)), tasks: [] });
+    });
+    for (let i = 1; i <= 5; i++) await ev(`evt_${i}`, i * 10, `summary ${i}`);
+    const sel: any = await selectBatch(deps, 'u', null);
+    const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
+    expect(probeCalls).toBe(1);
+    expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1', 'evt_2', 'evt_3', 'evt_4', 'evt_5']);
+    expect(out.skippedEvents).toBe(0);
   });
 
   it('pass watermark follows the batch actually extracted', async () => {
