@@ -468,8 +468,9 @@ pass.
 - `runBatched` must treat overflow at batch size > 1 as a split trigger.
   This needs three `onFailure` edits, all spelled out here:
   - The escalation gate at `BoundedLlmCall.ts:254` becomes
-    `fromCall && (isTruncationError(err) || (supportsEscalation && isContextOverflowError(err))) && attemptLevel < 3`
-    — both existing guards stay.
+    `fromCall && (isContextOverflowError(err) ? supportsEscalation : isTruncationError(err)) && attemptLevel < 3`
+    — both existing guards stay. Dual-match messages skip after one call for
+    opted-out callers (overflow wins over truncation at the gate).
   - The give-up reason at `BoundedLlmCall.ts:271` must classify overflow as
     `non_convergent` at every ladder level — today's expression
     (`!isTruncationError && !isConfigError` → `call_error`) would stamp no
@@ -514,8 +515,9 @@ later pass re-sends the same oversized batch. The librarian never advances.
 - **Segmented events are all-or-nothing.** A lone oversized event splits
   into labeled segments (`e1#1`, `e1#2`, …) extracted in separate calls —
   one call holding all segments would overflow again. Either every segment
-  extracts, or the pass budget-stops before the event and keeps the
-  watermark at the previous event. A segment-label → event-id map must
+  extracts, or the event is skipped with `context_overflow_skipped` and the
+  watermark advances — deterministic overflow is not a budget stop; the hold
+  result remains reserved for `WikiBudgetExhausted`. A segment-label → event-id map must
   back the `byLabel` lookup that resolves `source_event` (`extract.ts:80`,
   `:107-110`), and the grounding corpus must map each segment to its
   corpus part.

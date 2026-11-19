@@ -1,6 +1,7 @@
 import { callLlm } from '../../../utils/llmCall';
 import { clip, parseJsonResponse, safeSlice } from '../../../utils/pure';
-import { runBatched } from '../../BoundedLlmCall';
+import { runBatched, isContextOverflowError } from '../../BoundedLlmCall';
+import { emitDiagnostic } from '../../../utils/diagnostics';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import type { GatedCandidate } from './gate';
 import { OPS_NEIGHBOUR_BODY_CHARS, parseValidFrom } from './text';
@@ -92,6 +93,14 @@ export async function runResolve(
       const parsed = parseJsonResponse<{ ops?: unknown }>(text);
       if (!Array.isArray(parsed.ops)) throw new Error('resolve: ops missing');
       return { batch, ops: parsed.ops };
+    },
+    onSkip: (g, err) => {
+      if (isContextOverflowError(err)) {
+        emitDiagnostic(deps.options, {
+          entityId, operation: 'librarian', trigger, code: 'context_overflow_skipped',
+          detail: { itemIndex: g.candidate.index },
+        });
+      }
     },
     maxPromptChars: OPS_RESOLVE_MAX_PROMPT_CHARS,
     maxOutputTokens: deps.options.llmProvider.maxOutputTokens,

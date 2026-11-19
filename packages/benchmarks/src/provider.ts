@@ -13,7 +13,7 @@
  * include the API key in the error message.
  */
 
-import type { ClassifyRequest } from '@equationalapplications/core-llm-wiki';
+import { validUsage, type ClassifyRequest } from '@equationalapplications/core-llm-wiki';
 
 export interface ChatEndpoint {
   protocol: 'anthropic' | 'openai';
@@ -233,7 +233,8 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
       // Both fields or nothing: a partial report is never zero-filled into a "measured" count.
       const inTok = u?.inputTokens ?? u?.prompt_tokens;
       const outTok = u?.outputTokens ?? u?.completion_tokens;
-      const usage = inTok !== undefined && outTok !== undefined ? { inputTokens: inTok, outputTokens: outTok } : undefined;
+      const candidate = inTok !== undefined && outTok !== undefined ? { inputTokens: inTok, outputTokens: outTok } : undefined;
+      const usage = validUsage(candidate) ? candidate : undefined;
       return { answers: data.answers, usage };
     };
   }

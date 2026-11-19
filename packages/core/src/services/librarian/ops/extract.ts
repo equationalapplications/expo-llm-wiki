@@ -38,8 +38,6 @@ export interface ExtractOutcome {
   /** Raw fact / task item counts in the model response(s), for merged diagnostic itemIndex offsets. */
   factItems: number;
   taskItems: number;
-  /** An event was only partly extractable: `batch` holds only events strictly before it (E3 all-or-nothing). */
-  hold?: boolean;
 }
 
 /** Floor for recursive segmentation: a segment below this many chars is skipped, not split. */
@@ -99,6 +97,10 @@ function dedupeByType<T extends { type: string }>(xs: T[]): T[] {
 }
 
 function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
+  // Invariant: both halves carry a corpus or neither does, so the offset equals a's corpus length.
+  if ((a.groundingCorpus === null) !== (b.groundingCorpus === null)) {
+    throw new Error('ops extract: merge corpus invariant violated (only one half has a grounding corpus)');
+  }
   const partOffset = a.groundingCorpus?.length ?? a.batch.length;
   const indexOffset = a.candidates.reduce((m, c) => Math.max(m, c.index + 1), 0);
   const candidates = [
@@ -134,7 +136,6 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
     skippedEvents: a.skippedEvents + b.skippedEvents,
     factItems: a.factItems + b.factItems,
     taskItems: a.taskItems + b.taskItems,
-    ...(a.hold || b.hold ? { hold: true } : {}),
   };
 }
 
@@ -159,7 +160,6 @@ async function extractWithOverflowRetry(
       // result is discarded (data-correct; its spend is re-paid next pass),
       // matching the runBatched contract.
       const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid));
-      if (a.hold) return a; // later events are unprocessed, not skipped
       const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid));
       return mergeOutcomes(a, b);
     }
@@ -205,13 +205,19 @@ async function extractWithOverflowRetry(
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
   const out = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
-  if (out.hold && out.batch.length === 0) {
-    throw new Error('ops extract: the first selected event could not be extracted in full (a segment overflowed below the floor); holding the watermark');
-  }
   if (out.skippedEvents > 0 && out.skippedEvents === out.batch.length) {
-    // Nothing extractable: the fixed prompt part (ontology context, guidance) alone
-    // overflows the window. Surface it and hold the watermark rather than drain the log.
-    throw new Error(`ops extract: all ${out.skippedEvents} selected events were skipped for context overflow (fixed prompt part exceeds the model window?)`);
+    // All selected events were overflow-skipped. Probe once with a minimal prompt to tell
+    // an event-caused overflow (probe succeeds: skip + advance) from a fixed-prompt one
+    // (probe also overflows: rethrow, visible config failure, watermark held).
+    const probe = deps.promptService.buildOpsExtractPrompt(
+      [{ ...batch[0], event: { ...batch[0].event, summary: 'x' } }], ontologyContext, ctx.guidance,
+    );
+    try {
+      await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: ctx.meter }, probe);
+    } catch (e) {
+      if (!isContextOverflowError(e)) throw e;
+      throw new Error(`ops extract: all ${out.skippedEvents} selected events were skipped for context overflow and a minimal probe also overflowed (fixed prompt part exceeds the model window?)`);
+    }
   }
   return out;
 }

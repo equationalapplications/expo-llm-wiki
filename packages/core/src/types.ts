@@ -141,7 +141,8 @@ export interface OntologyBackfillResult {
   /** Untyped facts inside the recheck cooldown. */
   deferred: number;
   /** Facts a batch could not process even alone, skipped so the pass could finish.
-   * Stamped with the recheck cooldown, so they reappear as `deferred` next pass. */
+   * Counts both unstamped `threw` skips (no cooldown; retried next pass) and stamped
+   * `overflow_skip` skips (recheck cooldown, so they reappear as `deferred` next pass). */
   skipped: number;
   /** Present when a token budget stopped the pass early (spec §10.5). Unattempted facts stay
    * eligible (never cooldown-stamped). A host loop runs while `remaining > 0 && !budgetStop`,

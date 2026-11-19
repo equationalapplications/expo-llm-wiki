@@ -110,6 +110,21 @@ describe('ops extract overflow retry', () => {
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
   });
 
+  it('a lone moderately oversized event (below-floor segments) is skipped via a succeeding probe and the watermark advances', async () => {
+    const diags: any[] = [];
+    const { wiki, ev } = await mk(async (p) => {
+      if (p.userPrompt.includes('POISON')) throw tooLong();
+      return JSON.stringify({ facts: [], tasks: [] });
+    }, (d) => diags.push(d));
+    await ev('evt_1', 10, `POISON ${'word '.repeat(119)}`); // ~600 chars: halves fall below the 500 floor
+    const wm = () => (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u');
+    await expect(wiki.runLibrarian('u')).resolves.not.toThrow();
+    expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(1);
+    expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
+    await expect(wiki.runLibrarian('u')).resolves.not.toThrow();
+    expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
+  });
+
   it('pass watermark follows the batch actually extracted', async () => {
     const { db, wiki, ev } = await mk(async (p) => {
       if (eventCount(p) > 2) throw tooLong();
