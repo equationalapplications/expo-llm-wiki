@@ -610,5 +610,7 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   artifact plus harness commit `98ad68f1` are the record. Catalog scope
   ruling: typed node titles now leave the device to the provider with
   each backfill call (previously only the batch's facts and the type
-  manifest did) — surfaced to the owner with the PR; cap ranking is
-  alphabetical by title, truncation disclosed.
+  manifest did) — surfaced to the owner with the PR; the catalog is
+  bounded at 8k chars (~2k tokens) per call on top of the prior prompt,
+  cap ranking is alphabetical by title, truncation disclosed. Owner
+  ruling on the scope change pending before merge.

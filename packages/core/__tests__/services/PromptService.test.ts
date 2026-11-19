@@ -231,6 +231,15 @@ describe('PromptService', () => {
       const { systemPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
       expect(systemPrompt).not.toContain('TITLE CATALOG');
     });
+
+    it('placeholder templates keep skipping the catalog (documented M5 limitation, locked by test)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'TITLE CATALOG: x');
+      expect(systemPrompt).not.toContain('TITLE CATALOG: x');
+      expect(systemPrompt).toContain('fact_1');
+      expect(userPrompt).toBe('Please classify the facts.');
+    });
   });
 
   describe('buildTitleCatalogBlock (#381)', () => {
