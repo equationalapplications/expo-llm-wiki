@@ -2,6 +2,7 @@ import type { ExtractedFactWithOntology, ExtractedTask, OntologyUpdates, WikiEve
 import type { LibrarianWatermark } from '../../../repositories/MetadataRepository';
 import type { WikiDiagnosticInput } from '../../../utils/diagnostics';
 import { callLlm } from '../../../utils/llmCall';
+import { isContextOverflowError } from '../../BoundedLlmCall';
 import { estimateTokens, type UsageMeter } from '../../../utils/usage';
 import { parseJsonResponse, validateFact, validateTask, factRejectionReason, taskRejectionReason } from '../../../utils/pure';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
@@ -68,9 +69,80 @@ export async function selectBatch(
   return { batch };
 }
 
+type OntologyCtx = Awaited<ReturnType<NonNullable<LibrarianDeps['ontologyService']>['buildPromptContext']>> | null;
+
+/** Split a summary into two halves at the whitespace boundary nearest the middle (hard split when none). */
+function splitSummary(summary: string): [string, string] {
+  const mid = Math.floor(summary.length / 2);
+  let cut = -1;
+  for (let d = 0; d <= mid; d++) {
+    if (/\s/.test(summary[mid - d] ?? '')) { cut = mid - d; break; }
+    if (/\s/.test(summary[mid + d] ?? '')) { cut = mid + d; break; }
+  }
+  if (cut <= 0 || cut >= summary.length - 1) cut = mid;
+  return [summary.slice(0, cut), summary.slice(cut)];
+}
+
+function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
+  const partOffset = a.groundingCorpus?.length ?? a.batch.length;
+  const indexOffset = a.candidates.reduce((m, c) => Math.max(m, c.index + 1), 0);
+  const candidates = [
+    ...a.candidates,
+    ...b.candidates.map((c) => ({
+      ...c,
+      index: c.index + indexOffset,
+      sourcePartIndex: c.sourcePartIndex === null ? null : c.sourcePartIndex + partOffset,
+    })),
+  ];
+  const ontologyUpdates = a.ontologyUpdates || b.ontologyUpdates
+    ? ({ ...(a.ontologyUpdates ?? {}), ...(b.ontologyUpdates ?? {}) } as OntologyUpdates)
+    : undefined;
+  return {
+    batch: [...a.batch, ...b.batch],
+    candidates,
+    tasks: [...a.tasks, ...b.tasks],
+    ...(ontologyUpdates ? { ontologyUpdates } : {}),
+    groundingCorpus: a.groundingCorpus || b.groundingCorpus ? [...(a.groundingCorpus ?? []), ...(b.groundingCorpus ?? [])] : null,
+    diagnostics: [...a.diagnostics, ...b.diagnostics],
+  };
+}
+
+/**
+ * Extract one batch; on a context-overflow error, halve and merge (sequential,
+ * so the meter sees ordered spend). A lone oversized event is segmented into
+ * `<label>#1` / `<label>#2` prompts that both resolve to the same event id; a
+ * segment that still overflows rethrows (pass-level skip, as before).
+ */
+async function extractWithOverflowRetry(
+  deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[],
+): Promise<ExtractOutcome> {
+  try {
+    return await extractOnce(deps, ctx, ontologyContext, batch);
+  } catch (err) {
+    if (!isContextOverflowError(err)) throw err;
+    if (batch.length > 1) {
+      const mid = Math.ceil(batch.length / 2);
+      const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid));
+      const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid));
+      return mergeOutcomes(a, b);
+    }
+    const lone = batch[0];
+    const [h1, h2] = splitSummary(lone.event.summary);
+    if (h1.length === 0 || h2.length === 0) throw err;
+    const seg = (n: number, text: string): LabeledEvent => ({ label: `${lone.label}#${n}`, at: lone.at, event: { ...lone.event, summary: text } });
+    const a = await extractOnce(deps, ctx, ontologyContext, [seg(1, h1)]);
+    const b = await extractOnce(deps, ctx, ontologyContext, [seg(2, h2)]);
+    return { ...mergeOutcomes(a, b), batch: [lone] };
+  }
+}
+
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
+  const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
+  return extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
+}
+
+async function extractOnce(deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const { entityId, trigger } = ctx;
-  const ontologyContext = (await deps.ontologyService?.buildPromptContext(entityId)) ?? null;
   const prompt = deps.promptService.buildOpsExtractPrompt(batch, ontologyContext, ctx.guidance);
   const text = await callLlm(deps.options, { operation: 'librarian', entityId, trigger, meter: ctx.meter }, prompt);
   const parsed = parseJsonResponse<{ facts?: unknown; tasks?: unknown; ontology_updates?: OntologyUpdates }>(text);

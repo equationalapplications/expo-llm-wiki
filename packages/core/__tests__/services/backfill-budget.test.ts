@@ -67,3 +67,51 @@ describe('runOntologyBackfill tokenBudget', () => {
     expect(result.typed).toBe(2);
   });
 });
+
+describe('runOntologyBackfill tokenBudget (generative path)', () => {
+  async function makeGenerativeWiki(onDiagnostic?: (d: any) => void) {
+    const db = openTestDatabase();
+    const generateText = vi.fn(async (p: { userPrompt: string }) => {
+      const id = /"id":\s*"(f\d)"/.exec(p.userPrompt)?.[1] ?? 'f0';
+      return JSON.stringify({ classifications: [{ id, okf_type: 'person' }] });
+    });
+    const wiki = createWiki(db, {
+      llmProvider: { generateText },
+      config: { reportLlmUsage: true },
+      ...(onDiagnostic ? { onDiagnostic } : {}),
+    });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    // Two facts too large to share one prompt (2 x 25k chars > the 40k prompt cap), so each gets its own call.
+    for (let i = 0; i < 2; i++) {
+      await db.runAsync(
+        `INSERT INTO ${PREFIX}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count)
+         VALUES (?, 'e1', ?, ?, '[]', 'certain', 'user_stated', ?, ?, 0)`,
+        [`f${i}`, `f${i}`, 'x'.repeat(25_000), 100 + i, 100 + i],
+      );
+    }
+    return { db, wiki, generateText };
+  }
+
+  it('stops mid-pass: budgetStop set, unattempted facts not scanned and not cooldown-stamped', async () => {
+    const probeDiags: any[] = [];
+    const probe = await makeGenerativeWiki((d) => probeDiags.push(d));
+    await probe.wiki.runOntologyBackfill('e1');
+    const usage = probeDiags.filter((d) => d.code === 'llm_usage');
+    expect(usage).toHaveLength(2);
+    const { inputTokens, outputTokens } = usage[0].detail;
+
+    // First call fits; the second needs `inputTokens` but only inputTokens - 1 remain.
+    const { db, wiki, generateText } = await makeGenerativeWiki();
+    const result = await wiki.runOntologyBackfill('e1', { tokenBudget: inputTokens + outputTokens + inputTokens - 1 });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(result.budgetStop).toEqual({ requiredEstimate: inputTokens });
+    expect(result.scanned).toBe(1);
+    expect(result.remaining).toBe(1);
+    const unstamped = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NULL`,
+    );
+    expect(unstamped.map((r) => r.id)).toEqual(['f1']);
+  });
+});

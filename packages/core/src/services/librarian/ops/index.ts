@@ -98,7 +98,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   }
   deps.searchService.evictCache(entityId);
 
-  const last = sel.batch[sel.batch.length - 1].event;
+  const last = ex.batch[ex.batch.length - 1].event;
   return {
     processedThrough: { at: last.created_at, id: last.id },
     factsWritten: written.length + updatedIds.length,
