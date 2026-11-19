@@ -465,6 +465,10 @@ pass.
     overflow set, and its cause is really a config error. It classifies as
     overflow anyway: the overflow check runs first, so the outcome is a
     split or a cooldown skip, not propagation. Recorded as deliberate.
+  - Anthropic's "input length and `max_tokens` exceed context limit"
+    message is a second deliberate dual-match ruling, same style as the
+    vLLM one: it matches both a truncation pattern and the overflow set,
+    and classifies as overflow because the overflow check runs first.
 - `runBatched` must treat overflow at batch size > 1 as a split trigger.
   This needs three `onFailure` edits, all spelled out here:
   - The escalation gate at `BoundedLlmCall.ts:254` becomes
@@ -553,7 +557,9 @@ claims until measurement exists.
   fall back to the same estimate rule as E1. A test must prove the
   `'classify'` bucket is non-zero with a classifier present.
 - The benchmark provider gains an optional classifier endpoint, configured
-  by `BENCH_CLASSIFIER_URL` and `BENCH_CLASSIFIER_MODEL`. The scripted
+  by `BENCH_CLASSIFIER_URL`, `BENCH_CLASSIFIER_MODEL` and
+  `BENCH_CLASSIFIER_KEY` (its own key; when unset, no Authorization
+  header is sent). The scripted
   provider used by tests (`scriptedProvider.ts`, which keys on the system
   prompt today) must gain a `classify` stub so the non-zero-bucket test
   needs no real endpoint.

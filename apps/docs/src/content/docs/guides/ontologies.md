@@ -161,6 +161,9 @@ do {
 } while (r.remaining > 0);
 ```
 
+- **Host-loop guidance:** loop `runOntologyBackfill` while `remaining > 0 && !budgetStop`; a
+  `budgetStop` result means a token budget ended the pass early, so a fixed budget never
+  converges (see the `budgetStop` doc comment on the result type).
 - **Stop when a pass doesn't lower `remaining`.** A fact whose provider call keeps throwing (a
   `call_error`, or a thrown `classify`) gets no cooldown stamp and stays eligible, so a bare
   `while (remaining > 0)` loop can spin on it forever. The guard above stops on no progress;

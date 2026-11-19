@@ -2350,7 +2350,7 @@ export class MaintenanceService {
     const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
     if (aborted) {
       // Mirrors the LLM path: nothing from the aborted batch was written; the host loop terminates.
-      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred };
+      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred, ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}) };
     }
     this.searchService.evictCache(entityId);
     return {

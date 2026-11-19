@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../../../../src/WikiMemory';
 import { selectBatch, runExtract } from '../../../../src/services/librarian/ops/extract';
+import { UsageMeter } from '../../../../src/utils/usage';
 import { openTestDatabase } from '../../../helpers/sqliteAdapter';
 
 type P = { systemPrompt: string; userPrompt: string };
@@ -39,12 +40,12 @@ describe('ops extract overflow retry', () => {
       const label = /^(e\d+(?:#[\d.]+)?) \[/m.exec(p.userPrompt)![1];
       return JSON.stringify({ facts: [fact(`Fact from ${label} here`, label)], tasks: [] });
     });
-    // >2x the window: needs recursive halving (16000 chars -> 8 segments of ~2000)
-    await ev('evt_1', 10, 'word '.repeat(3200));
+    // >2x the window: needs recursive halving (7500 chars -> 4 segments of ~1875; 6 calls, within MAX_SEGMENT_CALLS)
+    await ev('evt_1', 10, 'word '.repeat(1500));
     const sel: any = await selectBatch(deps, 'u', null);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.candidates.map((c) => c.sourceLabel)).toEqual([
-      'e1#1.1.1', 'e1#1.1.2', 'e1#1.2.1', 'e1#1.2.2', 'e1#2.1.1', 'e1#2.1.2', 'e1#2.2.1', 'e1#2.2.2',
+      'e1#1.1', 'e1#1.2', 'e1#2.1', 'e1#2.2',
     ]);
     expect(new Set(out.candidates.map((c) => c.sourceEventId))).toEqual(new Set(['evt_1']));
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1']);
@@ -123,6 +124,35 @@ describe('ops extract overflow retry', () => {
     expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
     await expect(wiki.runLibrarian('u')).resolves.not.toThrow();
     expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
+  });
+
+  it('caps segment fan-out: a huge event makes at most MAX_SEGMENT_CALLS segment calls, is skipped with a diagnostic, watermark advances', async () => {
+    const diags: any[] = [];
+    let poisonCalls = 0;
+    const { wiki, ev } = await mk(async (p) => {
+      if (p.userPrompt.includes('POISON')) { poisonCalls++; throw tooLong(); }
+      return JSON.stringify({ facts: [], tasks: [] });
+    }, (d) => diags.push(d));
+    await ev('evt_1', 10, 'POISON '.repeat(3000)); // many floor-length segments if uncapped
+    const wm = () => (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u');
+    await expect(wiki.runLibrarian('u')).resolves.not.toThrow();
+    expect(poisonCalls).toBeLessThanOrEqual(1 + 8); // initial whole-event call + capped segment calls
+    expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(1);
+    expect(await wm()).toEqual({ at: 10, id: 'evt_1' });
+  });
+
+  it('the all-skipped probe runs unmetered: an exhausted budget does not turn skip+advance into WikiBudgetExhausted', async () => {
+    const meter = new UsageMeter(1_000_000);
+    const { deps, ev } = await mk(async (p) => {
+      if (p.userPrompt.includes('POISON')) { meter.used = 1_000_000; throw tooLong(); }
+      return JSON.stringify({ facts: [], tasks: [] });
+    });
+    await ev('evt_1', 10, `POISON ${'word '.repeat(119)}`); // below segment floor: skipped without segment calls
+    const ctx: any = { entityId: 'u', trigger: 'call', meter };
+    const sel: any = await selectBatch(deps, 'u', null);
+    const out = await runExtract(deps, ctx, sel.batch ?? sel);
+    expect(out.skippedEvents).toBe(1);
+    expect(out.diagnostics.map((d: any) => d.code)).toContain('context_overflow_skipped');
   });
 
   it('pass watermark follows the batch actually extracted', async () => {

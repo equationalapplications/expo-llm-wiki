@@ -43,6 +43,9 @@ export interface ExtractOutcome {
 /** Floor for recursive segmentation: a segment below this many chars is skipped, not split. */
 const MIN_SEGMENT_CHARS = 500;
 
+/** Max segment `extractOnce` calls per lone oversized event; past it the event is skipped. */
+const MAX_SEGMENT_CALLS = 8;
+
 const estimatePrompt = (p: { systemPrompt: string; userPrompt: string }) =>
   estimateTokens(p.systemPrompt) + estimateTokens(p.userPrompt);
 
@@ -169,9 +172,12 @@ async function extractWithOverflowRetry(
       code: 'context_overflow_skipped', detail: { sourceRef: lone.event.id },
     });
     const segLabel = (label: string, n: number) => (label.includes('#') ? `${label}.${n}` : `${label}#${n}`);
+    let segCalls = 0;
     // Returns null when the segment (and every sub-segment) was skipped.
     const extractSegment = async (label: string, text: string, alreadyOverflowed: boolean): Promise<ExtractOutcome | null | 'partial'> => {
       if (!alreadyOverflowed) {
+        if (segCalls >= MAX_SEGMENT_CALLS) return null; // fan-out cap: stop splitting, skip
+        segCalls++;
         try {
           return await extractOnce(deps, ctx, ontologyContext, [{ label, at: lone.at, event: { ...lone.event, summary: text } }]);
         } catch (e) {
@@ -212,8 +218,9 @@ export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext,
     const probe = deps.promptService.buildOpsExtractPrompt(
       [{ ...batch[0], event: { ...batch[0].event, summary: 'x' } }], ontologyContext, ctx.guidance,
     );
+    // Unmetered on purpose: the probe is a window measurement, not content spend.
     try {
-      await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: ctx.meter }, probe);
+      await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: undefined }, probe);
     } catch (e) {
       if (!isContextOverflowError(e)) throw e;
       throw new Error(`ops extract: all ${out.skippedEvents} selected events were skipped for context overflow and a minimal probe also overflowed (fixed prompt part exceeds the model window?)`);
