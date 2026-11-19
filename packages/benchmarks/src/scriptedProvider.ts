@@ -89,6 +89,9 @@ export function createScriptedProvider(stream: readonly StreamEvent[]): { provid
           return '{}';
       }
     },
+    async classify(): Promise<{ answers: Record<string, unknown> }> {
+      return { answers: {} };
+    },
     async embed(text: string): Promise<number[]> {
       return hashEmbed(text);
     },

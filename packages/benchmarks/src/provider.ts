@@ -13,6 +13,8 @@
  * include the API key in the error message.
  */
 
+import type { ClassifyRequest } from '@equationalapplications/core-llm-wiki';
+
 export interface ChatEndpoint {
   protocol: 'anthropic' | 'openai';
   baseUrl: string;
@@ -30,9 +32,19 @@ export interface TextWithUsage {
   usage?: { inputTokens: number; outputTokens: number };
 }
 
+export type ClassifyParams = ClassifyRequest;
+
+export interface ClassifyResult {
+  answers: Record<string, unknown>;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
 export interface ChatProvider {
   generateText(p: TextParams): Promise<string>;
   generateTextWithUsage(p: TextParams): Promise<TextWithUsage>;
+  classify?(p: ClassifyParams): Promise<ClassifyResult>;
+  /** Passthrough of BENCH_CONTEXT_TOKENS for later lane PRs; nothing else consumes it yet. */
+  contextTokens?: number;
 }
 
 type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<Response>;
@@ -187,8 +199,35 @@ function openaiProvider(ep: ChatEndpoint, fetchImpl: FetchLike): ChatProvider {
 }
 
 export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): ChatProvider {
-  if (ep.protocol === 'anthropic') return anthropicProvider(ep, fetchImpl);
-  return openaiProvider(ep, fetchImpl);
+  const provider = ep.protocol === 'anthropic' ? anthropicProvider(ep, fetchImpl) : openaiProvider(ep, fetchImpl);
+  const classifierUrl = process.env.BENCH_CLASSIFIER_URL;
+  if (classifierUrl) {
+    const model = process.env.BENCH_CLASSIFIER_MODEL ?? ep.model;
+    provider.classify = async (p: ClassifyParams): Promise<ClassifyResult> => {
+      const body = { model, temperature: 0, messages: [{ role: 'user', content: JSON.stringify(p) }] };
+      const response = await sendWithRetry(
+        classifierUrl,
+        { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.apiKey}` }, body: JSON.stringify(body) },
+        fetchImpl,
+      );
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(errMessage(response.status, text));
+      }
+      const data = (await response.json()) as {
+        answers?: Record<string, unknown>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number; inputTokens?: number; outputTokens?: number };
+      };
+      const u = data.usage;
+      const usage = u
+        ? { inputTokens: u.inputTokens ?? u.prompt_tokens ?? 0, outputTokens: u.outputTokens ?? u.completion_tokens ?? 0 }
+        : undefined;
+      return { answers: data.answers ?? {}, usage };
+    };
+  }
+  // Passthrough read by later lane PRs; nothing else consumes it yet.
+  if (process.env.BENCH_CONTEXT_TOKENS) provider.contextTokens = Number(process.env.BENCH_CONTEXT_TOKENS);
+  return provider;
 }
 
 // --------------------------------------------------------------------------
