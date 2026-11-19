@@ -163,6 +163,12 @@ export interface RunBatchedArgs<TItem, TResult> {
   maxOutputTokens?: number;
   /** Input bound, applied independently of output sizing. */
   maxPromptChars: number;
+  /**
+   * True when the caller's buildPrompt sheds context per attemptLevel, so
+   * escalating after an input-overflow error at size 1 can actually help.
+   * Default false: overflow at size 1 then skips as 'non_convergent'.
+   */
+  supportsEscalation?: boolean;
   /** Called once per skipped item, for operator-legible logging. */
   onSkip?: (item: TItem, err: unknown) => void;
 }
@@ -206,7 +212,7 @@ const promptLength = (prompts: BuiltPrompt): number =>
 export async function runBatched<TItem, TResult>(
   args: RunBatchedArgs<TItem, TResult>,
 ): Promise<RunBatchedOutcome<TItem, TResult>> {
-  const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip } = args;
+  const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip, supportsEscalation } = args;
 
   const results: TResult[] = [];
   const skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }> = [];
@@ -282,7 +288,7 @@ export async function runBatched<TItem, TResult>(
       // context-shedding (the JSON desync shape is the same at L1, L2, and L3);
       // escalating would burn three calls before reaching skip. The gate
       // prevents that.
-      if (fromCall && isTruncationError(err) && attemptLevel < 3) {
+      if (fromCall && (isTruncationError(err) || (supportsEscalation && isContextOverflowError(err))) && attemptLevel < 3) {
         // Bypass trim: its prebuilt prompt is the L0 form, invalid at the new
         // level. attempt() will call buildPrompt(batch, attemptLevel + 1) to
         // produce the level-appropriate prompt.
@@ -299,7 +305,9 @@ export async function runBatched<TItem, TResult>(
         // docs/superpowers/specs/2026-08-17-...-design.md §"Revision 1 —
         // call_error subreason".
         const reason: 'non_convergent' | 'call_error' =
-          fromCall && !isTruncationError(err) && !isConfigError(err) ? 'call_error' : 'non_convergent';
+          fromCall && !isTruncationError(err) && !isConfigError(err) && !isContextOverflowError(err)
+            ? 'call_error'
+            : 'non_convergent';
         skipped.push({ item: batch[0], reason });
         settled.add(batch[0]);
         onSkip?.(batch[0], err);
@@ -309,7 +317,7 @@ export async function runBatched<TItem, TResult>(
     // Non-truncation call errors at batch.length > 1 are real errors (network,
     // auth) and must propagate rather than silently split/skip the corpus.
     // Parse errors always split — the JSON may parse after shedding context.
-    if (fromCall && !isTruncationError(err)) throw err;
+    if (fromCall && !isTruncationError(err) && !isContextOverflowError(err)) throw err;
     // batch.length > 1: split path, unchanged. Sticky-down batchSize
     // adaptation and the inner trim/attempt loop at level 0 are preserved.
     const mid = Math.ceil(batch.length / 2);

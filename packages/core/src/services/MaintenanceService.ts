@@ -1810,6 +1810,8 @@ export class MaintenanceService {
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      // heal's buildPrompt sheds anchors per attemptLevel — escalation is real (errata E2)
+      supportsEscalation: true,
       onSkip: (fact, err) => {
         console.warn(
           `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
