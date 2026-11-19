@@ -360,7 +360,8 @@ prompt export. Migration tests follow the existing migrations suite pattern
 ## Errata (2026-11-19 UTC — PR1 metering lane; Proposal A step 2)
 
 **Errata status: proposed — pending [PR #428](https://github.com/equationalapplications/expo-llm-wiki/pull/428) (draft).** The
-amendments below are unshipped until that PR merges. The spec's
+amendments below are unshipped until that PR merges. PR #428 carries both
+this errata and the implementation (one-PR lifecycle). The spec's
 `Implemented` status covers only the original spec and the PR #425 errata.
 
 The accepted Proposal A migration lives in the EA Curated Thoughts vault —
