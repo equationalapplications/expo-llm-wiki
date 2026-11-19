@@ -77,23 +77,34 @@ export const TITLE_CATALOG_MAX_ENTRIES = 200;
 export function buildTitleCatalogBlock(
   rows: ReadonlyArray<{ title: string; okf_type: string | null }>,
 ): string {
-  // Dedupe by normalized title key: edge resolution keys the index the same
-  // way (normalizeTitleKey, last-wins), so two nodes sharing a key would list
-  // two catalog lines while only one is resolvable (T1.5 finding 3).
-  const seen = new Set<string>();
-  const typed = rows
-    .filter((r) => typeof r.title === 'string' && r.title.length > 0 && typeof r.okf_type === 'string' && r.okf_type.length > 0)
-    .filter((r) => {
-      const key = normalizeTitleKey(r.title);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
+  // Dedupe LAST-WINS by normalized title key — edge resolution fills its
+  // index with Map.set on the same key, so the last row per key is the node
+  // a proposal actually resolves to; the catalog must show that node's type
+  // (T1.5 sonnet-xhigh rung N2). Residual ambiguity: the DB row order that
+  // defines "last" is unspecified on both sides.
+  const byKey = new Map<string, { title: string; okf_type: string }>();
+  for (const r of rows) {
+    if (typeof r.title !== 'string' || r.title.length === 0) continue;
+    if (typeof r.okf_type !== 'string' || r.okf_type.length === 0) continue;
+    byKey.set(normalizeTitleKey(r.title), { title: r.title, okf_type: r.okf_type });
+  }
+  const typed = [...byKey.values()]
     // UTF-16 code-unit order via `<` — deterministic across runtimes/locales
     // (not locale-sensitive), so prompts (and any cap boundary) are stable.
     .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
-  const truncated = typed.length > TITLE_CATALOG_MAX_ENTRIES;
-  const listed = typed.slice(0, TITLE_CATALOG_MAX_ENTRIES);
+  // Char budget (sonnet-xhigh N3): 200 entries of long imported titles could
+  // eat the runBatched payload budget before any fact is added, and an
+  // oversized lone fact is still sent. Bound the block itself.
+  const CHAR_BUDGET = 8000;
+  const listed: Array<{ title: string; okf_type: string }> = [];
+  let used = 0;
+  for (const r of typed) {
+    const line = `- ${JSON.stringify(r.title)} (${r.okf_type})`;
+    if (used + line.length + 1 > CHAR_BUDGET || listed.length >= TITLE_CATALOG_MAX_ENTRIES) break;
+    listed.push(r);
+    used += line.length + 1;
+  }
+  const truncated = typed.length > listed.length;
   if (listed.length === 0) {
     return [
       'TITLE CATALOG: this memory contains no typed nodes yet.',
@@ -104,7 +115,7 @@ export function buildTitleCatalogBlock(
   return [
     'TITLE CATALOG: existing typed nodes in this memory include:',
     catalog,
-    ...(truncated ? [`(This list is truncated; more typed nodes exist beyond the first ${TITLE_CATALOG_MAX_ENTRIES} titles.)`] : []),
+    ...(truncated ? ['(This list is truncated; more typed nodes exist than are shown here.)'] : []),
     'A "target_title" may be copied verbatim from this catalog, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.',
   ].join('\n');
 }

@@ -251,15 +251,38 @@ describe('PromptService', () => {
       expect(block).toContain('classified in this same response');
     });
 
-    it('dedupes titles that normalize to the same key (edge resolution is last-wins on the key)', () => {
+    it('dedupes last-wins on the normalized key, matching edge resolution', () => {
       const block = buildTitleCatalogBlock([
         { title: 'Orbit', okf_type: 'software_application' },
         { title: 'orbit ', okf_type: 'software_application' },
         { title: 'Deploy', okf_type: 'area' },
       ]);
-      expect(block.match(/- "Orbit"/g)?.length).toBe(1);
-      expect(block).not.toContain('"orbit "');
+      // Last row per key wins (Map.set semantics, like the resolution index).
+      expect(block).toContain('- "orbit " (software_application)');
+      expect(block).not.toContain('- "Orbit" (software_application)');
       expect(block).toContain('- "Deploy" (area)');
+    });
+
+    it('last-wins dedupe keeps the resolvable node type when same-key rows differ in type', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'orbit', okf_type: 'area' },
+      ]);
+      // Resolution targets the area node, so the catalog must show area.
+      expect(block.match(/"orbit"/g)?.length).toBe(1);
+      expect(block).toContain('- "orbit" (area)');
+      expect(block).not.toContain('(software_application)');
+    });
+
+    it('caps the catalog by characters as well as entries (payload budget, sonnet N3)', () => {
+      const rows = Array.from({ length: 200 }, (_, i) => ({
+        title: `T${String(i).padStart(3, '0')}-${'x'.repeat(200)}`,
+        okf_type: 'area' as const,
+      }));
+      const block = buildTitleCatalogBlock(rows);
+      // 200 entries x ~230 chars would be ~46k chars; the block is bounded.
+      expect(block.length).toBeLessThan(9000);
+      expect(block).toContain('This list is truncated');
     });
 
     it('escapes titles through JSON.stringify', () => {

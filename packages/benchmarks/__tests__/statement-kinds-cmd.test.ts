@@ -93,6 +93,21 @@ describe('runStatementKindsCommand guard', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('prototype keys (constructor) do not bypass the unknown-variant guard', async () => {
+    const stderr = vi.fn();
+    const fetchImpl = vi.fn();
+    const r = await runStatementKindsCommand({
+      argv: ['statement-kinds', '--about-experiment', 'constructor', '--dry-run'],
+      env: {},
+      entries,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toContain('unknown --about-experiment variant: constructor');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('an unknown --about-experiment variant exits 2 before endpoint resolution', async () => {
     const stderr = vi.fn();
     const fetchImpl = vi.fn();
