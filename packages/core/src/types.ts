@@ -783,6 +783,7 @@ export type ClassifierAnswer =
 
 export interface ClassifyResponse {
   answers: Record<string, ClassifierAnswer>;
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 /**
