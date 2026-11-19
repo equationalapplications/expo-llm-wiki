@@ -5,6 +5,7 @@ import {
   LIBRARIAN_SYSTEM_PROMPT,
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
+  buildTitleCatalogBlock,
 } from '../../src/prompts';
 import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
 
@@ -206,6 +207,141 @@ describe('PromptService', () => {
       const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}');
       expect(systemPrompt).toContain('fact_1');
       expect(userPrompt).toBe('Please classify the facts.');
+    });
+  });
+
+  describe('buildOntologyBackfillPrompt title catalog (#381)', () => {
+    const facts = [{ id: 'fact_1', title: 'T', body: 'B', tags: [] }];
+
+    it('splices the catalog between the base prompt and the ontology appendix', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'TITLE CATALOG: x');
+      const base = systemPrompt.indexOf(ONTOLOGY_BACKFILL_SYSTEM_PROMPT);
+      const cat = systemPrompt.indexOf('TITLE CATALOG: x');
+      const appendix = systemPrompt.indexOf(ctx.ontologyModeInstructions);
+      expect(cat).toBeGreaterThan(base);
+      expect(appendix).toBeGreaterThan(cat);
+      expect(userPrompt).toContain('fact_1');
+    });
+
+    it('omits the catalog when none is supplied (baseline prompt unchanged)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      expect(systemPrompt).not.toContain('TITLE CATALOG');
+    });
+
+    it('placeholder templates keep skipping the catalog (documented M5 limitation, locked by test)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'TITLE CATALOG: x');
+      expect(systemPrompt).not.toContain('TITLE CATALOG: x');
+      expect(systemPrompt).toContain('fact_1');
+      expect(userPrompt).toBe('Please classify the facts.');
+    });
+  });
+
+  describe('buildTitleCatalogBlock (#381)', () => {
+    it('formats typed rows verbatim, skips untyped rows, sorts by code point', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'Draft', okf_type: null },
+        { title: 'Acme Labs', okf_type: 'organization' },
+      ]);
+      expect(block).toContain('TITLE CATALOG: existing typed nodes in this memory include:');
+      expect(block).toContain('- "Orbit" (software_application)');
+      expect(block).toContain('- "Acme Labs" (organization)');
+      expect(block).not.toContain('Draft');
+      expect(block.indexOf('"Acme Labs"')).toBeLessThan(block.indexOf('"Orbit"'));
+      // Non-exclusive wording (review M1): same-batch targets stay valid, so
+      // the block must not claim catalog membership is the only validity.
+      expect(block).not.toContain('valid only if');
+      expect(block).toContain('classified in this same response');
+    });
+
+    // Last-wins mirrors titleIndex.set, but "last" is unspecified on both
+    // sides (no ORDER BY on the index query) — this test pins the semantics
+    // of the dedupe for a GIVEN row order, not agreement with resolution.
+    it('dedupes last-wins on the normalized key, matching edge resolution', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'orbit ', okf_type: 'software_application' },
+        { title: 'Deploy', okf_type: 'area' },
+      ]);
+      // Last row per key wins (Map.set semantics, like the resolution index).
+      expect(block).toContain('- "orbit " (software_application)');
+      expect(block).not.toContain('- "Orbit" (software_application)');
+      expect(block).toContain('- "Deploy" (area)');
+    });
+
+    it('last-wins dedupe keeps the resolvable node type when same-key rows differ in type', () => {
+      const block = buildTitleCatalogBlock([
+        { title: 'Orbit', okf_type: 'software_application' },
+        { title: 'orbit', okf_type: 'area' },
+      ]);
+      // Resolution targets the area node, so the catalog must show area.
+      expect(block.match(/"orbit"/g)?.length).toBe(1);
+      expect(block).toContain('- "orbit" (area)');
+      expect(block).not.toContain('(software_application)');
+    });
+
+    it('an oversized first title is skipped, never restated as "no typed nodes" (Opus r3 M1)', () => {
+      // 'A…' sorts FIRST in UTF-16 order — this exercises the oversized line
+      // before anything is listed (the delta re-review caught the old test
+      // using 'X…', which sorted second and passed under the old break code).
+      const rows = [
+        { title: 'A'.repeat(9000), okf_type: 'area' as const },
+        { title: 'Real Node', okf_type: 'organization' as const },
+      ];
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('TITLE CATALOG');
+      expect(block).not.toContain('no typed nodes yet');
+      expect(block).toContain('- "Real Node" (organization)');
+      expect(block.length).toBeLessThan(9000);
+    });
+
+    it('an oversized title between two short ones does not hide later short titles (haiku delta residual)', () => {
+      const rows = [
+        { title: 'Alpha', okf_type: 'area' as const },
+        { title: 'B'.repeat(9000), okf_type: 'area' as const },
+        { title: 'Gamma', okf_type: 'organization' as const },
+      ];
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('- "Alpha" (area)');
+      expect(block).toContain('- "Gamma" (organization)');
+      expect(block).not.toContain('no typed nodes yet');
+    });
+
+    it('caps the catalog by characters as well as entries (payload budget, sonnet N3)', () => {
+      const rows = Array.from({ length: 200 }, (_, i) => ({
+        title: `T${String(i).padStart(3, '0')}-${'x'.repeat(200)}`,
+        okf_type: 'area' as const,
+      }));
+      const block = buildTitleCatalogBlock(rows);
+      // 200 entries x ~230 chars would be ~46k chars; the block is bounded.
+      expect(block.length).toBeLessThan(9000);
+      expect(block).toContain('This list is truncated');
+    });
+
+    it('escapes titles through JSON.stringify', () => {
+      const block = buildTitleCatalogBlock([{ title: 'Weird "quoted" title', okf_type: 'area' }]);
+      expect(block).toContain('- "Weird \\"quoted\\" title" (area)');
+    });
+
+    it('caps the catalog at 200 entries and discloses the truncation', () => {
+      const rows = Array.from({ length: 250 }, (_, i) => ({ title: `n${String(i).padStart(3, '0')}`, okf_type: 'area' as const }));
+      const block = buildTitleCatalogBlock(rows);
+      expect(block).toContain('"n199"');
+      expect(block).not.toContain('"n200"');
+      expect(block).toContain('This list is truncated');
+    });
+
+    it('returns an empty catalog note that still allows same-batch targets', () => {
+      const block = buildTitleCatalogBlock([{ title: 'Draft', okf_type: null }]);
+      expect(block).toContain('TITLE CATALOG: this memory contains no typed nodes yet');
+      expect(block).toContain('omit "edges" rather than invent a target_title');
+      expect(block).toContain('classified in this same response');
     });
   });
 

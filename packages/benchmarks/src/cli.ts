@@ -595,12 +595,39 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
   const dryRun = parsed.flags['dry-run'] === true;
   const yes = parsed.flags.yes === true;
   const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+  // #381 prompt-variant experiments: validate BEFORE endpoint resolution so a
+  // typo never reaches a paid call. One variant = one changed variable.
+  // The 'title-catalog' variant is RETIRED: the fix shipped in core
+  // (d56a70d5), so core now appends the production catalog to every run and
+  // the variant would double-append. The machinery stays for future variants.
+  const ABOUT_EXPERIMENTS: Record<string, { promptOverride: string }> = {};
+  // A valueless --about-experiment (parseArgs stores `true`) would otherwise
+  // skip the variant path entirely and spend a PAID run as an unlabeled
+  // baseline (T1.5 haiku-high rung finding 1).
+  const variantFlag = parsed.flags['about-experiment'];
+  if (variantFlag !== undefined && typeof variantFlag !== 'string') {
+    stderr(`--about-experiment requires a variant value (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ') || 'none'})\n`);
+    return { exitCode: 2 };
+  }
+  const variantArg = typeof variantFlag === 'string' ? variantFlag : undefined;
+  let variant: { promptOverride: string } | undefined;
+  if (variantArg !== undefined) {
+    // hasOwnProperty.call, not truthiness: a plain-object table returns
+    // inherited keys ('constructor', 'toString') truthily, which would skip
+    // the guard and spend a mislabelled paid run (T1.5 sonnet-xhigh rung N1).
+    variant = Object.prototype.hasOwnProperty.call(ABOUT_EXPERIMENTS, variantArg) ? ABOUT_EXPERIMENTS[variantArg] : undefined;
+    if (!variant) {
+      stderr(`unknown --about-experiment variant: ${variantArg} (known: ${Object.keys(ABOUT_EXPERIMENTS).join(', ') || 'none'})` + '\n');
+      return { exitCode: 2 };
+    }
+  }
   const tokenEstimate = deps.entries.length * STATEMENT_KINDS_TOKENS_PER_STATEMENT;
   const printEstimate = (model: string): void => {
     stdout(
       [
         `model: ${model}`,
         `statements: ${deps.entries.length}`,
+        ...(variantArg !== undefined ? [`variant: ${variantArg}`] : []),
         `input tokens (estimate): ${tokenEstimate.toLocaleString('en-US')}`,
       ].join('\n') + '\n',
     );
@@ -630,6 +657,7 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
     endpoint,
     engine,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+    ...(variant !== undefined ? { promptOverride: variant.promptOverride, variant: variantArg } : {}),
   });
   const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `statement-kinds-${engine.version}-${nowStamp()}.json`);
   writeFileAtomic(reportFile, JSON.stringify(report, null, 2));

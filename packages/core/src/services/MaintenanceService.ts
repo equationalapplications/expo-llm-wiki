@@ -5,6 +5,7 @@ import { validateClassifierAnswer, classifierStateForFact, type ClassifierReject
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
+import { buildTitleCatalogBlock } from '../prompts';
 import { HISTORY_MAX_DEPTH } from './TemporalService';
 
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
@@ -2074,6 +2075,24 @@ export class MaintenanceService {
 
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
 
+    // #381 fix: the classifier prompt gains the title catalog — the verifiable
+    // target pool of already-typed nodes (same index and title normalization
+    // edge resolution uses; the block dedupes on the normalized key). Timing
+    // note: the catalog reads the index once per pass outside a transaction,
+    // while resolution re-reads it inside each batch's tx — a node deleted or
+    // retyped in between makes a listed title unresolvable, so entries are
+    // verifiable as of prompt-build time, not write time. NOTE (honesty): the
+    // 0/28 → 28/28 E1 result measured a SEED-ONLY catalog variant via
+    // runner-level promptOverride (results/statement-kinds-e1-title-catalog-
+    // 2026-11-18.json); this shipped block covers all typed nodes and has not
+    // itself been benchmarked yet. The wording is deliberately non-exclusive:
+    // same-batch targets and titles beyond the 200-entry cap remain valid.
+    // The catalog is built once per pass, so facts typed in an earlier batch
+    // of the same run are accepted targets but are not listed yet — another
+    // known divergence from the E1 variant.
+    const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId);
+    const titleCatalog = buildTitleCatalogBlock(titleRows);
+
     // Payload guard: cap the full serialized prompt (system + user — manifest,
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
     // a provider's context window. A single fact whose prompt alone exceeds the
@@ -2085,6 +2104,7 @@ export class MaintenanceService {
       facts.map(toPromptShape),
       options?.promptOverride,
       ontologyContext,
+      titleCatalog,
     );
 
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({

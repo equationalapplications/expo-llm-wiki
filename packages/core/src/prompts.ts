@@ -1,4 +1,5 @@
 import type { GroundingWriter, ResolvedGrounding } from './utils/grounding';
+import { normalizeTitleKey } from './utils/ontology';
 
 /**
  * Specs/librarian-guidance. The general leave-out rule, ruled by the
@@ -62,6 +63,76 @@ Return ONLY a valid JSON object matching this schema:
 }
 If no manifest type fits a fact, omit that fact from "classifications" entirely — do not guess.
 When echoing an existing fact's title verbatim into "target_title", preserve every JSON escape sequence (\\", \\n, \\\\, \\/) exactly as it appeared in the input body — do not strip backslashes, do not add unescaped quotes. Do not return markdown, just raw JSON.`;
+
+/**
+ * #381 fix: the classifier prompt never surfaced the existing node titles, so
+ * its strict-mode "omit invalid edges" rules made proposing nothing the
+ * fully-compliant answer (0/28 in the statement-kinds measured run). The
+ * title catalog is the verifiable target pool. Rows are typed nodes only —
+ * the caller reads them from the same title index edge resolution uses, so
+ * a catalog title is resolvable by construction.
+ */
+export const TITLE_CATALOG_MAX_ENTRIES = 200;
+
+export function buildTitleCatalogBlock(
+  rows: ReadonlyArray<{ title: string; okf_type: string | null }>,
+): string {
+  // Dedupe LAST-WINS by normalized title key — edge resolution fills its
+  // index with Map.set on the same key, so the last row per key is the node
+  // a proposal actually resolves to; the catalog must show that node's type
+  // (T1.5 sonnet-xhigh rung N2). Residual ambiguity: the DB row order that
+  // defines "last" is unspecified on both sides.
+  const byKey = new Map<string, { title: string; okf_type: string }>();
+  for (const r of rows) {
+    if (typeof r.title !== 'string' || r.title.length === 0) continue;
+    if (typeof r.okf_type !== 'string' || r.okf_type.length === 0) continue;
+    byKey.set(normalizeTitleKey(r.title), { title: r.title, okf_type: r.okf_type });
+  }
+  const typed = [...byKey.values()]
+    // UTF-16 code-unit order via `<` — deterministic across runtimes/locales
+    // (not locale-sensitive), so prompts (and any cap boundary) are stable.
+    .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+  // Char budget (sonnet-xhigh N3): 200 entries of long imported titles could
+  // eat the runBatched payload budget before any fact is added, and an
+  // oversized lone fact is still sent. Bound the block itself.
+  const CHAR_BUDGET = 8000;
+  const listed: Array<{ title: string; okf_type: string }> = [];
+  let used = 0;
+  for (const r of typed) {
+    const line = `- ${JSON.stringify(r.title)} (${r.okf_type})`;
+    // Non-fitting lines are SKIPPED (continue), never a break: a break would
+    // hide every shorter title sorting after an oversized one, and stopping
+    // on the first line could empty the block while typed nodes exist — the
+    // empty wording would then falsely claim there are no targets (Opus r3
+    // delta M1 + haiku delta residual). Only the entry-count cap breaks.
+    if (line.length + 1 > CHAR_BUDGET) continue;
+    if (listed.length >= TITLE_CATALOG_MAX_ENTRIES) break;
+    if (used + line.length + 1 > CHAR_BUDGET) continue;
+    listed.push(r);
+    used += line.length + 1;
+  }
+  const truncated = typed.length > listed.length;
+  if (typed.length === 0) {
+    return [
+      'TITLE CATALOG: this memory contains no typed nodes yet.',
+      'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
+    ].join('\n');
+  }
+  if (listed.length === 0) {
+    // Typed nodes exist but none fit the budget — truncated, not empty.
+    return [
+      'TITLE CATALOG: existing typed nodes exist in this memory, but none fit the catalog budget.',
+      'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
+    ].join('\n');
+  }
+  const catalog = listed.map((r) => `- ${JSON.stringify(r.title)} (${r.okf_type})`).join('\n');
+  return [
+    'TITLE CATALOG: existing typed nodes in this memory include:',
+    catalog,
+    ...(truncated ? ['(This list is truncated; more typed nodes exist than are shown here.)'] : []),
+    'A "target_title" may be copied verbatim from this catalog, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.',
+  ].join('\n');
+}
 
 const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {
   ingest: { key: 'facts', source: 'the document chunk' },

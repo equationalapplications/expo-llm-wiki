@@ -11,7 +11,13 @@ delta ("Approve after conditioned fixes; no blockers"). Measured run
 in Errata: kind split 28/28 on GLM-5.3-flash; about-proposal 0/28
 filed as #381; attachment path shipped unproven — the measured run recorded
 0/28 persisted about edges (#381), and test-plan item 6's stub guards the
-plumbing, not model behavior.)
+plumbing, not model behavior. #381 update: root cause diagnosed (invisible
+target pool) and a title-catalog fix implemented on PR #425
+(commits d56a70d5..75ef53ad + T1.5 folds) — owner ruled the catalog
+data-scope change acceptable 2026-11-19 (all typed nodes, capped at
+8k chars — temporary until shortlist scope lands, per the ctx-window
+consultation); pending owner merge; the shipped prompt is not yet
+benchmarked — see Errata.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
@@ -580,3 +586,39 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   no-proposal/dropped-proposal question in the first run's caveat is
   settled: **no proposals**. #381's diagnosis narrows to prompt
   steering or model behavior, not edge plumbing.
+- **Diagnosis + fix run — 2026-11-18** (issue #381): an offline render of
+  the exact classifier prompt from the built packages showed the
+  verifiable target pool was **invisible** — the prompt names no
+  existing node titles, so the strict-mode "omit invalid edges" rules
+  made proposing nothing the fully-compliant answer. This settles the
+  re-run's prompt-steering question: not dropped plumbing, not weak
+  steering — an unreachable instruction. Fix: the backfill classifier
+  prompt now carries a TITLE CATALOG of typed nodes read from the same
+  title index edge resolution uses (`buildTitleCatalogBlock`, typed
+  rows only, capped at 200 entries; scoped to the backfill prompt —
+  other writers' prompts unchanged). One-variable experiment E1
+  (runner-level `promptOverride`, harness `98ad68f1`) measured a
+  SEED-ONLY catalog variant against the same 28-fixture on the same
+  model (GLM-5.3-flash): **`about` proposed 28/28 with correct target
+  28/28**, kind accuracy unchanged 28/28, `about_dropped` empty
+  (`results/statement-kinds-e1-title-catalog-2026-11-18.json`). The
+  shipped block differs from the E1 variant (all typed nodes, sorted,
+  non-exclusive wording, truncation note) and **has not itself been
+  benchmarked yet** — E1 is diagnosis evidence that the structural gap
+  was the blocker, not a measured claim about the shipped prompt.
+  Single run, single model, 28 rows — not a rate claim; second-model,
+  larger-fixture, and shipped-prompt verification still owed per the
+  follow-up rule. The retired E1 variant is not re-runnable from HEAD
+  (the CLI rejects the name now that the fix ships in core); the
+  artifact plus harness commit `98ad68f1` are the record. Catalog scope
+  ruling: typed node titles now leave the device to the provider with
+  each backfill call (previously only the batch's facts and the type
+  manifest did) — surfaced to the owner with the PR; the catalog is
+  bounded at 8k chars (~2k tokens) per call on top of the prior prompt,
+  cap ranking is UTF-16 code-unit order (deterministic, not
+  locale-sensitive), truncation disclosed. OWNER
+  RULING 2026-11-19 (Kurt, in-thread "Approved"): scope accepted as-is
+  — all typed nodes, capped — as a TEMPORARY scope; the ctx-window
+  consultation (records/investigations/2026-11-19-consult-ctx-windows-s1)
+  plans to narrow it to per-fact shortlist scope in a follow-up PR,
+  at which point this ruling is superseded.
