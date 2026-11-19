@@ -125,9 +125,9 @@ export function instrument(inner: ProviderLike, recorder: UsageRecorder, forcedS
       const result = await inner.classify!(p);
       const ms = Date.now() - start;
       const estimated = result.usage === undefined;
-      const questionChars = Object.keys(p.questions ?? {}).length > 0 ? JSON.stringify(p.questions).length : 0;
       const usage = result.usage ?? {
-        inputTokens: Math.ceil((p.state.length + questionChars) / 4),
+        // Same rule as callClassify: each part rounded separately, questions always counted.
+        inputTokens: Math.ceil(p.state.length / 4) + Math.ceil(JSON.stringify(p.questions).length / 4),
         outputTokens: Math.ceil(JSON.stringify(result.answers ?? {}).length / 4),
       };
       recorder.record('classify', usage.inputTokens, usage.outputTokens, estimated, ms);

@@ -204,7 +204,10 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
   if (classifierUrl) {
     const model = process.env.BENCH_CLASSIFIER_MODEL ?? ep.model;
     provider.classify = async (p: ClassifyParams): Promise<ClassifyResult> => {
-      const body = { model, temperature: 0, messages: [{ role: 'user', content: JSON.stringify(p) }] };
+      // Contract: the endpoint receives the `ClassifyRequest` JSON (`{ state, questions, ... }`) as the
+      // request body (not a chat-completions body) plus `model`, and must return
+      // `{ answers: Record<string, ClassifierAnswer>, usage? }`.
+      const body = { ...p, model };
       const classifierKey = process.env.BENCH_CLASSIFIER_KEY;
       const headers: Record<string, string> = { 'content-type': 'application/json' };
       if (classifierKey) headers.authorization = `Bearer ${classifierKey}`;

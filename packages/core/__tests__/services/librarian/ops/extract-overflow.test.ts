@@ -7,9 +7,9 @@ type P = { systemPrompt: string; userPrompt: string };
 const eventCount = (p: P) => (p.userPrompt.match(/^e\d+(#\d+)? \[/gm) ?? []).length;
 const fact = (title: string, source: string) => ({ title, body: 'b', tags: [], confidence: 'certain', source_event: source });
 
-async function mk(generateText: (p: P) => Promise<string>, onDiagnostic?: (d: any) => void) {
+async function mk(generateText: (p: P) => Promise<string>, onDiagnostic?: (d: any) => void, extraConfig: Record<string, unknown> = {}) {
   const db = openTestDatabase();
-  const wiki = new WikiMemory(db, { ...(onDiagnostic ? { onDiagnostic } : {}), llmProvider: { generateText: vi.fn(generateText) }, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } });
+  const wiki = new WikiMemory(db, { ...(onDiagnostic ? { onDiagnostic } : {}), llmProvider: { generateText: vi.fn(generateText) }, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' }, ...extraConfig } } as any);
   await wiki.setup();
   const deps = (wiki.__testAccess.maintenanceService as any).librarianDeps();
   const ev = (id: string, at: number, summary: string) =>
@@ -61,6 +61,38 @@ describe('ops extract overflow retry', () => {
     await wiki.runLibrarian('u');
     expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(1);
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 20, id: 'evt_2' });
+  });
+
+  it('holds the watermark before an event only partly extractable (one segment skipped, sibling extracted)', async () => {
+    const diags: any[] = [];
+    const { wiki, ev } = await mk(async (p) => {
+      if (/\bb b\b/.test(p.userPrompt)) throw tooLong();
+      return JSON.stringify({ facts: labelsOf(p).map((l) => fact(`Fact from ${l} here`, l)), tasks: [] });
+    }, (d) => diags.push(d));
+    await ev('evt_1', 10, 'fine summary');
+    // Halves at ~900 chars: the 'a' half extracts, the half carrying 'b's overflows and is below 2x floor.
+    await ev('evt_2', 20, 'a '.repeat(600) + 'b '.repeat(300));
+    await ev('evt_3', 30, 'later summary');
+    await wiki.runLibrarian('u');
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 10, id: 'evt_1' });
+    expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(0);
+  });
+
+  it('keeps grounding corpus aligned when a lone oversized event is skipped ahead of a normal one', async () => {
+    const { deps, ev } = await mk(async (p) => {
+      if (p.userPrompt.includes('POISON')) throw tooLong();
+      return JSON.stringify({ facts: labelsOf(p).map((l) => fact(`Fact from ${l} here`, l)), tasks: [] });
+    }, undefined, { grounding: { mode: 'draft', writers: ['librarian'] } });
+    await ev('evt_1', 10, `POISON ${'word '.repeat(100)}`);
+    await ev('evt_2', 20, 'normal second summary');
+    const sel: any = await selectBatch(deps, 'u', null);
+    const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
+    expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1', 'evt_2']);
+    expect(out.candidates).toHaveLength(1);
+    const c = out.candidates[0];
+    expect(c.sourceEventId).toBe('evt_2');
+    expect(out.groundingCorpus).not.toBeNull();
+    expect(out.groundingCorpus![c.sourcePartIndex!]).toContain('normal second summary');
   });
 
   it('throws and holds the watermark when the fixed prompt part alone overflows (every event skipped)', async () => {

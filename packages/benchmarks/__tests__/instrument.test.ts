@@ -22,6 +22,6 @@ describe('instrument classify wrap', () => {
     const provider = instrument({ generateText: async () => 'ok', classify: async () => ({ answers: {} }) } as any, recorder);
     await provider.classify!({ state: 'abcd', questions: {} } as any);
     expect(recorder.totals().classify.estimatedCalls).toBe(1);
-    expect(recorder.totals().classify.inputTokens).toBe(1); // ceil(4/4)
+    expect(recorder.totals().classify.inputTokens).toBe(2); // ceil(4/4) + ceil(len('{}')/4)
   });
 });

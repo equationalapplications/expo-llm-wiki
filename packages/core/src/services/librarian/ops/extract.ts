@@ -38,6 +38,8 @@ export interface ExtractOutcome {
   /** Raw fact / task item counts in the model response(s), for merged diagnostic itemIndex offsets. */
   factItems: number;
   taskItems: number;
+  /** An event was only partly extractable: `batch` holds only events strictly before it (E3 all-or-nothing). */
+  hold?: boolean;
 }
 
 /** Floor for recursive segmentation: a segment below this many chars is skipped, not split. */
@@ -132,6 +134,7 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
     skippedEvents: a.skippedEvents + b.skippedEvents,
     factItems: a.factItems + b.factItems,
     taskItems: a.taskItems + b.taskItems,
+    ...(a.hold || b.hold ? { hold: true } : {}),
   };
 }
 
@@ -156,6 +159,7 @@ async function extractWithOverflowRetry(
       // result is discarded (data-correct; its spend is re-paid next pass),
       // matching the runBatched contract.
       const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid));
+      if (a.hold) return a; // later events are unprocessed, not skipped
       const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid));
       return mergeOutcomes(a, b);
     }
@@ -167,7 +171,7 @@ async function extractWithOverflowRetry(
     const segLabel = (label: string, n: number) => (label.includes('#') ? `${label}.${n}` : `${label}#${n}`);
     let skippedSegments = 0;
     // Returns null when the segment (and every sub-segment) was skipped.
-    const extractSegment = async (label: string, text: string, alreadyOverflowed: boolean): Promise<ExtractOutcome | null> => {
+    const extractSegment = async (label: string, text: string, alreadyOverflowed: boolean): Promise<ExtractOutcome | null | 'partial'> => {
       if (!alreadyOverflowed) {
         try {
           return await extractOnce(deps, ctx, ontologyContext, [{ label, at: lone.at, event: { ...lone.event, summary: text } }]);
@@ -180,13 +184,21 @@ async function extractWithOverflowRetry(
       if (h1.length < MIN_SEGMENT_CHARS || h2.length < MIN_SEGMENT_CHARS) { skippedSegments++; return null; }
       const a = await extractSegment(segLabel(label, 1), h1, false);
       const b = await extractSegment(segLabel(label, 2), h2, false);
-      if (!a || !b) return a ?? b;
+      if (a === 'partial' || b === 'partial') return 'partial';
+      if (!a && !b) return null;
+      if (!a || !b) return 'partial'; // one segment extracted, its sibling skipped
       return mergeOutcomes(a, b);
     };
     const merged = await extractSegment(lone.label, lone.event.summary, true);
+    if (merged === 'partial') {
+      // E3: every segment extracts, or the watermark holds before this event.
+      return { batch: [], candidates: [], tasks: [], groundingCorpus: null, diagnostics: [], skippedEvents: 0, factItems: 0, taskItems: 0, hold: true };
+    }
     if (!merged) {
+      // Carry this event's own corpus entry so merged partOffset math stays aligned to batch slots.
+      const corpus = deps.promptService.buildOpsExtractPrompt([lone], ontologyContext, ctx.guidance).groundingCorpus ?? null;
       return {
-        batch: [lone], candidates: [], tasks: [], groundingCorpus: null, diagnostics: [skipDiag()],
+        batch: [lone], candidates: [], tasks: [], groundingCorpus: corpus, diagnostics: [skipDiag()],
         skippedEvents: 1, factItems: 0, taskItems: 0,
       };
     }
@@ -197,6 +209,9 @@ async function extractWithOverflowRetry(
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
   const out = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
+  if (out.hold && out.batch.length === 0) {
+    throw new Error('ops extract: the first selected event could not be extracted in full (a segment overflowed below the floor); holding the watermark');
+  }
   if (out.skippedEvents > 0 && out.skippedEvents === out.batch.length) {
     // Nothing extractable: the fixed prompt part (ontology context, guidance) alone
     // overflows the window. Surface it and hold the watermark rather than drain the log.
