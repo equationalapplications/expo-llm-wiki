@@ -110,8 +110,10 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
 /**
  * Extract one batch; on a context-overflow error, halve and merge (sequential,
  * so the meter sees ordered spend). A lone oversized event is segmented into
- * `<label>#1` / `<label>#2` prompts that both resolve to the same event id; a
- * segment that still overflows rethrows (pass-level skip, as before).
+ * `<label>#1` / `<label>#2` prompts that both resolve to the same event id; if
+ * a segment still overflows, the event is returned as SKIPPED (no candidates,
+ * `context_overflow_skipped` diagnostic, still in `batch`) so the watermark
+ * advances past it instead of stalling the librarian (errata E3).
  */
 async function extractWithOverflowRetry(
   deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[],
@@ -122,17 +124,32 @@ async function extractWithOverflowRetry(
     if (!isContextOverflowError(err)) throw err;
     if (batch.length > 1) {
       const mid = Math.ceil(batch.length / 2);
+      // If the second half throws WikiBudgetExhausted, the first half's
+      // result is discarded (data-correct; its spend is re-paid next pass),
+      // matching the runBatched contract.
       const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid));
       const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid));
       return mergeOutcomes(a, b);
     }
     const lone = batch[0];
     const [h1, h2] = splitSummary(lone.event.summary);
-    if (h1.length === 0 || h2.length === 0) throw err;
+    const skipped = (): ExtractOutcome => ({
+      batch: [lone], candidates: [], tasks: [], groundingCorpus: null,
+      diagnostics: [{
+        entityId: ctx.entityId, operation: 'librarian', trigger: ctx.trigger,
+        code: 'context_overflow_skipped', detail: { sourceRef: lone.event.id },
+      }],
+    });
+    if (h1.length === 0 || h2.length === 0) return skipped();
     const seg = (n: number, text: string): LabeledEvent => ({ label: `${lone.label}#${n}`, at: lone.at, event: { ...lone.event, summary: text } });
-    const a = await extractOnce(deps, ctx, ontologyContext, [seg(1, h1)]);
-    const b = await extractOnce(deps, ctx, ontologyContext, [seg(2, h2)]);
-    return { ...mergeOutcomes(a, b), batch: [lone] };
+    try {
+      const a = await extractOnce(deps, ctx, ontologyContext, [seg(1, h1)]);
+      const b = await extractOnce(deps, ctx, ontologyContext, [seg(2, h2)]);
+      return { ...mergeOutcomes(a, b), batch: [lone] };
+    } catch (segErr) {
+      if (!isContextOverflowError(segErr)) throw segErr;
+      return skipped();
+    }
   }
 }
 

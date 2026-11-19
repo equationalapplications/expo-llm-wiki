@@ -29,6 +29,7 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   ['truncated output', 'The response was truncated because it reached the token limit'],
   // request-config max_tokens: the caller asked for too much OUTPUT
   ['max_tokens config', "max_tokens: 1000000 exceeds the model's maximum output tokens"],
+  ['validation wording', 'Invalid input length for field X'],
   ['parse error', 'Unexpected token < in JSON at position 0'],
 ];
 

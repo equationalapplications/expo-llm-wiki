@@ -7,9 +7,9 @@ type P = { systemPrompt: string; userPrompt: string };
 const eventCount = (p: P) => (p.userPrompt.match(/^e\d+(#\d+)? \[/gm) ?? []).length;
 const fact = (title: string, source: string) => ({ title, body: 'b', tags: [], confidence: 'certain', source_event: source });
 
-async function mk(generateText: (p: P) => Promise<string>) {
+async function mk(generateText: (p: P) => Promise<string>, onDiagnostic?: (d: any) => void) {
   const db = openTestDatabase();
-  const wiki = new WikiMemory(db, { llmProvider: { generateText: vi.fn(generateText) }, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } });
+  const wiki = new WikiMemory(db, { ...(onDiagnostic ? { onDiagnostic } : {}), llmProvider: { generateText: vi.fn(generateText) }, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } });
   await wiki.setup();
   const deps = (wiki.__testAccess.maintenanceService as any).librarianDeps();
   const ev = (id: string, at: number, summary: string) =>
@@ -47,11 +47,13 @@ describe('ops extract overflow retry', () => {
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1']);
   });
 
-  it('rethrows when a segment still overflows', async () => {
-    const { deps, ev } = await mk(async () => { throw tooLong(); });
+  it('skips the event with a diagnostic and advances the watermark when a segment still overflows', async () => {
+    const diags: any[] = [];
+    const { wiki, ev } = await mk(async () => { throw tooLong(); }, (d) => diags.push(d));
     await ev('evt_1', 10, 'word '.repeat(100));
-    const sel: any = await selectBatch(deps, 'u', null);
-    await expect(runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch)).rejects.toThrow(/too long/);
+    await wiki.runLibrarian('u');
+    expect(diags.filter((d) => d.code === 'context_overflow_skipped')).toHaveLength(1);
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 10, id: 'evt_1' });
   });
 
   it('pass watermark follows the batch actually extracted', async () => {

@@ -59,7 +59,7 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
   /maximum context length/i,
   /context[_ ]?length[_ ]?exceeded/i,
   /prompt is too long/i,
-  /input (length|token count|is too long)/i,
+  /input (token count|is too long)/i,
   /exceeds? the (available )?context( size)?/i,
   /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|token)/i,
   /context limit/i,

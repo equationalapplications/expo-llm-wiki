@@ -214,6 +214,8 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
         const text = await response.text().catch(() => '');
         throw new Error(errMessage(response.status, text));
       }
+      // Contract: BENCH_CLASSIFIER_URL must return `{ answers: Record<string, unknown>, usage? }`
+      // (not a chat-completions body); anything else is an error, never an empty result.
       const data = (await response.json()) as {
         answers?: Record<string, unknown>;
         usage?: { prompt_tokens?: number; completion_tokens?: number; inputTokens?: number; outputTokens?: number };
@@ -222,7 +224,10 @@ export function createProvider(ep: ChatEndpoint, fetchImpl: FetchLike = fetch): 
       const usage = u
         ? { inputTokens: u.inputTokens ?? u.prompt_tokens ?? 0, outputTokens: u.outputTokens ?? u.completion_tokens ?? 0 }
         : undefined;
-      return { answers: data.answers ?? {}, usage };
+      if (!data || typeof data.answers !== 'object' || data.answers === null || Array.isArray(data.answers)) {
+        throw new Error('classifier endpoint response missing `answers` object (expected { answers, usage? })');
+      }
+      return { answers: data.answers, usage };
     };
   }
   // Passthrough read by later lane PRs; nothing else consumes it yet.

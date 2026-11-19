@@ -2267,7 +2267,8 @@ export class MaintenanceService {
       | { fact: WikiFact; kind: 'accepted'; okfType: string }
       | { fact: WikiFact; kind: 'low_confidence' }
       | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
-      | { fact: WikiFact; kind: 'threw'; overflow?: boolean }
+      | { fact: WikiFact; kind: 'threw' }
+      | { fact: WikiFact; kind: 'overflow_skip' }
       | { fact: WikiFact; kind: 'unattempted' };
 
     let stopped: WikiBudgetExhausted | undefined;
@@ -2286,7 +2287,7 @@ export class MaintenanceService {
             stopped ??= err;
             return { fact, kind: 'unattempted' as const };
           }
-          if (isContextOverflowError(err)) return { fact, kind: 'threw', overflow: true };
+          if (isContextOverflowError(err)) return { fact, kind: 'overflow_skip' };
           return { fact, kind: 'threw' };
         }
         const checked = validateClassifierAnswer(response, 'okf_type', question);
@@ -2301,7 +2302,9 @@ export class MaintenanceService {
     // Thrown calls are transient (like `call_error`): no cooldown stamp.
     const attempted = outcomes.filter((o) => o.kind !== 'threw' && o.kind !== 'unattempted').map((o) => o.fact);
     const unattemptedCount = outcomes.filter((o) => o.kind === 'unattempted').length;
-    const skipped = outcomes.length - attempted.length - unattemptedCount;
+    // Overflow skips are deterministic, so they ARE stamped (in `attempted`;
+    // errata E2) to avoid re-paying for the same oversized fact every pass.
+    const skipped = outcomes.filter((o) => o.kind === 'threw' || o.kind === 'overflow_skip').length;
     const classifications = outcomes
       .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
       .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
@@ -2334,9 +2337,9 @@ export class MaintenanceService {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: o.reason } });
       } else if (o.kind === 'threw') {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
-        if (o.overflow) {
-          diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id } });
-        }
+      } else if (o.kind === 'overflow_skip') {
+        diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
+        diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id } });
       }
     }
     // After the apply transaction committed (spec §4.2.4). Classifier answers
