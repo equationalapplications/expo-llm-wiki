@@ -1,3 +1,10 @@
+## [9.5.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.2...v9.5.3) (2026-11-19)
+
+### Bug Fixes
+
+* **extract:** run the minimal-prompt probe on the first overflow, before the retry tree ([#429](https://github.com/equationalapplications/expo-llm-wiki/issues/429)) ([b8c2bb3](https://github.com/equationalapplications/expo-llm-wiki/commit/b8c2bb37ab885e0ff74b5e44b257eb1d3de5e2c4))
+* **pr433:** meter the early probe per INTENT rule 7; once-per-run pin, metered-budget surfacing, env-stub hygiene (T1.5 rung 1) ([c490705](https://github.com/equationalapplications/expo-llm-wiki/commit/c490705121994bc91153be68b2cc67aa07a550bb))
+
 ## [9.5.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.1...v9.5.2) (2026-11-19)
 
 ### Bug Fixes
