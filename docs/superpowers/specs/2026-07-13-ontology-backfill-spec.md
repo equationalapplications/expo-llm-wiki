@@ -439,6 +439,12 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   concurrency (`chunkConcurrency`), not by any estimate.
 - **Unmetered probe (sanctioned):** the all-skipped probe in `extract.ts` is a
   deliberate unmetered minimal-window measurement; it emits no budget spend.
+- **Probe ordering (accepted deferral — issue [#429](https://github.com/equationalapplications/expo-llm-wiki/issues/429)):**
+  the probe runs only after the halving/segmentation retry tree is exhausted, so
+  a fixed-prompt overflow can spend several hundred metered failing calls
+  before the visible throw with the watermark held. The end state is correct,
+  so the early-probe ordering change is deferred to #429 rather than shipped
+  here (Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19).
 - **`skipped` count:** the classifier return's `skipped` count deliberately
   mixes stamped `overflow_skip` facts (retried next pass) with unstamped
   `threw` facts (not retried this lane), per the `types.ts` doc comment.
