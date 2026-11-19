@@ -104,10 +104,12 @@ describe('ops extract overflow retry', () => {
   });
 
   it('throws and holds the watermark when the fixed prompt part alone overflows (every event skipped)', async () => {
-    const { wiki, ev } = await mk(async () => { throw tooLong(); });
+    let calls = 0;
+    const { wiki, ev } = await mk(async () => { calls++; throw tooLong(); });
     await ev('evt_1', 10, 'word '.repeat(100));
     await ev('evt_2', 20, 'other words');
-    await expect(wiki.runLibrarian('u')).rejects.toThrow(/skipped for context overflow/);
+    await expect(wiki.runLibrarian('u')).rejects.toThrow(/minimal-prompt probe also overflowed/);
+    expect(calls).toBe(2); // initial batch call + probe, before any retry tree
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
   });
 

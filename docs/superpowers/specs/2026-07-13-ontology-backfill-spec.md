@@ -444,7 +444,7 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   a fixed-prompt overflow can spend several hundred metered failing calls
   before the visible throw with the watermark held. The end state is correct,
   so the early-probe ordering change is deferred to #429 rather than shipped
-  here (Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19).
+  here (Sonnet T1.5 xhigh delta review, cycle 2, 2026-11-19). Resolved by the #429 lane: the probe now runs on the first overflow, before the retry tree.
 - **`skipped` count:** the classifier return's `skipped` count deliberately
   mixes stamped `overflow_skip` facts (retried next pass) with unstamped
   `threw` facts (not retried this lane), per the `types.ts` doc comment.

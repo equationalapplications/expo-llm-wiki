@@ -170,7 +170,8 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
 }
 
 /**
- * Extract one batch; on a context-overflow error, halve and merge (sequential,
+ * Extract one batch; on the FIRST context-overflow error a minimal-prompt probe runs
+ * (before the retry tree); then, on overflow, halve and merge (sequential,
  * so the meter sees ordered spend). A lone oversized event is segmented into
  * `<label>#1` / `<label>#2` prompts that both resolve to the same event id; if
  * a segment still overflows, the event is returned as SKIPPED (no candidates,
@@ -179,18 +180,35 @@ function mergeOutcomes(a: ExtractOutcome, b: ExtractOutcome): ExtractOutcome {
  */
 async function extractWithOverflowRetry(
   deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[],
+  probe: { checked: boolean },
 ): Promise<ExtractOutcome> {
   try {
     return await extractOnce(deps, ctx, ontologyContext, batch);
   } catch (err) {
     if (!isContextOverflowError(err)) throw err;
+    if (!probe.checked) {
+      // First overflow of the run: probe once with a minimal prompt, BEFORE the retry tree,
+      // to tell an event-caused overflow (probe succeeds: retry tree proceeds) from a
+      // fixed-prompt one (probe also overflows: throw, visible config failure, watermark held).
+      probe.checked = true;
+      const probePrompt = deps.promptService.buildOpsExtractPrompt(
+        [{ ...batch[0], event: { ...batch[0].event, summary: 'x' } }], ontologyContext, ctx.guidance,
+      );
+      // Unmetered on purpose: the probe is a window measurement, not content spend.
+      try {
+        await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: undefined }, probePrompt);
+      } catch (e) {
+        if (!isContextOverflowError(e)) throw e;
+        throw new Error('ops extract: minimal-prompt probe also overflowed (fixed prompt part exceeds the model window?)');
+      }
+    }
     if (batch.length > 1) {
       const mid = Math.ceil(batch.length / 2);
       // If the second half throws WikiBudgetExhausted, the first half's
       // result is discarded (data-correct; its spend is re-paid next pass),
       // matching the runBatched contract.
-      const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid));
-      const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid));
+      const a = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(0, mid), probe);
+      const b = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch.slice(mid), probe);
       return mergeOutcomes(a, b);
     }
     const lone = batch[0];
@@ -237,23 +255,7 @@ async function extractWithOverflowRetry(
 
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
-  const out = await extractWithOverflowRetry(deps, ctx, ontologyContext, batch);
-  if (out.skippedEvents > 0 && out.skippedEvents === out.batch.length) {
-    // All selected events were overflow-skipped. Probe once with a minimal prompt to tell
-    // an event-caused overflow (probe succeeds: skip + advance) from a fixed-prompt one
-    // (probe also overflows: rethrow, visible config failure, watermark held).
-    const probe = deps.promptService.buildOpsExtractPrompt(
-      [{ ...batch[0], event: { ...batch[0].event, summary: 'x' } }], ontologyContext, ctx.guidance,
-    );
-    // Unmetered on purpose: the probe is a window measurement, not content spend.
-    try {
-      await callLlm(deps.options, { operation: 'librarian', entityId: ctx.entityId, trigger: ctx.trigger, meter: undefined }, probe);
-    } catch (e) {
-      if (!isContextOverflowError(e)) throw e;
-      throw new Error(`ops extract: all ${out.skippedEvents} selected events were skipped for context overflow and a minimal probe also overflowed (fixed prompt part exceeds the model window?)`);
-    }
-  }
-  return out;
+  return extractWithOverflowRetry(deps, ctx, ontologyContext, batch, { checked: false });
 }
 
 async function extractOnce(deps: LibrarianDeps, ctx: LibrarianPassContext, ontologyContext: OntologyCtx, batch: LabeledEvent[]): Promise<ExtractOutcome> {
