@@ -468,7 +468,8 @@ pass.
 - `runBatched` must treat overflow at batch size > 1 as a split trigger.
   This needs three `onFailure` edits, all spelled out here:
   - The escalation gate at `BoundedLlmCall.ts:254` becomes
-    `isTruncationError(err) || (supportsEscalation && isContextOverflowError(err))`.
+    `fromCall && (isTruncationError(err) || (supportsEscalation && isContextOverflowError(err))) && attemptLevel < 3`
+    — both existing guards stay.
   - The give-up reason at `BoundedLlmCall.ts:271` must classify overflow as
     `non_convergent` at every ladder level — today's expression
     (`!isTruncationError && !isConfigError` → `call_error`) would stamp no
@@ -483,8 +484,11 @@ pass.
   gains `supportsEscalation?: boolean`. Overflow at batch size 1 escalates
   the ladder only when the caller opts in (heal does); otherwise it skips
   immediately as `non_convergent` with the cooldown stamp and a new
-  diagnostic code, `context_overflow_skipped` (a public diagnostic-union
-  member — named here so implementation and tests agree). Existing
+  diagnostic code, `context_overflow_skipped` — a new member of the
+  `WikiDiagnosticCode` union (`packages/core/src/types.ts:866`; the
+  `skipped[].reason` value stays `'non_convergent'` — the skip-reason
+  unions at `types.ts:212` and `BoundedLlmCall.ts:151` are a different
+  type and gain nothing). Existing
   truncation escalation is unchanged (compat lock).
 - Behavior change, accepted with Proposal A: an overflow skip now takes the
   cooldown stamp. Today's `call_error` skip does not.
@@ -563,8 +567,9 @@ claims until measurement exists.
   with concurrency 4 every task pre-flights the same meter state before
   any records, so a real meter cannot produce this shape) with
   concurrency 4 — calls 1, 3, and 4 all settle and persist; (b) a real
-  meter with a pinned budget (concretely: the input estimate of the
-  smallest fact) and differing input sizes per fact, where later
+  meter with a pinned budget (concretely: the full request estimate —
+  state plus instructions — of the smallest fact's call) and differing
+  input sizes per fact, where later
   pre-flights fail `fits()` and land unattempted. Both: completed
   outcomes persist (stamped), unlaunched facts
   unstamped, `budgetStop` set on `OntologyBackfillResult` — no
