@@ -50,6 +50,37 @@ const TRUNCATION_PATTERNS: RegExp[] = [
 // being absorbed into a pile of skipped items.
 const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?limit/i;
 
+// Input-overflow: the PROMPT (messages/state) exceeded the model's context
+// window. Distinct from TRUNCATION_PATTERNS (the model cut its OUTPUT short)
+// and from EXCEEDS_LIMIT_PATTERN (a request-config error: the caller asked
+// for more max_tokens than the model allows). Ordering with those two checks
+// is load-bearing — see runBatched's onFailure.
+const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
+  /maximum context length/i,
+  /context[_ ]?length[_ ]?exceeded/i,
+  /prompt is too long/i,
+  /input (length|token count|is too long)/i,
+  /exceeds? the (available )?context( size)?/i,
+  /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|token)/i,
+  /context limit/i,
+  /too long for (the )?requested model/i,
+  // vLLM dual-match wording (errata E2 ruling: overflow check runs first, so
+  // this intentionally wins over the truncation and config checks)
+  /max[_ ]?tokens?\s+(is|are)\s+too large/i,
+];
+
+/**
+ * Whether a thrown error means the INPUT exceeded the model's context window.
+ * Must be checked BEFORE isTruncationError and isConfigError — OpenAI's
+ * blended message and vLLM's dual-match message intentionally classify as
+ * overflow (errata E2 rulings). Never throws.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const message = getErrorMessage(err);
+  if (message === undefined) return false;
+  return CONTEXT_OVERFLOW_PATTERNS.some((p) => p.test(message));
+}
+
 /**
  * Whether a thrown error looks like the provider cut the response short.
  *
