@@ -389,8 +389,10 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   request): Promise<ClassifyResponse>`. It must wrap the `provider.classify`
   call (not run after it): pre-flight the input estimate against the meter
   the way `callLlm` does; make the call; record provider-reported usage when
-  present and well-formed (reuse `validUsage`, exported from `llmCall.ts`
-  today as a module private); estimate otherwise (input = chars/4 over state
+  present and well-formed (export `validUsage` — module-private in
+  `llmCall.ts` today — and reuse it; `callClassify` lives in the same
+  module, and E4's benchmark wrapper imports it from the package entry if
+  it needs it); estimate otherwise (input = chars/4 over state
   plus instructions; output = chars/4 over the serialized answers); emit the
   `llm_usage` diagnostic when `reportLlmUsage === true`, with the caller's
   `WikiDiagnosticOperation` (the backfill site passes `'ontologyBackfill'`).
@@ -409,8 +411,11 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   `try/catch` turns any throw into `classification_invalid` /
   `classify_threw` (`MaintenanceService.ts:2248-2253`). A
   `WikiBudgetExhausted` must NOT take that path. The stop must: halt new
-  classify launches; persist the outcomes already completed, stamped as
-  today; leave unlaunched facts unstamped, with no cooldown stamp and no
+  classify launches and WAIT for every in-flight call to settle before the
+  write transaction runs; persist the settled outcomes — successes stamp
+  as today; a settled `WikiBudgetExhausted` joins the un-attempted set;
+  any other settled throw keeps today's `classify_threw` path — and leave
+  unlaunched facts unstamped, with no cooldown stamp and no
   `classification_invalid` diagnostic. This matches the `runBatched`
   contract, which keeps earlier results and surfaces un-attempted items
   unskipped (`BoundedLlmCall.ts:323-330`). The pass reports the stop as
@@ -418,6 +423,9 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   `OntologyBackfillResult` (`types.ts:129`), copying heal's field and
   loop-guard doc comment (`types.ts:242`): a host loop runs while
   `remaining > 0 && !budgetStop`, else a fixed budget never converges.
+  The generative path reports the same way: lift `runBatched`'s
+  `budgetStop` into `OntologyBackfillResult.budgetStop`, and never
+  cooldown-stamp `unattempted` facts.
 - **Overshoot honesty:** the pre-flight checks the input estimate only
   (`llmCall.ts:29-31`); the meter records real input plus output
   (`usage.ts:39`). Overshoot is therefore bounded only by in-flight
@@ -529,7 +537,10 @@ claims until measurement exists.
   fall back to the same estimate rule as E1. A test must prove the
   `'classify'` bucket is non-zero with a classifier present.
 - The benchmark provider gains an optional classifier endpoint, configured
-  by `BENCH_CLASSIFIER_URL` and `BENCH_CLASSIFIER_MODEL`.
+  by `BENCH_CLASSIFIER_URL` and `BENCH_CLASSIFIER_MODEL`. The scripted
+  provider used by tests (`scriptedProvider.ts`, which keys on the system
+  prompt today) must gain a `classify` stub so the non-zero-bucket test
+  needs no real endpoint.
 - Add a `BENCH_CONTEXT_TOKENS` passthrough so a runner can simulate a small
   window.
 
@@ -540,10 +551,16 @@ claims until measurement exists.
   `reportLlmUsage` with operation `'ontologyBackfill'`; a pass with no
   `tokenBudget` still emits estimates and records usage without a cap.
 - Budget stop: `WikiBudgetExhausted` at the classify site halts new
-  launches, persists completed outcomes (stamped), leaves unlaunched facts
+  launches and waits for in-flight calls to settle (test: concurrency 4,
+  budget hit on call 2 — calls 1, 3, and 4 all persist), persists completed
+  outcomes (stamped), leaves unlaunched facts
   unstamped, returns `budgetStop` on `OntologyBackfillResult` — no
   `classification_invalid` diagnostic, no cooldown on unattempted facts. A
-  host loop `while (remaining > 0 && !budgetStop)` terminates.
+  host loop `while (remaining > 0 && !budgetStop)` terminates when the test
+  sets `tokenBudget` small enough to stop mid-batch (pin a concrete value,
+  e.g. the estimate of the first classify call only). The generative path
+  gets the same coverage: `runBatched`'s `budgetStop` and `unattempted`
+  lift into `OntologyBackfillResult` with no cooldown stamps.
 - Overflow corpus: each corpus message classifies as overflow, and as
   neither truncation nor config error; the blended OpenAI message and the
   vLLM dual-match message classify as overflow.
