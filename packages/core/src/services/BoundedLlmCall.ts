@@ -61,7 +61,10 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
   /prompt is too long/i,
   /input (token count|is too long)/i,
   /exceeds? the (available )?context( size)?/i,
-  /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|token)/i,
+  // Tail requires a context-window clause (context|maximum), NOT bare `token`:
+  // a 429 body like "input exceeds the tokens-per-minute limit" must NOT
+  // classify as input overflow (it would split the batch and stamp a cooldown).
+  /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|maximum)/i,
   /context limit/i,
   /too long for (the )?requested model/i,
   // vLLM dual-match wording (errata E2 ruling): the regex ENFORCES the dual-match —

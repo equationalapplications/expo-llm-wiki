@@ -33,6 +33,10 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   // bare output-config error: no context clause, so the dual-match is NOT satisfied (errata E2)
   ['bare max_tokens too large', 'max_tokens is too large: 4096 tokens must be ≤ 4096'],
   ['parse error','Unexpected token < in JSON at position 0'],
+  // 429 rate-limit bodies mentioning "input ... exceeds ... tokens": must NOT
+  // classify as input overflow despite the token wording (Sonnet review minor).
+  ['429 tokens-per-minute', 'Input exceeds the tokens-per-minute limit. Please retry after 30 seconds.'],
+  ['429 rate limit body', 'Rate limit reached for model gpt-x: 429 Too Many Requests, tokens per min: 80000'],
 ];
 
 describe('isContextOverflowError', () => {
