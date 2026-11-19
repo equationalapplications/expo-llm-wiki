@@ -878,6 +878,7 @@ export type WikiDiagnosticCode =
   | 'grounding_failed'
   | 'classification_low_confidence'
   | 'classification_invalid'
+  | 'context_overflow_skipped'
   | 'llm_usage'
   | 'librarian_gate'
   | 'librarian_op_rejected'

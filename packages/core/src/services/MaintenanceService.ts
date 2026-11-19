@@ -17,7 +17,7 @@ import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
 import { removalGate, type VectorRemovalService } from './VectorRemovalService';
 import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, ClassifyResponse, OntologyManifest, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
 import { EdgeRepository } from '../repositories/EdgeRepository';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -29,13 +29,13 @@ import { CheckpointIncompleteError, entitySummaryMetaKey, START_OF_LOG_WATERMARK
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
-import { runBatched } from './BoundedLlmCall';
+import { runBatched, isContextOverflowError } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
 import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5LedgerDropSql, passageFtsTriggerNames } from './search/fts5Sql';
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
-import { callLlm } from '../utils/llmCall';
-import type { UsageMeter } from '../utils/usage';
+import { callLlm, callClassify } from '../utils/llmCall';
+import { WikiBudgetExhausted, type UsageMeter } from '../utils/usage';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
@@ -1813,6 +1813,13 @@ export class MaintenanceService {
       // heal's buildPrompt sheds anchors per attemptLevel — escalation is real (errata E2)
       supportsEscalation: true,
       onSkip: (fact, err) => {
+        if (isContextOverflowError(err)) {
+          emitDiagnostic(this.options, {
+            entityId, operation: 'heal', trigger, code: 'context_overflow_skipped',
+            detail: { factId: fact.id },
+          });
+          return;
+        }
         console.warn(
           `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
@@ -2127,6 +2134,13 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
+        if (isContextOverflowError(err)) {
+          emitDiagnostic(this.options, {
+            entityId, operation: 'ontologyBackfill', trigger: 'call', code: 'context_overflow_skipped',
+            detail: { factId: fact.id },
+          });
+          return;
+        }
         console.warn(
           `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
@@ -2222,9 +2236,8 @@ export class MaintenanceService {
     manifest: OntologyManifest,
     now: number,
     recheckCutoff: number,
+    meter?: UsageMeter,
   ): Promise<OntologyBackfillResult> {
-    // Call through the provider so a class-based provider keeps its `this`.
-    const provider = this.options.llmProvider;
     const rawMin = this.options.config?.ontology?.classifyMinConfidence;
     const minConfidence = typeof rawMin === 'number' && Number.isFinite(rawMin) && rawMin >= 0 && rawMin <= 1 ? rawMin : 0.5;
     const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
@@ -2243,14 +2256,26 @@ export class MaintenanceService {
       | { fact: WikiFact; kind: 'accepted'; okfType: string }
       | { fact: WikiFact; kind: 'low_confidence' }
       | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
-      | { fact: WikiFact; kind: 'threw' };
+      | { fact: WikiFact; kind: 'threw'; overflow?: boolean }
+      | { fact: WikiFact; kind: 'unattempted' };
 
+    let stopped: WikiBudgetExhausted | undefined;
     const outcomes = await withConcurrency<Outcome>(
       candidates.map((fact) => async (): Promise<Outcome> => {
-        let response: unknown;
+        if (stopped) return { fact, kind: 'unattempted' as const };
+        let response: ClassifyResponse;
         try {
-          response = await provider.classify!({ state: classifierStateForFact(fact), questions: { okf_type: question } });
-        } catch {
+          response = await callClassify(
+            this.options,
+            { operation: 'ontologyBackfill', entityId, trigger: 'call', meter },
+            { state: classifierStateForFact(fact), questions: { okf_type: question } },
+          );
+        } catch (err) {
+          if (err instanceof WikiBudgetExhausted) {
+            stopped ??= err;
+            return { fact, kind: 'unattempted' as const };
+          }
+          if (isContextOverflowError(err)) return { fact, kind: 'threw', overflow: true };
           return { fact, kind: 'threw' };
         }
         const checked = validateClassifierAnswer(response, 'okf_type', question);
@@ -2263,8 +2288,9 @@ export class MaintenanceService {
     );
 
     // Thrown calls are transient (like `call_error`): no cooldown stamp.
-    const attempted = outcomes.filter((o) => o.kind !== 'threw').map((o) => o.fact);
-    const skipped = outcomes.length - attempted.length;
+    const attempted = outcomes.filter((o) => o.kind !== 'threw' && o.kind !== 'unattempted').map((o) => o.fact);
+    const unattemptedCount = outcomes.filter((o) => o.kind === 'unattempted').length;
+    const skipped = outcomes.length - attempted.length - unattemptedCount;
     const classifications = outcomes
       .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
       .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
@@ -2297,6 +2323,9 @@ export class MaintenanceService {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: o.reason } });
       } else if (o.kind === 'threw') {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
+        if (o.overflow) {
+          diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id } });
+        }
       }
     }
     // After the apply transaction committed (spec §4.2.4). Classifier answers
@@ -2311,13 +2340,14 @@ export class MaintenanceService {
     }
     this.searchService.evictCache(entityId);
     return {
-      scanned: candidates.length,
+      scanned: candidates.length - unattemptedCount,
       typed,
       failedValidation,
       edgesAdded,
       skipped,
       remaining: counts.eligible,
       deferred: counts.deferred,
+      ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}),
     };
   }
 
