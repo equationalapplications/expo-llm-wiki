@@ -1,3 +1,10 @@
+## [9.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.0...v9.5.1) (2026-11-19)
+
+### Bug Fixes
+
+* **core:** review round 1 — non-exclusive catalog wording, honest provenance, retire E1 variant ([#381](https://github.com/equationalapplications/expo-llm-wiki/issues/381)) ([320fc75](https://github.com/equationalapplications/expo-llm-wiki/commit/320fc75c1d01727a6081cc63b9fd29621c1d305f))
+* **core:** title catalog in the ontology-backfill classifier prompt ([#381](https://github.com/equationalapplications/expo-llm-wiki/issues/381)) ([d56a70d](https://github.com/equationalapplications/expo-llm-wiki/commit/d56a70d5ae01f6edea82f53e8035b8f1ef5f69a0))
+
 ## [9.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.4.3...v9.5.0) (2026-11-18)
 
 ### Features
