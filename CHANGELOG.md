@@ -1,3 +1,27 @@
+## [9.5.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.1...v9.5.2) (2026-11-19)
+
+### Bug Fixes
+
+* **pr1:** add isContextOverflowError with provider-message corpus (errata E2) ([5afcc2a](https://github.com/equationalapplications/expo-llm-wiki/commit/5afcc2ac5357e6bcc22f64f7ddf4d85615f20d4c))
+* **pr1:** benchmarks gain the classify call site, instrument wrap, BENCH_CLASSIFIER_* + BENCH_CONTEXT_TOKENS (errata E4) ([663740f](https://github.com/equationalapplications/expo-llm-wiki/commit/663740f61fb3a33c0cf173638c91f827efcf0f21))
+* **pr1:** classifier site uses callClassify with budget-stop semantics + context_overflow_skipped (errata E1/E2) ([09ff593](https://github.com/equationalapplications/expo-llm-wiki/commit/09ff593a2b8901177ced3fbdd98ecc549eb09493))
+* **pr1:** classify input overflow in runBatched — split, gated escalation, cooldown-stamped skip (errata E2) ([a4bb06d](https://github.com/equationalapplications/expo-llm-wiki/commit/a4bb06d559a8e56a6236174361f24be0f945c990))
+* **pr1:** ClassifyResponse.usage + shared callClassify wrapper with metering (errata E1) ([54b2759](https://github.com/equationalapplications/expo-llm-wiki/commit/54b275984a3fe794fd267558d47bdfa9b534fbb0))
+* **pr1:** closing-delta fixes — all-skipped probe, errata sync, resolve onSkip, doc comments ([c9437dd](https://github.com/equationalapplications/expo-llm-wiki/commit/c9437ddd8fbb9ccc3126adfdc5a60c5c83c0f077))
+* **pr1:** delta-3 fixes — vLLM dual-match enforced, probe errata sanction, review minors ([5a47d5f](https://github.com/equationalapplications/expo-llm-wiki/commit/5a47d5f9badcf14cfdf80abec43930191be79ec6))
+* **pr1:** final-delta fixes — unmetered probe, segment call cap, doc alignment ([a28f6a0](https://github.com/equationalapplications/expo-llm-wiki/commit/a28f6a0dc904e0a3e0bfc28891237ba60d6e687a))
+* **pr1:** ops-extract halves on overflow, segments lone oversized events, watermark follows extracted batch (errata E3) ([200b950](https://github.com/equationalapplications/expo-llm-wiki/commit/200b9509c2405650d7a4fba327670e1a6620f6c2))
+* **pr1:** Opus T3 fixes — partial-skip conservation, dual-match escalation gate, usage validity, test tightening ([b7872fd](https://github.com/equationalapplications/expo-llm-wiki/commit/b7872fda2e36af4f2277eabd2fb76dd6da614366))
+* **pr1:** T1.5 r1 review fixes — segment-skip conservation, overflow cooldown stamp, classifier response validation ([41a08b8](https://github.com/equationalapplications/expo-llm-wiki/commit/41a08b8e42470f98f444cae78bfdba9359b43096))
+* **pr1:** T1.5 r2 review fixes — all-skipped rethrow, recursive segmentation, merge dedupe, diagnostics cleanup ([a8e7fb1](https://github.com/equationalapplications/expo-llm-wiki/commit/a8e7fb1ad31a78772a187ba9ce5dfba7f6e6351a))
+* **pr1:** T1.5 r3 review fixes — segment all-or-nothing hold, corpus alignment, estimate parity ([bf246ff](https://github.com/equationalapplications/expo-llm-wiki/commit/bf246ffe50b7576f49c33c9b7b1af3bea461c097))
+* **pr1:** tokenBudget option meters the whole backfill pass; budgetStop on the result (errata E1) ([f00fad6](https://github.com/equationalapplications/expo-llm-wiki/commit/f00fad6271daab9c636f0e78b7613340eb77af7a))
+* **pr428:** keep rate-limit wording out of config-error classification (CodeRabbit minor) ([e71b2fe](https://github.com/equationalapplications/expo-llm-wiki/commit/e71b2fefc4bdc17efb0df52770689cc986aab607))
+* **pr428:** normalize model ontology_updates before split-path merge (CodeRabbit major) ([10f2ea6](https://github.com/equationalapplications/expo-llm-wiki/commit/10f2ea698c552a0f38989b1a04bd508bdfb3edf2))
+* **pr428:** offset candidate indices by raw fact count (CodeRabbit minor) ([472c2c1](https://github.com/equationalapplications/expo-llm-wiki/commit/472c2c1574da05ed6c13d3fe03fa592bd6634826))
+* **pr428:** rate-limit guard in overflow check, anchored 429 match, buffer resolve skip diagnostics (Haiku max review) ([c404914](https://github.com/equationalapplications/expo-llm-wiki/commit/c404914a1ca728b38e9bc8b2de92663f29328481))
+* **pr428:** require context-window clause in overflow exceed-pattern; pin 429 negatives (Sonnet review minor 2) ([a91f98f](https://github.com/equationalapplications/expo-llm-wiki/commit/a91f98f8ab540cd9180339edaaf07a2a206d4af8))
+
 ## [9.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.0...v9.5.1) (2026-11-19)
 
 ### Bug Fixes
