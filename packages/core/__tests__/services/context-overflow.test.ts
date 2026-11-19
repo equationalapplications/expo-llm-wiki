@@ -6,7 +6,7 @@ import { isConfigError, isContextOverflowError, isTruncationError } from '../../
 const OVERFLOW_MESSAGES: string[] = [
   // OpenAI / vLLM: this prompt is too long (openai python SDK, 400 detail)
   "This model's maximum context length is 8192 tokens. However, you requested 10020 tokens (9000 in the messages, 1020 in the completion). Please reduce the length of the messages or completion.",
-  // vLLM: dual-match (max_tokens wording + context length) — locked as overflow per errata E2
+  // vLLM: dual-match (max_tokens wording + context clause) — the regex enforces both; locked as overflow per errata E2
   "max_tokens is too large: 4096 tokens. This model supports at most 8192 context length tokens.",
   // Anthropic: prompt is too long
   "prompt is too long: 210000 tokens > 200000 token maximum",
@@ -30,7 +30,9 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   // request-config max_tokens: the caller asked for too much OUTPUT
   ['max_tokens config', "max_tokens: 1000000 exceeds the model's maximum output tokens"],
   ['validation wording', 'Invalid input length for field X'],
-  ['parse error', 'Unexpected token < in JSON at position 0'],
+  // bare output-config error: no context clause, so the dual-match is NOT satisfied (errata E2)
+  ['bare max_tokens too large', 'max_tokens is too large: 4096 tokens must be ≤ 4096'],
+  ['parse error','Unexpected token < in JSON at position 0'],
 ];
 
 describe('isContextOverflowError', () => {
@@ -39,7 +41,7 @@ describe('isContextOverflowError', () => {
       expect(isContextOverflowError(new Error(m)), m).toBe(true);
     }
   });
-  it('corpus overflow messages are neither truncation- nor config-error-shaped (except the vLLM dual-match)', () => {
+  it('corpus overflow messages are neither truncation- nor config-error-shaped (except the deliberate vLLM and Anthropic dual-matches)', () => {
     for (const m of OVERFLOW_MESSAGES) {
       // Deliberate dual-matches (mention max_tokens): overflow is checked first, so these classify as overflow.
       if (m.startsWith('max_tokens is too large') || m.startsWith('input length and `max_tokens`')) continue;

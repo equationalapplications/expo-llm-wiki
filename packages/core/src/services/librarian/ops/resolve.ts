@@ -98,7 +98,7 @@ export async function runResolve(
       if (isContextOverflowError(err)) {
         emitDiagnostic(deps.options, {
           entityId, operation: 'librarian', trigger, code: 'context_overflow_skipped',
-          detail: { itemIndex: g.candidate.index },
+          detail: { itemIndex: g.candidate.index }, // (index into the merged extract batch)
         });
       }
     },

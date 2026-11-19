@@ -64,9 +64,9 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
   /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|token)/i,
   /context limit/i,
   /too long for (the )?requested model/i,
-  // vLLM dual-match wording (errata E2 ruling: overflow check runs first, so
-  // this intentionally wins over the truncation and config checks)
-  /max[_ ]?tokens?\s+(is|are)\s+too large/i,
+  // vLLM dual-match wording (errata E2 ruling): the regex ENFORCES the dual-match —
+  // "max_tokens ... too large" PLUS a context clause; a bare message is NOT overflow
+  /max[_ ]?tokens?.{0,40}too large.{0,80}context/i,
 ];
 
 /**

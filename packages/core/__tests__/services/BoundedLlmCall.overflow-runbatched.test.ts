@@ -90,8 +90,9 @@ describe('runBatched overflow', () => {
       maxPromptChars: 100000,
       supportsEscalation: true,
     });
-    expect(calls).toBeGreaterThanOrEqual(2);
-    expect(calls).toBeLessThanOrEqual(4);
+    // ladder levels L0..L3 each make one call, then L3 gives up
+    expect(calls).toBe(4);
     expect(outcome.results).toEqual([]);
+    expect(outcome.skipped).toEqual([{ item: 7, reason: 'non_convergent' }]);
   });
 });

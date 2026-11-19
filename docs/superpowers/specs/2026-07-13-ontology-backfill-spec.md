@@ -437,6 +437,11 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   (`llmCall.ts:29-31`); the meter records real input plus output
   (`usage.ts:39`). Overshoot is therefore bounded only by in-flight
   concurrency (`chunkConcurrency`), not by any estimate.
+- **Unmetered probe (sanctioned):** the all-skipped probe in `extract.ts` is a
+  deliberate unmetered minimal-window measurement; it emits no budget spend.
+- **`skipped` count:** the classifier return's `skipped` count deliberately
+  mixes stamped `overflow_skip` facts (retried next pass) with unstamped
+  `threw` facts (not retried this lane), per the `types.ts` doc comment.
 
 ### E2. Input-overflow errors are classified deterministically
 
@@ -464,7 +469,10 @@ pass.
     context length is N" — matches both a truncation pattern and the
     overflow set, and its cause is really a config error. It classifies as
     overflow anyway: the overflow check runs first, so the outcome is a
-    split or a cooldown skip, not propagation. Recorded as deliberate.
+    split or a cooldown skip, not propagation. Recorded as deliberate. The
+    regex enforces the dual-match: the bare `max_tokens is too large`
+    message (no context clause) is ruled NOT overflow and surfaces as a
+    config error.
   - Anthropic's "input length and `max_tokens` exceed context limit"
     message is a second deliberate dual-match ruling, same style as the
     vLLM one: it matches both a truncation pattern and the overflow set,
