@@ -13,9 +13,11 @@ filed as #381; attachment path shipped unproven — the measured run recorded
 0/28 persisted about edges (#381), and test-plan item 6's stub guards the
 plumbing, not model behavior. #381 update: root cause diagnosed (invisible
 target pool) and a title-catalog fix implemented on PR #425
-(commits d56a70d5..75ef53ad + T1.5 folds) — pending merge and pending
-the owner's ruling on the catalog data-scope change; the shipped
-prompt is not yet benchmarked — see Errata.)
+(commits d56a70d5..75ef53ad + T1.5 folds) — owner ruled the catalog
+data-scope change acceptable 2026-11-19 (all typed nodes, capped at
+8k chars — temporary until shortlist scope lands, per the ctx-window
+consultation); pending owner merge; the shipped prompt is not yet
+benchmarked — see Errata.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
@@ -613,5 +615,9 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   each backfill call (previously only the batch's facts and the type
   manifest did) — surfaced to the owner with the PR; the catalog is
   bounded at 8k chars (~2k tokens) per call on top of the prior prompt,
-  cap ranking is alphabetical by title, truncation disclosed. Owner
-  ruling on the scope change pending before merge.
+  cap ranking is alphabetical by title, truncation disclosed. OWNER
+  RULING 2026-11-19 (Kurt, in-thread "Approved"): scope accepted as-is
+  — all typed nodes, capped — as a TEMPORARY scope; the ctx-window
+  consultation (records/investigations/2026-11-19-consult-ctx-windows-s1)
+  plans to narrow it to per-fact shortlist scope in a follow-up PR,
+  at which point this ruling is superseded.
