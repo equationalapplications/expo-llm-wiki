@@ -1,6 +1,6 @@
 # ROADMAP — what gets built, in what order
 
-> **ROADMAP.md** · v1.1 · 2026-11-14 ·
+> **ROADMAP.md** · v1.2 · 2026-11-20 ·
 > Authority: derived from [INTENT.md](../INTENT.md) and from owner rulings
 > of 2026-11-12, 2026-11-13 and 2026-11-14. If this file and INTENT.md
 > disagree, INTENT.md wins on intent and this file is wrong until amended.
@@ -14,6 +14,16 @@
 > gain a dated met note, links step 4 to its issue #390, and rewords
 > step 4's `ingestDocument()` gate bullet to match the ruled scope.
 > No order change.
+>
+> v1.2 amendment (2026-11-20): adds the section "A model of the host's
+> choosing" with the steps the owner ruled on 2026-11-19 and 2026-11-20
+> (owner rulings: bring your own classifier; System-One decisions carry
+> no verb restrictions, only visibility). The new steps are PLANNED.
+> Their gate lines name merged steps and specs, not benchmark scores —
+> rule 11 backs claims and gates the native engine; the host measures
+> whatever model it enables. Three named explorations move into the
+> exploratory list so nobody treats them as gates. No change to the
+> order of the existing steps.
 >
 > Scope note: this is the first roadmap for this repository. It starts
 > with the "sharper memory" work ruled in that week. It is not an inventory
@@ -167,6 +177,124 @@ steps deliver without it.
 roadmap entry of their own: the hosted cloud service, clanker and Curated Journal.
 Curated Thoughts needs no change.
 
+## A model of the host's choosing (ruled 2026-11-19 and 2026-11-20)
+
+The engine's judgement work — typing stored facts, resolving entity
+references, screening heal candidates, suggesting edges — runs on the
+same generative model that writes the librarian's facts. The owner has
+ruled that a host may opt each of these sites in, one at a time, to a
+second, smaller model of its own choosing (the System-One model), while
+the librarian keeps the model the host hands it for writing.
+
+Core stays unopinionated about which model that is. The host chooses
+the model and the host measures it: "The engine runs whatever model you
+hand it and puts no benchmark in front of that choice. How well that
+model works on your data is yours to measure" (INTENT rule 11). Core
+guarantees the mechanics instead: a site runs only when the host opts
+it in; a host that opts nothing in gets byte-for-byte today's behavior;
+spend is metered; output is validated before it reaches memory; and
+every decision is surfaced in receipts and per-pass counters a human
+audit can be built on. Step 11 may rewrite a fact in place and step 12
+may remove one when the host runs them; typing stamps facts; the
+receipts and counters make all of these moves auditable.
+
+The steps below are ordered by dependencies, not by calendar. The
+config surface comes first; the context budget and the shortlist are
+independent of it; the site conversions wait on the pieces they use.
+
+### Step 5 — The System-One config surface — PLANNED
+
+One optional `systemOne` config section: the per-site typing modes, the
+`minConfidence` thresholds, the low-confidence policy (`leave` the fact
+untouched, or re-run it on the generative model), and a classifier
+abstain option so the typing question can answer "none of these".
+Maintenance passes that use a System-One site join the host-passed
+maintenance job set; nothing types on write by default.
+
+*Gate:* a spec.
+
+### Step 6 — A context budget the host can declare — PLANNED
+
+Every prompt-size constant in the engine (the resolve and heal caps,
+the extract cap, the ingest chunk default, the characters-per-token
+estimate) resolves through one budget resolver. The default keeps
+every byte identical to today. A host with a small-window model
+declares a budget instead of collecting overflow skips.
+
+*Gate:* a spec.
+
+### Step 7 — A per-fact shortlist and its recall report — PLANNED
+
+The ontology backfill prompt lists every typed node, title-ordered and
+capped. This step adds a deterministic per-fact shortlist builder and a
+`shortlist-recall` benchmark that measures, on the committed fixture,
+how often the shortlist contains the true target. The report publishes
+numbers about the engine's own code and blocks nothing.
+
+*Gate:* a spec.
+
+### Step 8 — The shortlist in the backfill prompt — PLANNED
+
+The backfill title catalog narrows from "every typed node, capped" to
+the per-fact shortlist of step 7. The step's spec records the errata
+that supersedes the temporary data-scope ruling of 2026-11-19
+(PR #425), which accepted the all-typed-nodes catalog as temporary.
+
+*Gate:* step 7 merged, and a spec.
+
+### Step 9 — The backfill cap under the context budget — PLANNED
+
+The ontology-backfill prompt cap joins the resolver of step 6, the
+last prompt-size constant to do so.
+
+*Gate:* steps 6 and 8 merged, and a spec.
+
+### Step 10 — Edge suggestions from System-One — PLANNED
+
+The edge-suggestion site opts in to the configured model. Edge
+suggestion is additive — a wrong edge is a wrong fact, not a lost one —
+so it runs first among the site conversions.
+
+*Gate:* steps 5 and 7 merged, and a spec.
+
+### Step 11 — Resolution from System-One — PLANNED
+
+The entity-resolution site opts in to the configured model. When the
+configured model is unavailable or below threshold, the fact falls
+through to the generative path, and the pass warns once.
+
+*Gate:* steps 5 and 6 merged, and a spec.
+
+### Step 12 — Heal screening from System-One — PLANNED
+
+The heal screen opts in to the configured model. Heal may forget when
+the host runs it (owner ruling, 2026-11-20); this step ships the
+per-fact receipts (`heal_deleted`, `heal_downgraded`) and the
+changed-id lists that make such moves auditable, and documents the
+prune and event-retention clocks a host must set to audit them.
+
+*Gate:* steps 5 and 6 merged, and a spec.
+
+### Step 13 — Type on write — PLANNED
+
+Facts get typed when the librarian writes them, inside the same
+host-passed budget, instead of waiting for a maintenance pass. The
+write path's instruction templates split from the backfill's own in
+`PromptService.ts`, so a write-time manifest change cannot change
+backfill prompts. Facts typed this way carry no
+manifest-drawn edges until step 10 replaces them; the spec discloses
+that gap.
+
+*Gate:* steps 5 and 6 merged, and a spec.
+
+### Step 14 — Ingest-time typing — PLANNED
+
+`ingestDocument()`'s extracted facts get typed through the step 13
+mechanism instead of the write-time one, completing the typing story
+for the document path.
+
+*Gate:* step 13 merged, and a spec.
+
 ## Exploratory — named so nobody builds them by accident
 
 - **The general leave-out rule for every host, always.** Today's ruling
@@ -193,6 +321,16 @@ Curated Thoughts needs no change.
   ageing rule is missing. Left out of step 4 (owner ruling,
   2026-11-14). Step 4's spec must leave room to add a per-source age
   later as an additive change; the ruled scope does not build it.
+- **An extraction-quality benchmark.** Whether the generative model
+  extracts the same facts when the backfill prompt stops carrying the
+  manifest. Named 2026-11-19 and removed from the step list (owner
+  amendment); step 8's docs disclose the risk instead.
+- **A classifier-confidence calibration tool.** A tool that tunes a
+  host's `minConfidence` thresholds on its own data. The docs explain
+  host self-calibration instead; the engine ships no tool.
+- **A keyword or ambiguous-band gate for the shortlist.** Whether a
+  lexical pre-filter should harden the shortlist against ambiguous
+  titles. A System-One site with no step; named 2026-11-20.
 
 ## What is intentionally absent
 
