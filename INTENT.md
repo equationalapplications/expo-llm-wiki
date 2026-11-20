@@ -96,7 +96,7 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   path in production.
 - **Superseded** — a fact whose validity has ended: replaced by a newer
   fact through the librarian's SUPERSEDE path (or its UPDATE path, when
-  the old fact was not inferred by the engine), or ended
+  the old fact came from a person), or ended
   without a replacement by `expire()`. An archive is a superseded
   fact. It stays in the
   store, marked, until the retention window ends; its text is history
@@ -329,8 +329,9 @@ A fact is exactly one of: **live** (stored and readable), **superseded**
 (stored, marked, retained by the host's policy), **forgotten**
 (soft-deleted; an instruction awaiting a hard delete) or **gone**
 (hard-deleted by prune — the rows are deleted but the text may still be
-recovered from the raw database file). Four verbs move a fact between
-states: `supersede`/`expire` end a fact's validity (supersede names a
+recovered from the raw database file). Four host verbs move a fact
+between states; the engine's own maintenance can also move one, as
+described below: `supersede`/`expire` end a fact's validity (supersede names a
 replacement; `expire()` ends a fact's validity without a replacement —
 an archive, not a deletion); `forget()` forgets it;
 `runPrune` applies the retention windows that turn superseded into
@@ -350,7 +351,9 @@ same way.
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
-visible. Today forget, prune and supersession exist; `forget()`
+visible. Today heal and the librarian report how many facts they forget
+or rewrite, not which; per-fact pass reports are planned. Today forget,
+prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
 canary-reproducible), which is why `erase()` exists and claims
 erasure only on the database's own read-back. The retention windows are the host's
@@ -456,8 +459,8 @@ break the erasure promise through the export door.
   old title read as a gate the package no longer has. The owner also
   decided to allow these destructive edits so that a fully autonomous
   agent gets the engine's best effort, while a host that wants human
-  review can build it from what the engine reports. Rule 12's four verbs
-  did not name these edits.
+  review will be able to build it from what the engine reports. Rule 12's
+  four host verbs did not name these edits.
 - 2026-11-17 — Rules 12 and 13 are added, and the glossary gains
   Superseded, Forgotten, Gone and Erased. Owner spec stop A–H for
   issue #401 (forget must erase, `specs/forget-erasure/`): the owner
