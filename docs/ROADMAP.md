@@ -2,7 +2,7 @@
 
 > **ROADMAP.md** · v1.2 · 2026-11-20 ·
 > Authority: derived from [INTENT.md](../INTENT.md) and from owner rulings
-> of 2026-11-12, 2026-11-13 and 2026-11-14. If this file and INTENT.md
+> of 2026-11-12, 2026-11-13, 2026-11-14, 2026-11-19 and 2026-11-20. If this file and INTENT.md
 > disagree, INTENT.md wins on intent and this file is wrong until amended.
 > Changing the order is an amendment: say so in the pull request, don't
 > drift.
@@ -324,7 +324,7 @@ for the document path.
 - **An extraction-quality benchmark.** Whether the generative model
   extracts the same facts when the backfill prompt stops carrying the
   manifest. Named 2026-11-19 and removed from the step list (owner
-  amendment); step 8's docs disclose the risk instead.
+  amendment); step 13's docs disclose the risk instead.
 - **A classifier-confidence calibration tool.** A tool that tunes a
   host's `minConfidence` thresholds on its own data. The docs explain
   host self-calibration instead; the engine ships no tool.
