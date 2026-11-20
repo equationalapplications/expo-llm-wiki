@@ -1,10 +1,12 @@
 # Spec: Ontology curation — machine typing, choke-point matching, and type-curation receipts
 
-**Status: Draft, 2026-11-20. Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**  
+**Status: Draft, 2026-11-20. Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
+**Revisions:** 2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
 **Base: `origin/main` @ `e43095c8`. Every pin below was re-verified live against `e43095c8`.**  
 **Intent check:** implements the owner-approved D1 block of the Lane 2 ontology consult (rulings session 2026-11-20; approved text in
 `records/investigations/2026-11-20-lane2-ontology-strict-consult/memo-r3.md` §D1, as amended by ADJUDICATION-r3a.md and ADJUDICATION-r3b.md).
-The owner ruled machine curation (OI-2): models decide types, deterministic code only checks them against the manifest, receipts let a person audit.
+The owner ruled machine curation (OI-2). Models decide types. Deterministic
+code only checks them against the manifest. Receipts let a person audit.
 No host-declared alias tables; owner ruled them out for this cycle.
 
 ## Problem
@@ -99,7 +101,9 @@ The rule from the ruling block, unchanged by this PR:
   fact untyped, keeps it in the typing queue, and reports it.
 
 The engine never replaces a type a person stated. Backfill already never
-overwrites (`EntryRepository.ts:1836` guards `okf_type IS NULL`).
+overwrites (`EntryRepository.ts:1836` guards `okf_type IS NULL`). In the
+non-strict modes, a person-door miss stores the fact untyped and emits
+`node_type_dropped`; it never throws.
 
 ### 4. Receipts at every type door
 
@@ -188,10 +192,18 @@ manifest, plus up to 20 sample ids, mirroring the edge-violation scan
 - Backfill system prompt line (`packages/core/src/prompts.ts:64`) gets the
   same instruction.
 - Ontology appendix field block (`packages/core/src/prompts/ontology.ts:3-7`)
-  adds: each node is a fact. To link two things with an edge, each must
-  exist as its own fact, titled by the name used in `target_title`.
+  adds, with the ruled wording: "Each node is a fact. To link two things with
+  an edge, each must exist as its own fact, titled by the same name you use
+  in `target_title`."
 - No claim of accuracy improvement accompanies this change (rule 11). The
   statement-kinds bench reports regressions only; it does not gate this PR.
+
+### 11. Typing joins runPendingMaintenance (ruled)
+
+The owner ruled this (R-MAINT-TYPING, handoff ruling ledger 2026-11-20). Typing
+joins the `runPendingMaintenance` job set for entities whose ontology mode is
+not `'off'`, inside the host-passed token budget. Nothing triggers typing on a
+write. The release notes state both facts.
 
 ## Cross-PR boundaries (stated, not absorbed)
 
@@ -209,6 +221,8 @@ manifest, plus up to 20 sample ids, mirroring the edge-violation scan
 - **PR 4** owns supersede edge-copy, the inbound-edge index, the
   `writer: 'inherited'` assigned receipts, host `supersede()` accepting a
   type, outbox prior-text receipts, and `librarian.destructiveEdits: 'retain'`.
+  PR 4 also owns the ruled R-EDGE extension of edge-follow to re-ingest by
+  `sourceRef` (normalized-title match, plus a receipt).
 - **PR 6** owns heal per-fact receipts and any heal "replaces" link.
 - **PR 5b** owns `typeOnWrite` and receipts on its door, only after an edge
   path exists.
@@ -224,7 +238,8 @@ manifest, plus up to 20 sample ids, mirroring the edge-violation scan
 - `packages/core/src/services/IngestionService.ts` — edge door via
   `resolveEdgeDefinitions`; `ingest_zero_facts`; partial-ingest typing.
 - `packages/core/src/services/MaintenanceService.ts` — `recheckCheckedBefore`
-  option; new receipt emissions in the backfill apply path.
+  option; new receipt emissions in the backfill apply path; typing in the
+  `runPendingMaintenance` job set (section 11).
 - `packages/core/src/repositories/EntryRepository.ts` — current-facts queue
   filter.
 - `packages/core/src/services/LintService.ts` — node-type violation count.
@@ -256,7 +271,9 @@ manifest, plus up to 20 sample ids, mirroring the edge-violation scan
    counted and sampled; untyped facts stay out of the new count.
 9. Prompt tests: both prompts carry the amended instruction verbatim; the
    appendix carries the facts-not-entities sentence.
-10. Full suites: `pnpm --filter` core and package tests must pass.
+10. Maintenance-set test: `runPendingMaintenance` types a mode≠`'off'`
+    entity inside the host-passed budget; a write triggers no typing.
+11. Full suites: `pnpm --filter` core and package tests must pass.
 
 ## Rejected alternatives
 
@@ -283,21 +300,21 @@ follow-up, derived from R-TRUST + OI-2, not asked for here.
 
 ## Open questions for the owner
 
-1. `runPendingMaintenance` typing default: run typing for mode≠`'off'`
-   entities inside the host's budget? Consultant recommends yes for
-   `runPendingMaintenance`, no for write-triggered `'auto'`, with a release
-   note. Today typing runs only when the host calls it.
-2. Extend edge-follow to re-ingest by `sourceRef` (normalized-title match)?
-   Consultant recommends yes; if approved, the zero-fact receipt in
-   section 4 gains an edge-copy counterpart. PR 4 territory either way.
-3. Confirm the extractor `okf_label` follow-up (capture the model's own
+1. Confirm the extractor `okf_label` follow-up (capture the model's own
    word so extraction-time folds become visible). Deferred here by ruling;
    say if it should move into this cycle.
+
+Former questions 1 and 2 are closed: the owner ruled them (R-MAINT-TYPING
+and R-EDGE, handoff ruling ledger 2026-11-20). Section 11 and the PR 4
+boundary entry carry them.
 
 ## Release surface
 
 Additive public surface (one call option, new diagnostic codes, new lint
 fields) plus behavior changes behind host-configured ontology modes.
-MINOR release. Hosts with ontology `'off'` see no change: every new
-receipt, fold, and queue change gates on the mode check
-(`MaintenanceService.ts:2071-2074`).
+MINOR release. Hosts with ontology `'off'` see no change: every new receipt
+and fold gates on the mode check
+(`MaintenanceService.ts:2071-2074`). The section 8 queue filter does not
+gate on the mode; it removes dead rows for every host. Typing in
+`runPendingMaintenance` (section 11) is the one new automatic behavior; the
+release notes carry it.
