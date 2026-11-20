@@ -65,7 +65,7 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   outbox; it is content, not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
   facts and tasks. Two strategies exist: `legacy` (add-only) and `ops`
-  (add, supersede or skip, with a similarity gate).
+  (add, update, supersede or skip, with a similarity gate).
 - **Heal** — the maintenance pass that finds contradictions, downgrades
   stale claims and removes obsolete facts.
 - **Ingest** — `ingestDocument()`: chunk a document, extract facts with
@@ -95,7 +95,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   parity) that must pass before the native crate replaces a TypeScript
   path in production.
 - **Superseded** — a fact whose validity has ended: replaced by a newer
-  fact through the librarian's UPDATE or SUPERSEDE path, or ended
+  fact through the librarian's SUPERSEDE path (or its UPDATE path, when
+  the old fact was not inferred by the engine), or ended
   without a replacement by `expire()`. An archive is a superseded
   fact. It stays in the
   store, marked, until the retention window ends; its text is history
@@ -103,10 +104,10 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   the host's chosen window for it; once that window ends, an aged
   superseded fact becomes forgotten like any other.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
-  or through the chain or source paths). Between the `forget()` call
-  and the hard delete it is soft-deleted: present in the file,
-  invisible to reads. "Forgotten" is an instruction, not a state the
-  storage layer has honored yet.
+  or through the chain or source paths), or one a heal pass removed.
+  Between that deletion and the hard delete it is soft-deleted: present
+  in the file, invisible to reads. "Forgotten" is an instruction, not a
+  state the storage layer has honored yet.
 - **Gone** — hard-deleted by prune. The rows are deleted but the text
   may still be recovered from the raw database file. Only `erase()`
   takes a forgotten fact all the way to erased.
@@ -298,13 +299,17 @@ today; the rule holds only as long as every PR keeps it.
 weeks earlier with "implementation not started" still at the top. A
 reader trusting those headers would have been wrong about the product.
 
-### 11. Benchmarks gate behavior changes
+### 11. Benchmarks back claims and gate the native engine
 
 A change to retrieval or maintenance behavior is measured before it is
 claimed. Accuracy or cost numbers are published only with the run that
 produced them, naming the model, the judge, the slice and the caveats.
 The native crate replaces a TypeScript path in production only after its
 adoption gates pass.
+
+The engine runs whatever model you hand it and puts no benchmark in
+front of that choice. How well that model works on your data is yours
+to measure.
 
 *Why:* "faster" and "more accurate" are claims consumers build on. Equal
 standing for the hosted service and this package, and no invisible
@@ -335,6 +340,12 @@ database itself reports back: the pragma state, each step's outcome,
 the checkpoint result. `remember` and `ingestDocument` create facts; they do not
 move a fact between states. "Erased" is not a fifth state: it is the
 verified outcome of `erase()`, a claim in its report.
+
+The engine's own maintenance also changes facts when the host runs it.
+Heal may forget a fact, and the librarian may rewrite a fact the engine
+inferred earlier, in place, without keeping the old text. A fact heal
+forgets is forgotten like any other: prune and `erase()` treat it the
+same way.
 
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
@@ -413,7 +424,7 @@ break the erasure promise through the export door.
    conventional commits in two phases. Nobody edits `CHANGELOG.md` or any
    `"version"` field in a PR. A `BREAKING CHANGE` footer publishes a major;
    do not write one without a ruling.
-5. **Benchmarks gate behavior changes.** Retrieval and maintenance changes
+5. **Benchmarks back claims and gate the native engine.** Retrieval and maintenance changes
    are measured on scratch stores with the harness in `packages/benchmarks`
    before numbers are claimed. Native-engine routing waits for its gates.
 6. **Supply chain.** Lockfile changes go through the 14-day gate with
@@ -428,6 +439,25 @@ break the erasure promise through the export door.
 
 ## Amendments
 
+- 2026-11-20 — Rule 11 is retitled "Benchmarks back claims and gate the
+  native engine" and gains a paragraph: the engine runs whatever model
+  the host hands it, puts no benchmark in front of that choice, and
+  leaves measuring that model to the host. "How changes are made" step 5
+  takes the same title. Rule 12 gains a paragraph naming two changes the
+  engine's own maintenance makes when the host runs it: heal forgetting
+  a fact, and the librarian rewriting a fact the engine inferred
+  earlier. It says prune and `erase()` treat such a fact like any other
+  forgotten fact; a sentence on per-fact pass reports will be added when
+  the engine ships them. The glossary's Forgotten and Superseded entries
+  are corrected to match, and the Librarian entry gains the update verb.
+  Rules 5 and 13 are unchanged: maintenance still never touches a fact
+  taken from a document, and erasure stays verifiable. Why: the owner
+  decided that choosing and measuring a model is the host's job, so the
+  old title read as a gate the package no longer has. The owner also
+  decided to allow these destructive edits so that a fully autonomous
+  agent gets the engine's best effort, while a host that wants human
+  review can build it from what the engine reports. Rule 12's four verbs
+  did not name these edits.
 - 2026-11-17 — Rules 12 and 13 are added, and the glossary gains
   Superseded, Forgotten, Gone and Erased. Owner spec stop A–H for
   issue #401 (forget must erase, `specs/forget-erasure/`): the owner
