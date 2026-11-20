@@ -96,7 +96,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   path in production.
 - **Superseded** — a fact whose validity has ended: replaced by a newer
   fact through the librarian's SUPERSEDE path (or its UPDATE path, when
-  the old fact came from a person), or ended
+  the old fact came from a person — an update to a fact taken from a
+  document becomes a draft for review, not a replacement), or ended
   without a replacement by `expire()`. An archive is a superseded
   fact. It stays in the
   store, marked, until the retention window ends; its text is history
