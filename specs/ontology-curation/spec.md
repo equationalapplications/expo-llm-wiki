@@ -262,6 +262,15 @@ Build decisions (this spec pins them so an implementer invents nothing):
   `MaintenanceService.ts:2089`), and the `classification_abstained` receipt
   for the generative path's silent omissions
   (`MaintenanceService.ts:2163-2177` counts them only in `scanned`).
+  Receipt ownership between this spec and S1-0 splits by emitter site
+  (controller adjudication, 2026-11-20): S1-0 owns the
+  `node_type_assigned` emitters on the backfill typing paths
+  (`writer: 'classifier' | 'llm'`); this spec owns the door receipts
+  (`node_type_dropped`, `node_type_folded`, `ontology_update_rejected`,
+  `ingest_zero_facts`) and its audit join only consumes
+  `node_type_assigned`. Whichever PR lands first emits the typing-path
+  receipts with the exact shape in section 4; the other reuses the code
+  and adds no second emitter.
 - **PR 4** owns supersede edge-copy, the inbound-edge index, the
   `writer: 'inherited'` assigned receipts, host `supersede()` accepting a
   type, outbox prior-text receipts, and `librarian.destructiveEdits: 'retain'`.
