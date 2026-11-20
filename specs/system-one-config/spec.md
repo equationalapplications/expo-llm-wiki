@@ -79,14 +79,22 @@ type (`MaintenanceService.ts:1035`, `WikiMemory.ts:937`).
 Failure rules:
 
 - An invalid call option (not `'auto'` or `'llm'`) throws a `TypeError`
-  before any work. This matches the `batchSize` precedent
-  (`MaintenanceService.ts:2056-2058`).
+  before any work. Validation sits at the top of `doRunOntologyBackfill`,
+  beside the `batchSize` check (`MaintenanceService.ts:2056-2058`), so it
+  precedes the `mode === 'off'` early return and the DB reads. This matches
+  the `deadlineMs` precedent (`MaintenanceScheduler.ts:104-105`).
 - An invalid config value warns once and the resolver treats the key as
-  unset. Warn through `warnChangedDefaultsOnce` (`engineDefaults.ts:61`), so
-  the message prints at most once per process.
-- When both `systemOne.typing` and `ontology.backfillClassifier` are set and
-  differ, warn once that two keys disagree. The newer key wins:
-  `systemOne.typing` overrides `ontology.backfillClassifier`.
+  unset, so the chain continues at the next level. Warn through a new
+  `warnOnce(message)` helper in `engineDefaults.ts` that shares the
+  `warnedDefaults` set with `warnChangedDefaultsOnce`
+  (`engineDefaults.ts:61`). Do not call `warnChangedDefaultsOnce` itself: it
+  logs every message from `changedDefaultWarnings(config)` and its only
+  caller is the `WikiMemory` constructor (`WikiMemory.ts:145`).
+- When both `systemOne.typing` and `ontology.backfillClassifier` are set,
+  valid, and differ, warn once that two keys disagree. The newer key wins:
+  `systemOne.typing` overrides `ontology.backfillClassifier`. The differ
+  check runs only after validation: an invalid key is unset and does not
+  participate.
 
 ### 3. Confidence floor
 
@@ -95,9 +103,10 @@ Add `resolveTypingMinConfidence(config)` to `engineDefaults.ts`. The chain is:
 `systemOne.minConfidence.typing` → `ontology.classifyMinConfidence` → `0.5`.
 
 Use `??` and never `||`, because `0` is a valid floor. Validate the resolved
-value: finite, in [0, 1]. An invalid config value warns once and resolves to
-`0.5`. This replaces the silent fallback at
-`MaintenanceService.ts:2252-2253`.
+value: finite, in [0, 1]. An invalid config value warns once (through the
+same `warnOnce` helper) and is treated as unset, so the chain continues —
+`ontology.classifyMinConfidence` or `0.5` still applies. This replaces the
+silent fallback at `MaintenanceService.ts:2252-2253`.
 
 Scope rule: the floor applies ONLY to classifier typing. The confidence
 number comes from the host's `classify` function; the engine only compares
@@ -115,13 +124,23 @@ Add `systemOne.onLowConfidence?: 'leave' | 'llm'`, default `'leave'`
 - `'leave'`: a low-confidence fact stays untyped and is cooldown-stamped.
   `classification_low_confidence` still fires (`MaintenanceService.ts:2335`).
 - `'llm'`: the classifier step does NOT cooldown-stamp the fact. The fact
-  joins the generative batch of the same pass, inside the same `tokenBudget`
-  and the same meter. The generative model types it (with the possibility of
-  edges) or omits it.
+  escalates to the generative step of the same pass, inside the same
+  `tokenBudget` and the same meter. The generative model types it (with the
+  possibility of edges) or omits it. This is a cost and quality setting, not
+  a safety mechanism. It cannot catch a confidently wrong classifier.
+  Document it that way. It is a no-op when typing resolves to `'llm'`;
+  document the no-op and emit no warning.
 
-This is a cost and quality setting, not a safety mechanism. It cannot catch
-a confidently wrong classifier. Document it that way. It is a no-op when
-typing resolves to `'llm'`; document the no-op and emit no warning.
+Escalation control flow (both low-confidence facts under `'llm'` routing and
+abstains under §5): `_runClassifierBackfill` returns the escalated facts
+un-stamped, excluded from the `attempted` set it would otherwise stamp in
+full via `_applyOntologyBackfillBatch` (`MaintenanceService.ts:2466`). After
+the classifier step returns, `doRunOntologyBackfill` runs the existing
+generative block over only those facts — same pass, same `tokenBudget`,
+same meter. Skip the generative step when the classifier step returned
+`budgetStop` or aborted. Counter merge: each fact counts once in `scanned`;
+`typed`, `failedValidation`, `abstained`, and `skipped` sum across the two
+steps.
 
 ### 5. Classifier abstain option
 
@@ -134,10 +153,20 @@ Add an engine-owned sentinel option. The sentinel string is exactly
 - The option cap at `MaintenanceService.ts:2089` stays `255` total: at most
   254 manifest slugs plus the sentinel. Passes with 255 manifest slugs fall
   back to the generative path, as today (`MaintenanceService.ts:2089-2091`).
-- The engine catches the sentinel before acceptance, inside the outcome
-  mapping of `_runClassifierBackfill` (before
-  `_applyOntologyBackfillBatch` at `MaintenanceService.ts:2319`). An
-  abstained fact is never typed by the classifier step.
+  Name the cap as a constant (`CLASSIFIER_MAX_CHOICES`) at the fallback
+  site; the literal has no constant or comment today.
+- The engine catches the sentinel BEFORE the confidence comparison, inside
+  the outcome mapping of `_runClassifierBackfill` (at
+  `MaintenanceService.ts:2296`, before `_applyOntologyBackfillBatch` at
+  `:2319`). A `'none_of_these'` answer is an abstain regardless of its
+  confidence number; an abstained fact is never typed by the classifier
+  step.
+- `'none_of_these'` is a reserved slug, compared case-insensitively (slug
+  matching is `trim().toLowerCase()`; see `utils/ontology.ts:20`). Manifest
+  validation rejects a node type with that slug, and the emergent merge
+  (`mergeEmergentUpdates`, `MaintenanceService.ts:2401`) rejects it too. If
+  a manifest somehow carries it, the pass falls back to the generative
+  path. Add a test for both the rejection and the fallback.
 - Under `'leave'`: the fact stays untyped and is cooldown-stamped, and the
   engine emits a `classification_abstained` receipt with
   `{ factId, writer: 'classifier' }`.
@@ -147,38 +176,73 @@ Add an engine-owned sentinel option. The sentinel string is exactly
 
 ### 6. Generative omission receipts
 
-In every typing mode, a fact the generative model scans but leaves untyped
-emits `classification_abstained { factId, writer: 'llm' }`. This closes the
-silent gap at the batch loop (`MaintenanceService.ts:2166`). The receipt is
+In every typing mode, an omission — a fact in the generative batch with no
+classification entry (left out of `classifications`, invalid per
+`failedValidation`, or counted at the `changes === 0` site,
+`MaintenanceService.ts:2443`) — emits
+`classification_abstained { factId, writer: 'llm' }`. This closes the
+per-fact identity gap at the batch loop (`MaintenanceService.ts:2166`); the
+aggregate omission count is already derivable from
+`OntologyBackfillResult` (`types.ts:126-127`). The receipt is
 content-free: it names the fact and the writer, nothing else.
 
 ### 7. node_type_assigned receipts
 
 Each accepted typing emits `node_type_assigned { factId, okfType, writer }`.
 The receipt is content-free and fires on both the classifier and the
-generative paths, only while ontology mode is not `'off'`. These are
-diagnostics in the existing diagnostic buffer pattern
+generative paths, only while ontology mode is not `'off'`. Both new receipt
+codes ride the existing diagnostic buffer pattern
 (`MaintenanceService.ts:2333-2346`).
 
 ### 8. Typing joins runPendingMaintenance (R-MAINT-TYPING)
 
 Add `'typing'` to `MaintenanceJob` (`types.ts:1729`) and to the default job
-set at `MaintenanceScheduler.ts:112`. Pending detection reports typing as
-pending for entities whose ontology mode is not `'off'` and that hold
-untyped facts past the recheck cutoff. The typing job runs
-`runOntologyBackfill` inside the host-passed token budget. There is NO
-write-triggered typing: `write()` never starts the typing job on its own.
-The release note must state both facts.
+set at `MaintenanceScheduler.ts:112`. The full integration:
+
+- `PendingMaintenance` (`types.ts:1734`) gains a typing-pending field;
+  pending detection in `getPending` (`MaintenanceScheduler.ts:47-86`) sets
+  it for entities whose ontology mode is not `'off'` and that hold untyped
+  facts past the recheck cutoff.
+- Widen the pending filter at `MaintenanceScheduler.ts:115` (today it drops
+  entities whose only pending work is typing) and the `State`/`openJobs`
+  handling in the loop.
+- `MaintenanceStopReason.job` widens too: `budget_too_small.job` is
+  `'librarian' | 'heal'` today (`types.ts:1767`).
+- Adding `'typing'` to `MaintenanceJob` makes it a `LockedMaintenanceJob`
+  (`types.ts:1732`) automatically. The typing job acquires the existing
+  `'ontologyBackfill'` lock (`MaintenanceService.ts:1037`); `busy[]`
+  reports `'typing'` while that lock is held.
+- `EntityMaintenanceReport` gains a typing counter.
+- The typing job calls `doRunOntologyBackfill` (not the public
+  `runOntologyBackfill`) inside the host-passed token budget, with the
+  scheduler's shared meter, and needs a trigger other than the hard-coded
+  `'call'` at `MaintenanceService.ts:2333`.
+- Loop exit: clear the typing-pending flag when `remaining === 0`, on
+  `budgetStop`, or when a pass types nothing. There is NO write-triggered
+  typing: `write()` never starts the typing job on its own.
+- The release note must state both the join and the no-write-trigger facts.
 
 ### 9. Compatibility lock
 
-With no `systemOne` key set and no call option, every path behaves
-byte-identically to today: typing resolves `'llm'` unless
-`ontology.backfillClassifier` says otherwise, the floor is `classifyMinConfidence` or `0.5`, low-confidence facts stay
-untyped, and no receipt fires. Abstain is engine-owned question design, so
-the sentinel rides the classifier path whenever the classifier path runs.
-This is the one deliberate within-pass behavior change. Capability alone still never switches
-paths (REQ-COMPAT-01.5, `types.ts:765`).
+With no `systemOne` key set and no call option, every path still uses
+today's resolution chain and defaults: typing resolves `'llm'` unless
+`ontology.backfillClassifier` says otherwise, the floor is
+`classifyMinConfidence` or `0.5`, and low-confidence facts stay untyped.
+Three deliberate changes remain even with no new keys; §9 lists all of
+them:
+
+1. The classifier question appends the `'none_of_these'` sentinel whenever
+   the classifier path runs (§5). This is the one within-pass behavior
+   change.
+2. The new receipts fire: `node_type_assigned` on both paths (§7) and
+   `classification_abstained` for classifier abstains and generative
+   omissions (§5-§6).
+3. `'typing'` joins the default `runPendingMaintenance` job set (§8), so a
+   host that calls it with no `jobs` now spends `generateText` tokens on
+   typing.
+
+Capability alone still never switches paths (REQ-COMPAT-01.5,
+`types.ts:765`).
 
 ### 10. Config-surface boundary
 
@@ -194,23 +258,36 @@ receipts in §6-§7, and the `'typing'` maintenance job. Later PRs own:
 - `packages/core/src/config/systemOne.ts` — new file; `SystemOneConfig`,
   `SystemOneThresholdSite`.
 - `packages/core/src/utils/engineDefaults.ts` — `resolveSystemOneTyping`,
-  `resolveTypingMinConfidence`, both-set-differ and invalid-config warnings.
+  `resolveTypingMinConfidence`, the `warnOnce(message)` helper, both-set-
+  differ and invalid-config warnings.
 - `packages/core/src/types.ts` — `WikiConfig.systemOne` (the :100-110 region
   around `backfillClassifier` at :106 and `classifyMinConfidence` at :108);
-  `MaintenanceJob` at :1729; `OntologyBackfillResult` at :128 if the result
-  gains an abstained counter.
+  `MaintenanceJob` at :1729; `OntologyBackfillResult` at :128 gains an
+  `abstained` counter (open question 2); `WikiDiagnosticCode` (:865-872 region) gains
+  `classification_abstained` and `node_type_assigned`, each with a fixed
+  severity; `PendingMaintenance` at :1734 gains a typing-pending field;
+  `EntityMaintenanceReport` gains a typing counter; `budget_too_small.job`
+  at :1767 widens to include `'typing'`.
 - `packages/core/src/services/MaintenanceService.ts` — resolver call sites
   (:2085, :2252-2253), question build (:2258-2264), outcome mapping and
   receipts (:2293-2346), generative omission receipts (:2166 region),
-  escalation into the generative batch.
-- `packages/core/src/services/MaintenanceScheduler.ts` — job set and pending
-  detection (:112, :115, :121-123).
+  escalation control flow (classifier step returns escalated facts
+  un-stamped; generative block runs over them), `CLASSIFIER_MAX_CHOICES`
+  constant, manifest validation and emergent merge reserve
+  `'none_of_these'`.
+- `packages/core/src/services/MaintenanceScheduler.ts` — job set (:112),
+  `getPending` (:47-86) and the :115 filter, `State`/`openJobs` handling,
+  typing loop with exit rules.
+- `packages/core/src/utils/ontology.ts` — manifest validation rejects the
+  reserved slug.
 - `packages/core/src/index.ts` — export the new config type and resolvers.
 - Docs, same PR: `apps/docs/src/content/docs/reference/configuration.md:91-92`
   (key table rows for the new keys), `apps/docs/src/content/docs/guides/ontologies.md:183-201`
-  (classifier section: abstain, onLowConfidence, new key names),
-  `apps/docs/src/content/docs/reference/wiki-memory.md:116`
-  (`runOntologyBackfill` signature row unchanged; typing job row added).
+  (classifier section: abstain, onLowConfidence, new key names) and the
+  old-key mentions at `:206` and `apps/docs/src/content/docs/guides/llm-provider.mdx:151-153`,
+  `apps/docs/src/content/docs/reference/wiki-memory.md` — amend the
+  `runPendingMaintenance` row at `:118` (its `jobs` list gains `'typing'`),
+  not a new row; the `runOntologyBackfill` signature row at `:116` stays.
 - CHANGELOG entry plus the R-MAINT-TYPING release note.
 
 ## Test plan
@@ -220,27 +297,41 @@ Unit tests (vitest, beside the existing backfill tests):
 1. Resolver chain: each precedence level wins in turn; a call option
    overrides both config keys; nothing set resolves `'llm'`.
 2. `??` semantics: floor `0` resolves to `0`, not `0.5`.
-3. Invalid call option throws a `TypeError` before any I/O.
+3. Invalid call option throws a `TypeError` before any I/O, including
+   before the `mode === 'off'` early return.
 4. Invalid config value warns once, resolves as unset, and the second
-   construction prints nothing.
-5. Both keys set and differ: warns once; `systemOne.typing` wins.
+   pass prints nothing (warn-once is per message, not per construction).
+5. Both keys set, valid, and differ: warns once; `systemOne.typing` wins.
+   One key invalid: no differ warning; the valid chain applies.
 6. Floor applies only in `_runClassifierBackfill`; with typing `'llm'`, a
    set floor never reads and no warning fires.
 7. Abstain: classifier returns `'none_of_these'`; under `'leave'` the fact
    stays untyped, is stamped, and emits `classification_abstained { writer:
    'classifier' }`; under `'llm'` it escalates and an omission emits
-   `{ writer: 'llm' }`.
+   `{ writer: 'llm' }`. A `'none_of_these'` answer below the floor still
+   counts as an abstain, not low confidence.
 8. Cap: 254 slugs plus the sentinel fits; 255 slugs falls back to the
    generative path.
-9. `onLowConfidence: 'llm'`: a low-confidence fact joins the generative
-   batch in the same pass under the same `tokenBudget` and meter; with
-   typing `'llm'` the option is a no-op.
+9. Escalation: in an `'auto'` pass with `onLowConfidence: 'llm'`, the
+   classifier step returns escalated facts un-stamped, the generative
+   block runs over only those facts in the same pass under the same
+   `tokenBudget` and meter, `scanned` counts each fact once, and a
+   classifier-step `budgetStop` skips the generative step. With typing
+   `'llm'` the option is a no-op.
 10. Receipts: `node_type_assigned` fires on both paths, only when mode is
     not `'off'`; generative omission emits `classification_abstained`.
-11. Scheduler: typing job runs only for mode-not-`'off'` entities; the job
-    respects `deadlineMs` and `tokenBudget`; `write()` never triggers it.
-12. Compatibility: with no new keys, behavior matches the pre-PR baseline
-    except the sentinel in the classifier question; assert both.
+11. Reserved slug: manifest validation and the emergent merge reject
+    `'none_of_these'` (case-insensitive); a manifest that carries it falls
+    back to the generative path.
+12. Scheduler: typing pending reported only for mode-not-`'off'` entities
+    with untyped facts past the cutoff; the job runs only when selected,
+    acquires the `'ontologyBackfill'` lock, reports `'typing'` in `busy[]`
+    and in the stop reason, respects `deadlineMs` and `tokenBudget`, and
+    `write()` never triggers it. Loop exits when the pass types nothing.
+13. Compatibility: with no new keys, behavior matches the pre-PR baseline
+    for resolution, defaults, and cooldowns; the only deltas are the
+    sentinel in the classifier question, the new receipts, and `'typing'`
+    in the default job set — assert all three.
 
 ## Out of scope / rejected alternatives
 
@@ -262,9 +353,7 @@ Unit tests (vitest, beside the existing backfill tests):
 
 1. Does the optional margin rule (abstain when the top-two confidence gap is
    below a margin) ship in S1-0 or land as a follow-up?
-2. Under `onLowConfidence: 'llm'`, do escalated facts join the FIRST
-   generative batch of the same pass, or trail after the scheduled batches?
-   Trailing keeps batch composition deterministic.
-3. Should `OntologyBackfillResult` gain an `abstained` counter alongside
+2. Should `OntologyBackfillResult` gain an `abstained` counter alongside
    `typed` and `failedValidation`, or does the receipt stream alone carry
-   the count?
+   the count? (The Files-touched section assumes yes; the counter-merge
+   rule in §4 depends on it.)
