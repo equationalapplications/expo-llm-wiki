@@ -145,21 +145,23 @@ overrides:
   # the moment 1.4.1 landed — its allowlist entry was inert and was removed
   # in the same pass. Four NEW 1.4.x advisories (GHSA-w4xr-hqv8-ch44,
   # GHSA-j8rw-jp99-435v, GHSA-6cv4-p8m7-4r25, GHSA-6889-vf6x-f3g5) are
-  # patched ONLY in 1.4.3, published 2026-11-04 01:06Z — age gate clears
-  # 2026-11-18 01:06Z; bump this floor in the next cooldown pass.
-  'node-forge@<1.4.1': 1.4.1
-  # hono 4.x advisory set (GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v,
-  # GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq MODERATE; GHSA-3gg2-335m-rxc6
-  # LOW): all patched in 4.13.16, published 2026-11-01 03:04Z, cleared the
-  # 14-day age gate 2026-11-15 03:04Z. Reach: @modelcontextprotocol/sdk
-  # (mcp-server, dev-only). SDK 1.32.2 is the newest release and declares
-  # hono ^4.11.4 — no bump path exists, hence the exact override; drop it
-  # once a natural re-resolution picks >=4.13.16.
-  'hono@>=4.0.0 <4.13.16': 4.13.16
-  # @hono/node-server (GHSA-jpvv-r467-5p4w, GHSA-qv5m-9pm6-hqp3 MODERATE):
-  # patched in 2.1.6, published 2026-11-02 10:22Z, cleared the age gate
-  # 2026-11-16 10:22Z. Same SDK reach and override rationale as hono above.
-  '@hono/node-server@>=2.0.0 <2.1.6': 2.1.6
+  # patched ONLY in 1.4.3, published 2026-11-04 01:06Z — age gate cleared
+  # 2026-11-18 01:06Z. Floor bumped 1.4.1 → 1.4.3 in the 2026-11-20
+  # cooldown pass (verified via full packument at bump time: 16.6 days
+  # old, well past the 14-day minimumReleaseAge; the four advisories
+  # stopped emitting on `pnpm audit` with the bump). 1.4.2 was never
+  # adopted by this tree.
+  'node-forge@<1.4.3': 1.4.3
+  # hono / @hono/node-server overrides RETIRED 2026-11-20 (cooldown pass 2,
+  # grandfathering condition met): with the pins removed, natural
+  # re-resolution picks hono 4.13.16 and @hono/node-server 2.1.6 — the
+  # exact versions the overrides forced — and `pnpm audit` stays clean.
+  # Advisory history: hono GHSA-46wx-v44x-9hh2 / GHSA-4h7h-rv7c-7m2v /
+  # GHSA-4m76-xfj5-7975 / GHSA-h7mg-cq63-vhpq (MODERATE) +
+  # GHSA-3gg2-335m-rxc6 (LOW); @hono/node-server GHSA-jpvv-r467-5p4w /
+  # GHSA-qv5m-9pm6-hqp3 (MODERATE). Reach was @modelcontextprotocol/sdk
+  # (mcp-server, dev-only). Re-add a floor if a future resolution falls
+  # below 4.13.16 / 2.1.6 and audit re-flags these GHSAs.
   # undici HIGH advisories (GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26,
   # GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm — fetch/redirect issues;
   # patches published 2026-10-15, age gate waived by Kurt 2026-10-28,
