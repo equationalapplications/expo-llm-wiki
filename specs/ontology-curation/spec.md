@@ -2,6 +2,7 @@
 
 **Status: Draft, 2026-11-20. Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
 **Revisions:** 2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
+2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved; audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'typing'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
 **Base: `origin/main` @ `e43095c8`. Every pin below was re-verified live against `e43095c8`.**  
 **Intent check:** implements the owner-approved D1 block of the Lane 2 ontology consult (rulings session 2026-11-20; approved text in
 `records/investigations/2026-11-20-lane2-ontology-strict-consult/memo-r3.md` §D1, as amended by ADJUDICATION-r3a.md and ADJUDICATION-r3b.md).
@@ -117,11 +118,13 @@ all are emitted only when the entity's ontology mode is not `'off'`
 
 New codes on `WikiDiagnosticCode` (`packages/core/src/types.ts:872`):
 
-- `node_type_dropped {factId, nodeType, reason}` — at every model-supplied
-  door, when the type misses the manifest.
+- `node_type_dropped {factId, nodeType, reason}` — at every type door,
+  model- or person-supplied, when the type misses the manifest.
 - `node_type_folded {factId, from, to, via: 'normalize'}` — when step 1
-  changed the slug. A host joins this to `node_type_assigned` on `factId`
-  to audit what folded where.
+  changed the slug. Extraction-time folds are self-contained rows (`from`,
+  `to` on the receipt). The `factId` join to `node_type_assigned`
+  reconstructs the audit only for facts a later backfill types; the spec's
+  audit claim is limited to that pair.
 - `node_type_assigned {factId, okfType, writer, confidence?}` — whenever
   typing happens after the fact was written. `writer` is
   `'classifier' | 'llm' | 'inherited'`. `'inherited'` fires only in PR 4.
@@ -130,6 +133,16 @@ New codes on `WikiDiagnosticCode` (`packages/core/src/types.ts:872`):
 - `ingest_zero_facts {sourceRef, chunks}` — when a full re-ingest by
   `sourceRef` soft-deletes prior facts and edges and then writes zero facts
   (`IngestionService.ts:745-750` is the exact site). Operation: `'ingest'`.
+
+Mechanism: `validateAndNormalizeFact` returns only
+`{okf_type, edges}` today (`OntologyService.ts:103-128`), so it cannot feed
+a receipt. Widen its return to also carry
+`match?: { raw: string; canonical: string; via: 'exact' | 'normalize' }`;
+on a miss, `match` is absent. Each emitter compares or reads `match` from
+that one shared check; callers do not re-run resolution. Ingest and
+remember do not check the mode today, so each emitter performs its own
+mode≠`'off'` gate before pushing a receipt; the shared check stays
+mode-free.
 
 `classification_abstained` is S1-0's code (see boundary section). This PR
 wires no abstain mechanics.
@@ -140,9 +153,15 @@ wires no abstain mechanics.
 (`packages/core/src/utils/ontology.ts:175-247`). Change the return to carry
 rejections alongside the merged manifest, without changing what merges:
 same first-seen-wins node loop, same edge-triple dedupe, same parent gate.
-The backfill caller emits `ontology_update_rejected {reason}` for each. In
-strict mode, every proposal rejects with reason `'mode_strict'`, and the
-caller emits one receipt per proposal so the rejection count is honest.
+All four merge callers emit `ontology_update_rejected {reason}` for each
+rejected proposal: ingest (`IngestionService.ts:855`), backfill
+(`MaintenanceService.ts:2401`), librarian legacy (`librarian/legacy.ts:112`),
+and librarian ops (`librarian/ops/apply.ts:92`). The merge runs only in
+`'emergent'` mode, so the caller produces the receipt, not the merge
+helper. In strict mode the caller never reaches the merge; it emits one
+`'mode_strict'` receipt per proposal and drops them. The return-shape
+change travels through `MetadataRepository.mergeManifestUpdates`
+(`packages/core/src/repositories/MetadataRepository.ts:312-321`).
 
 ### 6. Partial ingest types and resolves
 
@@ -182,7 +201,10 @@ manifest, plus up to 20 sample ids, mirroring the edge-violation scan
 (`LintService.ts:29-42`). Add `nodeTypeViolations` and
 `nodeTypeViolationIds` to `WikiLintReport`
 (`packages/core/src/types.ts:1693-1708`). Untyped facts stay in the existing
-`untypedFacts` count; the new count is wrong-type facts only.
+`untypedFacts` count; the new count is wrong-type facts only. A stored
+slug counts as "in the effective manifest" when the normalized resolver
+resolves it — the same matching the type doors use (section 1), never an
+exact-only check.
 
 ### 10. Prompt amendments (both prompts, no accuracy claim)
 
@@ -204,6 +226,28 @@ The owner ruled this (R-MAINT-TYPING, handoff ruling ledger 2026-11-20). Typing
 joins the `runPendingMaintenance` job set for entities whose ontology mode is
 not `'off'`, inside the host-passed token budget. Nothing triggers typing on a
 write. The release notes state both facts.
+
+Build decisions (this spec pins them so an implementer invents nothing):
+
+- The new job is `'typing'`. `MaintenanceJob` is a closed four-member
+  union today (`packages/core/src/types.ts:1729`); add `'typing'` as a
+  fifth member. `'typing'` is lockable, so `LockedMaintenanceJob`
+  (`types.ts:1732`) keeps it (unlike `'externalDeletions'`). Update the
+  `jobs` doc comment that says "Default all four" (`types.ts:1759`) and
+  add `'typing'` to the default list.
+- Pending work: an entity counts as having pending typing when
+  `findUntypedByEntityId` (section 8's filtered query) returns rows.
+  `getPendingMaintenance` and `MaintenanceScheduler`
+  (`packages/core/src/services/MaintenanceScheduler.ts`) check this before
+  dispatching.
+- A typing unit is one `runOntologyBackfill` batch for that entity,
+  charged against the host-passed `tokenBudget` with the existing
+  per-batch cost estimate (`MaintenanceService.ts:2056-2059` is the
+  `batchSize` precedent the option rides).
+- `EntityMaintenanceReport` (`types.ts:1769+`) gains `typed: number` (facts
+  typed in the pass) and `untypedRemaining: number`.
+- Files touched beyond `MaintenanceService.ts`:
+  `services/MaintenanceScheduler.ts`, `WikiMemory.ts`, `types.ts`.
 
 ## Cross-PR boundaries (stated, not absorbed)
 
@@ -235,11 +279,24 @@ write. The release notes state both facts.
 
 - `packages/core/src/utils/ontology.ts` — normalized matching in both
   resolvers; merge rejections.
+- `packages/core/src/services/OntologyService.ts` — `validateAndNormalizeFact`
+  return widening (section 4 mechanism); mode-free shared check.
+- `packages/core/src/services/RememberService.ts` — receipt emission at the
+  remember door.
+- `packages/core/src/services/librarian/legacy.ts`,
+  `packages/core/src/services/librarian/ops/apply.ts` — receipt emission at
+  the librarian merge callers (sections 4 and 5).
+- `packages/core/src/repositories/MetadataRepository.ts` — return-shape
+  passthrough for merge rejections (section 5).
 - `packages/core/src/services/IngestionService.ts` — edge door via
   `resolveEdgeDefinitions`; `ingest_zero_facts`; partial-ingest typing.
 - `packages/core/src/services/MaintenanceService.ts` — `recheckCheckedBefore`
-  option; new receipt emissions in the backfill apply path; typing in the
-  `runPendingMaintenance` job set (section 11).
+  option; new receipt emissions in the backfill apply path; the `'typing'`
+  job in the `runPendingMaintenance` job set (section 11).
+- `packages/core/src/services/MaintenanceScheduler.ts` — pending-typing
+  check and dispatch (section 11).
+- `packages/core/src/WikiMemory.ts` — `'typing'` in the public maintenance
+  surface (section 11).
 - `packages/core/src/repositories/EntryRepository.ts` — current-facts queue
   filter.
 - `packages/core/src/services/LintService.ts` — node-type violation count.
@@ -254,26 +311,30 @@ write. The release notes state both facts.
 1. Resolver tests: exact hit wins; unique normalized hit folds; ambiguous
    normalized query returns null; no case where normalization throws on any
    valid manifest.
-2. Door tests: each model-supplied door stores an untypable fact untyped and
-   emits `node_type_dropped`; `remember` and `upsertGraph` still throw under
-   strict; neither throws in emergent mode.
-3. Receipt tests: `node_type_folded` fires once per fold; the
-   `factId` join between `dropped` and `assigned` reconstructs the audit;
-   receipts suppress in mode `'off'`.
-4. Zero-fact ingest test: re-ingest a `sourceRef` whose new run extracts
+2. Door tests: each type door, model- and person-supplied, stores an
+   untypable fact untyped and emits `node_type_dropped` in non-strict
+   modes; `remember` and `upsertGraph` still throw under strict; neither
+   throws in emergent mode.
+3. Receipt tests: `node_type_folded` fires once per fold; for a fact a
+   later backfill types, the `factId` join between `dropped` and
+   `assigned` reconstructs the audit; receipts suppress in mode `'off'`.
+4. Merge-rejection tests: all four callers emit `ontology_update_rejected`;
+   a strict-mode caller emits one `'mode_strict'` receipt per proposal.
+5. Zero-fact ingest test: re-ingest a `sourceRef` whose new run extracts
    nothing; prior facts tombstone, receipt fires with chunk count.
-5. Partial-ingest test: chunk-failure path now stores typed facts with
+6. Partial-ingest test: chunk-failure path now stores typed facts with
    resolved edges; a following full run retires and hard-deletes them.
-6. Recheck test: `recheckCheckedBefore: 0` re-queues a checked fact; the
+7. Recheck test: `recheckCheckedBefore: 0` re-queues a checked fact; the
    default call does not; invalid values throw.
-7. Queue test: an expired fact leaves the typing queue; a live fact stays.
-8. Lint test: a fact typed with a slug later removed from the manifest is
+8. Queue test: an expired fact leaves the typing queue; a live fact stays.
+9. Lint test: a fact typed with a slug later removed from the manifest is
    counted and sampled; untyped facts stay out of the new count.
-9. Prompt tests: both prompts carry the amended instruction verbatim; the
-   appendix carries the facts-not-entities sentence.
-10. Maintenance-set test: `runPendingMaintenance` types a mode≠`'off'`
+10. Prompt tests: both prompts carry the amended instruction verbatim; the
+    appendix carries the facts-not-entities sentence.
+11. Maintenance-set test: `runPendingMaintenance` types a mode≠`'off'`
     entity inside the host-passed budget; a write triggers no typing.
-11. Full suites: `pnpm --filter` core and package tests must pass.
+12. Full suites: `pnpm --filter @equationalapplications/core-llm-wiki test`
+    must pass.
 
 ## Rejected alternatives
 
