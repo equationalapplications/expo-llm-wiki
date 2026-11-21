@@ -34,7 +34,7 @@ describe('ops extract split-path merge', () => {
     });
     await ev('evt_1', 10, 'summary one');
     await ev('evt_2', 20, 'summary two');
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     const rejected = out.diagnostics.filter((d: any) => d.code === 'fact_rejected');
     expect(rejected).toHaveLength(1);
@@ -60,7 +60,7 @@ describe('ops extract split-path merge', () => {
     });
     await ev('evt_1', 10, 'summary one');
     await ev('evt_2', 20, 'summary two');
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     const nodes = out.ontologyUpdates?.node_types ?? [];
     expect(nodes.every((n: any) => n && typeof n.type === 'string' && n.type.length > 0)).toBe(true);
@@ -77,7 +77,7 @@ describe('ops extract split-path merge', () => {
     });
     await ev('evt_1', 10, 'summary one');
     await ev('evt_2', 20, 'summary two');
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.ontologyUpdates?.node_types).toEqual([{ type: 'concept', label: 'Concept' }]);
     expect(out.ontologyUpdates?.edge_types).toBeUndefined();
@@ -95,7 +95,7 @@ describe('ops extract split-path merge', () => {
     });
     await ev('evt_1', 10, 'summary one');
     await ev('evt_2', 20, 'summary two');
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.ontologyUpdates?.node_types).toEqual([{ type: 'concept', label: 'Concept' }]);
   });

@@ -20,15 +20,15 @@ describe('selectBatch', () => {
     const { deps, ev } = await mk();
     await ev('evt_a', 10, 'x'.repeat(OPS_MAX_EXTRACT_CHARS - 5));
     await ev('evt_b', 20, 'y'.repeat(100));
-    const r: any = await selectBatch(deps, 'u', null);
+    const r: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     expect(r.batch.map((l: any) => l.event.id)).toEqual(['evt_a']);
-    const r2: any = await selectBatch(deps, 'u', { at: 10, id: 'evt_a' });
+    const r2: any = await selectBatch(deps, 'u', { at: 10, id: 'evt_a' }, undefined, undefined, undefined);
     expect(r2.batch.map((l: any) => l.event.id)).toEqual(['evt_b']);
   });
   it('shrinks to the budget and reports budget_too_small for one event', async () => {
     const { deps, ev } = await mk();
     await ev('evt_a', 10, 'x'.repeat(4000));
-    const r: any = await selectBatch(deps, 'u', null, new UsageMeter(100));
+    const r: any = await selectBatch(deps, 'u', null, new UsageMeter(100), undefined, undefined);
     expect(r.budgetStop.requiredEstimate).toBeGreaterThan(2000);
   });
 });
@@ -47,7 +47,7 @@ describe('runExtract', () => {
     const { deps, ev } = await mk(generateText);
     await ev('evt_a', 10, 'job news', 7);
     await ev('evt_b', 20, 'moving news');
-    const { batch }: any = await selectBatch(deps, 'u', null);
+    const { batch }: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, batch);
     expect(out.candidates.map((c) => [c.fact.title, c.sourceLabel, c.validFrom])).toEqual([
       ['User moved to San Francisco', 'e2', 20],
@@ -67,7 +67,7 @@ describe('runExtract default valid_from', () => {
     const generateText = vi.fn(async () => JSON.stringify({ facts, tasks: [] }));
     const { deps, ev } = await mk(generateText);
     for (const [id, at, occurred] of events) await ev(id, at, 's', occurred);
-    const { batch }: any = await selectBatch(deps, 'u', null);
+    const { batch }: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, batch);
     return out.candidates.map((c) => [c.fact.title, c.validFrom]);
   }
