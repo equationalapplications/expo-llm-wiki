@@ -106,6 +106,13 @@ export interface OntologyConfig {
   backfillClassifier?: 'auto' | 'llm';
   /** Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Default 0.5. */
   classifyMinConfidence?: number;
+  /**
+   * Batch size for scheduler-driven (`runPendingMaintenance`) ontology
+   * backfill passes. Finite integer >= 1; invalid values fall back to the
+   * default. Default 50. Does not change the manual `runOntologyBackfill`
+   * default (25).
+   */
+  schedulerBatchSize?: number;
 }
 
 export interface ExtractedFactEdge {
@@ -888,6 +895,7 @@ export type WikiDiagnosticCode =
   | 'librarian_gate'
   | 'librarian_op_rejected'
   | 'contradicts_document'
+  | 'ontology_backfill_held'
   | 'resolve_failed'
   | 'read_budget'
   | 'event_retention_held'
@@ -1726,7 +1734,7 @@ export interface WikiInstructions {
   ontologyBackfill: string;
 }
 
-export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions';
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions' | 'ontologyBackfill';
 
 /** The jobs that hold a per-entity lock (everything but `externalDeletions`). */
 export type LockedMaintenanceJob = Exclude<MaintenanceJob, 'externalDeletions'>;
@@ -1747,6 +1755,13 @@ export interface PendingMaintenance {
   reembedPending: boolean;
   /** Removals still owed to the host's vector index for this entity (absent when none). */
   pendingExternalDeletions?: number;
+  /**
+   * Untyped facts still eligible for ontology typing (absent when none).
+   * Counts only facts outside the recheck cooldown — `deferred` ones are
+   * waiting, not work the next pass will attempt. Always false-shaped (absent)
+   * while ontology is off for the entity.
+   */
+  pendingOntologyBackfill?: number;
 }
 
 export interface RunPendingMaintenanceOptions {
@@ -1756,7 +1771,7 @@ export interface RunPendingMaintenanceOptions {
   tokenBudget?: number;
   /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
   deadlineMs?: number;
-  /** Default all four. `externalDeletions` runs first and is not metered by `tokenBudget`. */
+  /** Default all five. `externalDeletions` runs first and is not metered by `tokenBudget`. */
   jobs?: MaintenanceJob[];
 }
 
@@ -1764,7 +1779,7 @@ export type MaintenanceStopReason =
   | { reason: 'complete' }
   | { reason: 'deadline' }
   | { reason: 'budget_exhausted' }
-  | { reason: 'budget_too_small'; job: 'librarian' | 'heal'; entityId: string; requiredEstimate: number };
+  | { reason: 'budget_too_small'; job: 'librarian' | 'heal' | 'ontologyBackfill'; entityId: string; requiredEstimate: number };
 
 export interface EntityMaintenanceReport {
   entityId: string;
@@ -1772,6 +1787,10 @@ export interface EntityMaintenanceReport {
   factsWritten: number;
   healPasses: number;
   reembedded: boolean;
+  /** Scheduler-driven ontology-backfill passes run for this entity (0 when the job was off). */
+  ontologyBackfillPasses: number;
+  /** Facts that received an okf_type during this run's ontology-backfill passes. */
+  typed: number;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: LockedMaintenanceJob[];
   /**

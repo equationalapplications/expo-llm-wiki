@@ -21,6 +21,7 @@ export { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from './utils/embedDefau
 export { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
+export { resolveOntologyJobDefaults, DEFAULT_ONTOLOGY_JOB_BATCH_SIZE } from './utils/config/ontologyJobDefaults';
 export type { EmbedFactResult, EmbedFailureKind } from './services/EmbeddingService';
 export {
   ONTOLOGY_BACKFILL_BATCH_SIZE,

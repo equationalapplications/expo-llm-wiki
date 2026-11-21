@@ -1046,6 +1046,37 @@ export class MaintenanceService {
   }
 
   /**
+   * Scheduler read view (specs/system-one-config §8): untyped facts still
+   * eligible for typing this pass — outside the 7-day recheck cooldown — or 0
+   * when ontology is off for the entity (nothing is ever eligible there).
+   * Read-only: never materializes a seed manifest, never writes.
+   */
+  async pendingOntologyBackfill(entityId: string): Promise<number> {
+    const ontologyService = this.ontologyService;
+    if (!ontologyService) return 0;
+    const { mode } = await ontologyService.getEffectiveState(entityId);
+    if (mode === 'off') return 0;
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, Date.now() - ONTOLOGY_BACKFILL_RECHECK_MS);
+    return counts.eligible;
+  }
+
+  /**
+   * Emit `ontology_backfill_held` (severity `info`) when the scheduler found
+   * the entity's `ontologyBackfill` lock held by another job. The lock state
+   * names no content, so the fixed template carries all the information a
+   * host needs; `JobManager.isBlocked` does not identify the blocker and the
+   * diagnostic detail surface stays identifier-typed.
+   */
+  noteOntologyBackfillHeld(entityId: string): void {
+    emitDiagnostic(this.options, {
+      code: 'ontology_backfill_held',
+      operation: 'ontologyBackfill',
+      trigger: 'call',
+      entityId,
+    });
+  }
+
+  /**
    * Re-embed facts, honouring per-row failure markers and exponential backoff.
    *
    * Marker lifecycle (spec §2): markers are cleared by a successful embed, by
