@@ -1,3 +1,13 @@
+## [9.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.6.0...v9.7.0) (2026-11-21)
+
+### Features
+
+* **context-budget:** add config/context.ts resolver with legacy/declared modes ([74d4337](https://github.com/equationalapplications/expo-llm-wiki/commit/74d43371af6a4c3d444776d5ebf43aac5b81486d))
+* **context-budget:** add ContextBudget type and estimateTokensWith wrapper ([6a17c3d](https://github.com/equationalapplications/expo-llm-wiki/commit/6a17c3d2f370fa73d5a15ad46d1431031e97b284))
+* **context-budget:** export context-budget resolver surface from core index ([7aacaba](https://github.com/equationalapplications/expo-llm-wiki/commit/7aacaba5184688296a874cc36086c89b1053af1e))
+* **context-budget:** ingest chunk fallback through resolver; signature-only selectBatch call sites in existing suites ([921d633](https://github.com/equationalapplications/expo-llm-wiki/commit/921d6336b2eff283ebddb14c0b2d662fd1d47c2b))
+* **context-budget:** wire config.context through selectBatch/runResolve/heal cap sites (fail-fast at construction) ([b48eb06](https://github.com/equationalapplications/expo-llm-wiki/commit/b48eb0650aa03785b07c70288fed7c015c67e7be))
+
 ## [9.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.3...v9.6.0) (2026-11-21)
 
 ### Features
