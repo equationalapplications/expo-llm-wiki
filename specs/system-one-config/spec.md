@@ -288,7 +288,8 @@ receipts in §6-§7, and the `'typing'` maintenance job. Later PRs own:
   `apps/docs/src/content/docs/reference/wiki-memory.md` — amend the
   `runPendingMaintenance` row at `:118` (its `jobs` list gains `'typing'`),
   not a new row; the `runOntologyBackfill` signature row at `:116` stays.
-- CHANGELOG entry plus the R-MAINT-TYPING release note.
+- R-MAINT-TYPING release note — carried in the `feat(core)` commit body and the
+  docs (semantic-release owns `CHANGELOG.md`; plan errata, T3 review 2026-11-21).
 
 ## Test plan
 
