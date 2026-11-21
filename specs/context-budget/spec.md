@@ -41,6 +41,9 @@ All four wiring edits resolve the budget once per public entry and pass it down.
 - `packages/core/src/services/librarian/ops/resolve.ts` — swap the `maxPromptChars` arg to the resolver (line 104).
 - `packages/core/src/services/MaintenanceService.ts` — swap the heal `maxPromptChars` arg to the resolver (line 1815).
 - `packages/core/src/services/librarian/ops/extract.ts` — swap the batch char cap to the resolver (line 65).
+- `packages/core/src/services/librarian/ops/index.ts` — resolve the budget once at
+  librarian-pass entry and pass it to `selectBatch` (amendment 2026-11-21, plan review r1:
+  caller-side threading site omitted from the original list).
 - `packages/core/src/services/IngestionService.ts` — swap the final chunk-length fallback to the resolver (line 129).
 - `packages/core/src/index.ts` — re-export the new public surface.
 - `packages/core/__tests__/` — new tests; see Test plan.

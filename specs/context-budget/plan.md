@@ -2,7 +2,11 @@
 
 Spec: `specs/context-budget/spec.md` (APPROVED, owner rulings folded 2026-11-21) @ 5be086ea,
 branch `spec/context-budget`, PR #438. All file:line cites below were re-verified live against
-the tree at 5be086ea (base `e43095c8`).
+the tree at 5be086ea (base `e43095c8`). **Intent check (AGENTS.md):** the spec was checked
+against `INTENT.md` at authoring time — §241's single maintenance token budget and the
+`estimated` marking are untouched (metering is out of scope); the resolver only re-routes
+existing constant reads, which INTENT neither names nor constrains. Aligned; no INTENT
+amendment needed.
 
 **Merge position:** second among the four wave-1 PRs (roadmap step 6, after S1-0 #442).
 **Coordination:** file-wise independent of the other three PRs — this PR creates
@@ -131,7 +135,8 @@ unit would split the type from its only consumer; they go together).
 
 Files: `packages/core/src/types.ts`, `services/librarian/ops/resolve.ts`,
 `services/MaintenanceService.ts`, `services/librarian/ops/extract.ts`,
-`services/librarian/ops/index.ts`, `services/IngestionService.ts`.
+`services/librarian/ops/index.ts`, `services/IngestionService.ts`, plus the 14
+`selectBatch(...)` test call sites in three existing test files (see Extract below).
 
 - `types.ts`: add to `WikiConfig` (line ~296):
 
@@ -152,14 +157,18 @@ Files: `packages/core/src/types.ts`, `services/librarian/ops/resolve.ts`,
     at entry; line 104 becomes `maxPromptChars: resolveMaxPromptChars(budget, 'resolve')`.
   - `doRunHeal` (`MaintenanceService.ts:1653`): resolve once from `this.options.config`;
     line 1815 becomes `maxPromptChars: resolveMaxPromptChars(budget, 'heal')`.
-  - Extract: `selectBatch` (`extract.ts:52`) gains a `budget: ContextBudget` parameter,
-    inserted in the pattern of its existing optional `meter?`/`guidance?` params (after
-    `wm`, before or after them per call-site cleanliness — it is REQUIRED, not optional,
-    since the caller always has it). Line 65's cap compare uses
-    `resolveMaxPromptChars(budget, 'extract')`. The caller at `ops/index.ts:33` resolves the
-    budget once at librarian-pass entry and passes it. **Line 74 (the
-    `RESOLVE_RESERVE_FACTOR` reserve check) is untouched** — it derives from the prompt
-    estimate, not from the swapped constant.
+- **Extract:** `selectBatch` (`extract.ts:52`) gains a REQUIRED `budget: ContextBudget`
+  parameter as its **LAST** parameter, after `guidance?` — no existing positional argument
+  moves, and no default exists (an absent budget is a caller bug, per the no-fallback rule).
+  Line 65's cap compare uses `resolveMaxPromptChars(budget, 'extract')`; **line 74 (the
+  `RESOLVE_RESERVE_FACTOR` reserve check) is untouched** — it derives from the prompt
+  estimate, not from the swapped constant. The caller at `ops/index.ts:33` resolves the
+  budget once at librarian-pass entry and passes it. **Test call-site updates are in
+  scope:** the 14 existing `selectBatch(...)` call sites across
+  `__tests__/opsExtract.test.ts`, `__tests__/services/librarian/ops/extract-merge.test.ts`,
+  and `extract-overflow.test.ts` gain the trailing budget argument
+  (`resolveContextBudget(undefined)` for legacy behavior); existing suites are unchanged
+  behaviorally but not source-identical.
   - `ingestDocument` (`IngestionService.ts:129`): keep the override chain verbatim, swap
     only the final fallback:
     `params.maxChunkLength ?? this.options.config?.maxChunkLength ?? resolveDefaultChunkLength(budget)`
@@ -209,14 +218,16 @@ Files: `packages/core/__tests__/contextBudget.test.ts` (extend),
   with `contextWindowTokens` set (R3 — reachable now); no directly-constructed-budget
   shortcut is needed (the spec's conditional in test 3 is moot under R3).
 - Run: full vitest suite (`pnpm -r --filter=!@equationalapplications/integration-llm-wiki
-  test` or the repo's standard unit gate) — all existing suites pass unchanged (spec test 7;
-  the T1 pins make this a real guard).
+  test` or the repo's standard unit gate) — all existing suites pass (the T4 signature
+  updates are call-site-only; behavior unchanged — the T1 pins make this a real guard).
 - Commit: `test(context-budget): override precedence, meter independence, backfill exclusion`
 
 ### T7 — Gates + PR wrap
 
 - Full gates: typecheck + unit suite green; `git diff origin/main..HEAD` grep-swept to
-  confirm: only the eight files in spec "Files touched", no `LLMProvider` change, no line-74
+  confirm: only the spec's Files-touched set — eight original entries plus
+  `ops/index.ts` (spec amendment 2026-11-21) and the three existing test files carrying
+  signature-only call-site updates — no `LLMProvider` change, no line-74
   edit, no line-2144 edit, no `estimateTokens` call-site change.
 - Update `specs/context-budget/LEDGER.md` (one checkbox per T-task with evidence links) in
   the implementation phase — ledger is transient, deleted by the cleanup commit.
@@ -243,9 +254,11 @@ the spec's Files-touched list plus the two test files.
 ## Spec ambiguities hit while planning, and resolutions
 
 1. **`selectBatch` parameter position and optionality.** Spec says "in the pattern of its
-   existing `meter?`/`guidance?` parameters" but the budget is always available at the one
-   call site (`ops/index.ts:33`). Resolution: required parameter, placed with the other
-   pass-down params; no default — an absent budget is a caller bug, not a legacy fallback.
+   existing `meter?`/`guidance?` parameters" but those are optional trailing params while
+   the budget is always available at the call sites. Resolution (r1 review): REQUIRED and
+   LAST, after `guidance?` — no positional argument moves; the 14 existing test call sites
+   gain the trailing argument. No default — an absent budget is a caller bug, not a legacy
+   fallback.
 2. **Where `budget` comes from in `doRunHeal`/`runResolve`.** Both hold service options
    (`this.options.config` / `deps.options.config`); the plan resolves at entry and closes
    over it. No new plumbing.
