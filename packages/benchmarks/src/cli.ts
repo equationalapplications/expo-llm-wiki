@@ -780,7 +780,7 @@ function renderShortlistRecallSummary(report: {
   randomBaseline: Record<string, Record<number, number>>;
 }): string {
   const lines: string[] = ['shortlist recall@k (lexical | embedding | random):'];
-  for (const pool of ['seed', 'distractor-50', 'distractor-200']) {
+  for (const pool of Object.keys(report.lexical)) {
     const ks = Object.keys(report.lexical[pool]).map(Number).sort((a, b) => a - b);
     const cells = ks.map(
       (k) => `k=${k}: ${report.lexical[pool][k]} | ${report.embedding[pool][k]} | ${report.randomBaseline[pool][k]}`,
