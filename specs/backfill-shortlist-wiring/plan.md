@@ -107,7 +107,7 @@ captures RED before the source change goes green.
   `findShortlistRowsByEntityId`; resolve `k` once per pass via
   `resolveShortlistK(this.options.config)`; inside `buildPrompt`, call
   `buildShortlist(fact, rows, k)` per fact (facts carry `title` and
-  `body` already — `WikiFact.body`, `packages/core/src/types.ts:566`,
+  `body` already — `WikiFact.body`, `packages/core/src/types.ts:567`,
   verified against `e268b892`) and render the sections via T2's
   renderer. The
   `buildTitleCatalogBlock` call leaves the backfill path (owner ruling
