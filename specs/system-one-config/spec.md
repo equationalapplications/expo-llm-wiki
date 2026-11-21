@@ -1,6 +1,6 @@
 # Spec — S1-0: System-One Config Surface
 
-Status: DRAFT (design ruled — handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; Wave 1 of PLAN-v5)
+Status: APPROVED (owner ruling 2026-11-21; open questions cleared — see Open questions for the owner; design ruled — handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; Wave 1 of PLAN-v5)
 
 ## Problem
 
@@ -357,3 +357,8 @@ Unit tests (vitest, beside the existing backfill tests):
    `typed` and `failedValidation`, or does the receipt stream alone carry
    the count? (The Files-touched section assumes yes; the counter-merge
    rule in §4 depends on it.)
+
+**Ruled by owner, 2026-11-21:** (1) The optional margin rule is a
+follow-up — it needs real-world calibration data to set the margin, and
+S1-0 stays minimal. (2) The `abstained` counter ships — the Files-touched
+assumption stands and §4's counter-merge rule depends on it.
