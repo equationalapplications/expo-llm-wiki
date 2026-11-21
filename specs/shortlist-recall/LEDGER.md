@@ -1,7 +1,8 @@
 # Ledger — PR 2a: shortlist builder + `shortlist-recall` benchmark
 
 Status line: implementation LANDED (PR #439, merge `96e82271`), extended by the
-distractor-variants lane (PR #447, head `48842848`+). Spec is owner-ruled
+distractor-variants lane (PR #447; base head `48842848`, review-fold commits
+`44b086dc` and `141512b5`). Spec is owner-ruled
 (rulings folded 2026-11-21); T6 cleanup (Status flip + prune) rides PR #448.
 Transient files — deleted by the cleanup commit; durable records live in the PR body.
 
@@ -16,11 +17,31 @@ Transient files — deleted by the cleanup commit; durable records live in the P
 
 ## What's in flight
 
-Variant-pool extension (#447): T1.5-style internal review + CI + CodeRabbit done;
-T3 Opus review round 1 (2026-11-21, $1.15, "Approve with changes") — 1 MAJOR +
-7 MINOR findings, all verified and folded in this ledger's parent branch
-(SEED_ROWS single source, comment honesty, four-pool spec prose, byte-identity
-wording, 53-row evidence caveat, test coverage, type-index consistency).
+Variant-pool extension (#447): T1.5-style internal review + CI + CodeRabbit done.
+T3 Opus round 1 (2026-11-21, $1.15, "Approve with changes"): 1 MAJOR + 7 MINOR,
+all verified and folded in `44b086dc` (SEED_ROWS single source, comment honesty,
+four-pool spec prose, byte-identity wording, 53-row evidence caveat, test
+coverage, type-index consistency).
+T3 Opus round 2 — delta on `48842848..44b086dc` (2026-11-21, $0.39,
+"Approve with changes"; reviewer was TREE-BLIND — parked-branch seat, `git show`
+approval-gated — so every finding was adjudicated against the working tree):
+- M1 (pool changed after the run): DISPROVEN. Empirical: post-fold real run
+  fully identical to the committed `shortlist-recall-9.8.0-2026-11-21.json`
+  (every key) and the post-fold double run is byte-identical (2026-11-21,
+  `/tmp/shortlist-r2-run-{a,b}.json`). Citation: variant `okf_type` reaches the
+  report only via `perEntry.actualTypes` / `typeAccuracyAtK`, which read the
+  TITLE-MATCHING hit row (`shortlistRecall.ts:403-404`, `:271`) — always a seed
+  row, since variant titles can never match a seed key (seen-key guard).
+- m1 (byte-identity wording): verified true as written — no `createdAt` or any
+  timestamp field exists in either committed result (`grep -c createdAt` = 0);
+  the writer serializes the report as-is.
+- m2 (mutable SEED_ROWS singleton): FIXED in `141512b5` — array + rows frozen,
+  `buildPools` copies per call.
+- m3 (test checks the guard against itself): FIXED in `141512b5` — new test
+  cross-checks every fixture expected target against SEED_ROWS keys.
+- m4 (unverified caveat figures): verified against the committed file —
+  `distractor-200` k=10 is lexical 1 vs embedding 0.9643. Correct as written.
+- m5 (vague provenance): FIXED — this ledger now cites explicit SHAs.
 
 ## Evidence
 
