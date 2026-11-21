@@ -105,19 +105,23 @@ export type PoolName = 'seed' | 'distractor-50' | 'distractor-200' | 'distractor
 
 /**
  * The three seed rows every pool nests (ground-truth targets). Single source
- * of truth: `buildPools` nests these rows, and `buildVariantDistractors`
- * derives its seed-key guard from these titles, so a seed-title rename moves
- * the guard with it (T3 review #447 m4).
+ * of truth: `buildPools` copies these rows into the seed pool, and
+ * `buildVariantDistractors` derives its seed-key guard from these titles, so
+ * a seed-title rename moves the guard with it (T3 review #447 m4). Frozen:
+ * callers get copies, so no in-place mutation can corrupt later calls or the
+ * guard (T3 delta review #447 m2).
  */
-export const SEED_ROWS: ShortlistRow[] = [
-  { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
-  { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
-  { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
-];
+export const SEED_ROWS: readonly ShortlistRow[] = Object.freeze(
+  [
+    { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
+    { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
+    { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
+  ].map((r) => Object.freeze(r)),
+) as readonly ShortlistRow[];
 
 /** The four evaluation pools, each self-contained (seed rows always present). */
 export function buildPools(): Record<PoolName, ShortlistRow[]> {
-  const seed = SEED_ROWS;
+  const seed = SEED_ROWS.map((r) => ({ ...r }));
   const d50 = buildDistractors(50);
   const d200 = buildDistractors(200);
   return {

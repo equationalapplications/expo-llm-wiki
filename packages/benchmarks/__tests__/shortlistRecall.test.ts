@@ -88,6 +88,16 @@ describe('buildVariantDistractors', () => {
     expect(() => buildVariantDistractors(289)).toThrow(/keyspace exhausted/);
   });
 
+  it('covers every fixture expected target in SEED_ROWS (ground truth integrity, T3 delta review #447 m3)', () => {
+    // The variant guard protects against colliding with SEED_ROWS titles; this
+    // cross-checks the OTHER side of that invariant — the fixture's ground
+    // truth must resolve against SEED_ROWS, so a fixture/SEED_ROWS drift can
+    // never silently bypass the guard.
+    const fixtureKeys = new Set(entries.map((e) => normalizeTitleKey(e.expected_target.title)));
+    const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
+    expect([...fixtureKeys].sort()).toEqual([...seedKeys].sort());
+  });
+
   it('is deterministic across calls (same variant seed → same rows)', () => {
     expect(buildVariantDistractors(50)).toEqual(buildVariantDistractors(50));
     expect(VARIANT_SEED).toBe('shortlist-recall-2026-11-variant');
