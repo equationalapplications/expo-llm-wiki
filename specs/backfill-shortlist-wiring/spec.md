@@ -1,6 +1,8 @@
 # Spec — PR 2b: The per-fact shortlist in the ontology-backfill prompt
 
-Status: Draft 2026-11-21 (author draft; open questions OQ1–OQ4 await owner ruling).
+Status: Reviewed 2026-11-21 — owner approved; rulings OQ1–OQ4 recorded in the
+Owner rulings section below (Kurt, Discord msg `1573841239412052079`).
+Implementation follows this spec.
 Lane 2, PR 2b. Roadmap step 8 ("The shortlist in the backfill prompt",
 `docs/ROADMAP.md`). Base: `origin/main` @ `e268b892` (v9.9.0 release cut,
 PR #452). Every pin below is re-verified live against `e268b892`.
@@ -163,20 +165,23 @@ Rejected alternatives:
   its scope closed (its section 3 excludes wiring); a new folder keeps
   that status honest.
 
-## Open questions (owner rulings requested)
+## Owner rulings (2026-11-21, Discord msg `1573841239412052079`)
 
-- **OQ1 — prompt shape.** The per-fact candidate section renders in the
-  user prompt after the facts JSON, replacing the shared TITLE CATALOG
-  block in the system prompt. Does the owner approve this shape, or
-  rule a different placement?
-- **OQ2 — scoring rows.** The scoring query gains the `body` column so
-  live scores match the measured evidence. Approve, or score titles
-  only?
-- **OQ3 — k knob.** `OntologyConfig.shortlistK` (default 10, integer
-  >= 1, invalid throws). Approve the name, home, and contract?
-- **OQ4 — receipts.** No new diagnostics for shortlist misses in this
-  PR (an unlisted valid target stays valid; abstain receipts already
-  exist). Confirm none, or name the surface?
+- **OQ1 — prompt shape: approved.** The per-fact candidate section renders
+  in the user prompt directly after the facts JSON. "The system prompt
+  should remain general instructions; the user prompt carries the payload."
+- **OQ2 — scoring rows: approved.** The scoring query reads `body`.
+  Owner rationale: the measured recall came from Jaccard over full row
+  text; title-only scoring degrades to keyword overlap and recall
+  "plummet[s]". Reading the body keeps production at the measured
+  performance.
+- **OQ3 — k knob: approved.** `OntologyConfig.shortlistK`, default 10
+  (the benchmark-proven point), strict boundary validation — finite
+  integer >= 1, throws on invalid — matching the system-one-config
+  validation patterns.
+- **OQ4 — receipts: confirmed none.** An unlisted-but-valid target is a
+  successful edge resolution. A miss diagnostic would be noise. The
+  existing `classification_abstained` and edge-drop diagnostics suffice.
 
 ## Files touched
 
