@@ -1,6 +1,6 @@
 # Spec — S1-0: System-One Config Surface
 
-Status: APPROVED (owner ruling 2026-11-21; open questions cleared — see Open questions for the owner; design ruled — handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; Wave 1 of PLAN-v5)
+Status: Implemented 2026-11-21 (PR #442, landed commit `0958a525`; acceptance tests in `packages/core/__tests__/ontologyBackfill.test.ts`, `pendingMaintenanceOntology.test.ts`, `classifierBackfill.test.ts`) — owner ruling 2026-11-21; open questions cleared (handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; wave 1 of PLAN-v5); landed scheduler job name `ontologyBackfill` (landed shape wins; prose amended at merge).
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # Spec — PR 7a: Context-Budget Resolver
 
-Status: Reviewed (owner-approved by ruling 2026-11-21; all open questions cleared — see Open questions for the owner; flips to Implemented at the PR's final cleanup commit). Lane 2, wave 1, unconditional.
+Status: Implemented 2026-11-21 (PR #438, landed commit `f08f7b06`; acceptance tests in `packages/core/__tests__/contextBudget*.test.ts`, `opsExtract.test.ts`) — owner-approved by ruling 2026-11-21; all open questions cleared; lane 2, wave 1, unconditional. Backfill cap remains EXCLUDED (owned by 2b).
 Base: origin/main @ `e43095c8` (the only commits after `9790dbbf` are dependency-only; every pin below re-verified live against `e43095c8`). Repo: expo-llm-wiki. Product rule: hosts bring their own models. Core stays unopinionated about providers.
 
 ## Problem
