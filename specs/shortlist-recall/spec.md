@@ -1,6 +1,6 @@
 # Spec: PR 2a — Shortlist builder + `shortlist-recall` benchmark subcommand
 
-Status: Draft
+Status: APPROVED (owner ruling 2026-11-21; all open questions cleared — see Open questions for the owner)
 
 Lane 2, wave 1 (unconditional). Author draft, 2026-11-20. Base: `origin/main` @ `e43095c8` (the only commits after `9790dbbf` are dependency-only; every pin below re-verified live against `e43095c8`). Review history: a T1.5 self-review (2026-11-20, haiku) and one T3 Opus review (2026-11-20) converged on the pool-size defect fixed below.
 
@@ -272,3 +272,8 @@ native-engine gate is untouched.
    titles; real node titles may cluster more tightly. If the owner wants
    harder distractors (title variants of the seed nodes), 2a extends the
    generator before implementation.
+
+**Ruled by owner, 2026-11-21:** (1) k = 10 confirmed. (2) The 2b scorer is
+decided after this spec's real run — the recall numbers pick. (3) The
+generator ships as-is; extend to title-variant distractors only if the
+recall curve saturates suspiciously early.
