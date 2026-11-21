@@ -18,6 +18,10 @@ export at `index.ts:27`) stays **excluded** — PR 2b-follow-up owns it; under e
 value stays 40_000.
 
 **Owner rulings in force (do not re-litigate in review):**
+- R0: owner spec approval is recorded in the spec's Status line (2026-11-21) and
+  these three rulings; coding proceeded on that record. The PR itself is the
+  implementation record of that approval — coding does not wait for a separate
+  approving GitHub review.
 - R1: declared-mode defaults `charsPerToken: 4`, `safetyFraction: 0.9`,
   `outputReserveTokens: 4000`; per-op floors at today's caps as one-batch minimums.
 - R2: the ingest chunk default stays **12000 in both modes**.
@@ -160,8 +164,12 @@ Behavior:
   flagged for the controller to confirm or overrule.
   `resolveDefaultChunkLength` still returns 12000 (R2).
 
-Config type addition rides T4 (same interface `WikiConfig` — one commit per compile-green
-unit would split the type from its only consumer; they go together).
+Config type addition rides THIS task (same interface `WikiConfig`): the resolver consumes
+`config?.context`, so `WikiConfig` must already carry the `context?` field when T3's commit
+compiles — putting the type in T4 would leave the T3 commit non-compiling (a review finding
+on the earlier draft; corrected 2026-11-21). The type edit (`packages/core/src/types.ts`,
+`WikiConfig.context?` + doc comment) is part of T3's commit; T4 only threads the resolved
+budget through the cap sites.
 
 - Test (`packages/core/__tests__/configContext.test.ts` — tests live in `__tests__/`,
   flat, like `engineDefaults.test.ts`): constant pin
@@ -171,9 +179,9 @@ unit would split the type from its only consumer; they go together).
   extract 24_000); chunk default 12000 in both modes.
 - Commit: `feat(context-budget): add config/context.ts resolver with legacy/declared modes`
 
-### T4 — Config type + cap swaps (spec Proposed change 3; five one-line edits + threading)
+### T4 — Cap swaps (spec Proposed change 3; five one-line edits + threading)
 
-Files: `packages/core/src/types.ts`, `services/librarian/ops/resolve.ts`,
+Files: `services/librarian/ops/resolve.ts`,
 `services/MaintenanceService.ts`, `services/librarian/ops/extract.ts`,
 `services/librarian/ops/index.ts`, `services/IngestionService.ts`,
 `utils/contextCaps.ts` (from T3; its re-export wiring may land in T3 or here), plus the 14
