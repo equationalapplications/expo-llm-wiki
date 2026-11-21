@@ -1,0 +1,2155 @@
+{
+  "fixtureEntries": 28,
+  "pools": {
+    "seed": {
+      "size": 3
+    },
+    "distractor-50": {
+      "size": 53
+    },
+    "distractor-200": {
+      "size": 203
+    }
+  },
+  "lexical": {
+    "seed": {
+      "1": 0.7857,
+      "3": 1
+    },
+    "distractor-50": {
+      "1": 0.7857,
+      "3": 1,
+      "5": 1,
+      "10": 1,
+      "25": 1
+    },
+    "distractor-200": {
+      "1": 0.7857,
+      "3": 1,
+      "5": 1,
+      "10": 1,
+      "25": 1
+    }
+  },
+  "embedding": {
+    "seed": {
+      "1": 0.7857,
+      "3": 1
+    },
+    "distractor-50": {
+      "1": 0.75,
+      "3": 0.9643,
+      "5": 0.9643,
+      "10": 0.9643,
+      "25": 1
+    },
+    "distractor-200": {
+      "1": 0.75,
+      "3": 0.9643,
+      "5": 0.9643,
+      "10": 0.9643,
+      "25": 0.9643
+    }
+  },
+  "randomBaseline": {
+    "seed": {
+      "1": 0.3333,
+      "3": 1
+    },
+    "distractor-50": {
+      "1": 0.0189,
+      "3": 0.0566,
+      "5": 0.0943,
+      "10": 0.1887,
+      "25": 0.4717
+    },
+    "distractor-200": {
+      "1": 0.0049,
+      "3": 0.0148,
+      "5": 0.0246,
+      "10": 0.0493,
+      "25": 0.1232
+    }
+  },
+  "typeAccuracyAtK5": {
+    "lexical": {
+      "seed": 1,
+      "distractor-50": 1,
+      "distractor-200": 1
+    },
+    "embedding": {
+      "seed": 1,
+      "distractor-50": 0.9643,
+      "distractor-200": 0.9643
+    }
+  },
+  "determinism": {
+    "distractorSeed": "shortlist-recall-2026-11",
+    "hash": "fnv1a-32",
+    "wordLists": {
+      "a": [
+        "harbor",
+        "lantern",
+        "meadow",
+        "summit",
+        "harvest",
+        "gallery",
+        "ember",
+        "cascade",
+        "fjord",
+        "cobalt",
+        "saffron",
+        "willow",
+        "basin",
+        "granite",
+        "orchard",
+        "thicket",
+        "quarry",
+        "velvet",
+        "cinder",
+        "prairie"
+      ],
+      "b": [
+        "protocol",
+        "ledger",
+        "compass",
+        "blueprint",
+        "chronicle",
+        "beacon",
+        "reservoir",
+        "anchor",
+        "citadel",
+        "horizon",
+        "boulder",
+        "prism",
+        "anvil",
+        "monsoon",
+        "cipher",
+        "terrace",
+        "mosaic",
+        "relay"
+      ]
+    },
+    "embedModel": "fastembed/BGESmallENV15",
+    "engineVersion": "9.5.3",
+    "fastembedVersion": "3.0.0"
+  },
+  "perEntry": [
+    {
+      "entryIndex": 0,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 1,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 2,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 3,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 4,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 5,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 6,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 7,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 8,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 9,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 10,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 11,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 12,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 13,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 14,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 15,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 16,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 17,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 18,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 19,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 20,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 21,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 22,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 23,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 24,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 25,
+      "pool": "seed",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 26,
+      "pool": "seed",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 27,
+      "pool": "seed",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 0,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 1,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 2,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 3,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 4,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 5,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 6,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 7,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 8,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 9,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 10,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 11,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 12,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 13,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 14,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 15,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 16,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 17,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 18,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 19,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 20,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 21,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 22,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 23,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 24,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": null
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 0,
+          "5": 0,
+          "10": 0,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 25,
+      "pool": "distractor-50",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 26,
+      "pool": "distractor-50",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 27,
+      "pool": "distractor-50",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 0,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 1,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 2,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 3,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 4,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 5,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 6,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 7,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 8,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 9,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 10,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 11,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 12,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 13,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 14,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 15,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 16,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 17,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 18,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 19,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 20,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 21,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 22,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 23,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 24,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": null
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 0,
+          "3": 0,
+          "5": 0,
+          "10": 0,
+          "25": 0
+        }
+      }
+    },
+    {
+      "entryIndex": 25,
+      "pool": "distractor-200",
+      "expectedTitle": "Orbit",
+      "expectedType": "software_application",
+      "actualTypes": {
+        "lexical": "software_application",
+        "embedding": "software_application"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 26,
+      "pool": "distractor-200",
+      "expectedTitle": "Acme Labs",
+      "expectedType": "organization",
+      "actualTypes": {
+        "lexical": "organization",
+        "embedding": "organization"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    },
+    {
+      "entryIndex": 27,
+      "pool": "distractor-200",
+      "expectedTitle": "Deploy",
+      "expectedType": "area",
+      "actualTypes": {
+        "lexical": "area",
+        "embedding": "area"
+      },
+      "hitByK": {
+        "lexical": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        },
+        "embedding": {
+          "1": 1,
+          "3": 1,
+          "5": 1,
+          "10": 1,
+          "25": 1
+        }
+      }
+    }
+  ]
+}
