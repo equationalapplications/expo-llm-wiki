@@ -1,6 +1,12 @@
 # Spec — S1-0: System-One Config Surface
 
-Status: Implemented 2026-11-21 (PR #442, landed commit `0958a525`; acceptance tests in `packages/core/__tests__/ontologyBackfill.test.ts`, `pendingMaintenanceOntology.test.ts`, `classifierBackfill.test.ts`) — owner ruling 2026-11-21; open questions cleared (handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; wave 1 of PLAN-v5); landed scheduler job name `ontologyBackfill` (landed shape wins; prose amended at merge).
+Status: Implemented 2026-11-21 (PR #442, landed commit `0958a525`; acceptance tests in `packages/core/__tests__/ontologyBackfill.test.ts`, `pendingMaintenanceOntology.test.ts`, `classifierBackfill.test.ts`) — owner ruling 2026-11-21; open questions cleared (handoff ledger D3/D4, consult ADJUDICATION-r3/r3a; wave 1 of PLAN-v5); landed scheduler job name `ontologyBackfill` (landed shape wins; job-name prose amended 2026-11-21 in PR #448 per its T3 review M1 — see the amendment note below).
+
+**Amendment, 2026-11-21 (PR #448, T3 review M1):** the maintenance job landed as
+`'ontologyBackfill'` (`types.ts:1795`), not this prose's spec-era `'typing'`;
+job-name occurrences below are amended to the landed name. The
+`SystemOneThresholdSite` value `'typing'` (`systemOne.ts:12`) is the landed
+threshold-site name and is deliberately unchanged.
 
 ## Problem
 
@@ -203,7 +209,7 @@ codes ride the existing diagnostic buffer pattern
 
 ### 8. Typing joins runPendingMaintenance (R-MAINT-TYPING)
 
-Add `'typing'` to `MaintenanceJob` (`types.ts:1729`) and to the default job
+Add `'ontologyBackfill'` (spec-era name `'typing'`) to `MaintenanceJob` (`types.ts:1795`) and to the default job
 set at `MaintenanceScheduler.ts:112`. The full integration:
 
 - `PendingMaintenance` (`types.ts:1734`) gains a typing-pending field;
@@ -215,10 +221,10 @@ set at `MaintenanceScheduler.ts:112`. The full integration:
   handling in the loop.
 - `MaintenanceStopReason.job` widens too: `budget_too_small.job` is
   `'librarian' | 'heal'` today (`types.ts:1767`).
-- Adding `'typing'` to `MaintenanceJob` makes it a `LockedMaintenanceJob`
+- Adding `'ontologyBackfill'` to `MaintenanceJob` makes it a `LockedMaintenanceJob`
   (`types.ts:1732`) automatically. The typing job acquires the existing
   `'ontologyBackfill'` lock (`MaintenanceService.ts:1037`); `busy[]`
-  reports `'typing'` while that lock is held.
+  reports `'ontologyBackfill'` while that lock is held.
 - `EntityMaintenanceReport` gains a typing counter.
 - The typing job calls `doRunOntologyBackfill` (not the public
   `runOntologyBackfill`) inside the host-passed token budget, with the
@@ -244,7 +250,7 @@ them:
 2. The new receipts fire: `node_type_assigned` on both paths (§7) and
    `classification_abstained` for classifier abstains and generative
    omissions (§5-§6).
-3. `'typing'` joins the default `runPendingMaintenance` job set (§8), so a
+3. `'ontologyBackfill'` joins the default `runPendingMaintenance` job set (§8), so a
    host that calls it with no `jobs` now spends `generateText` tokens on
    typing.
 4. The classifier fallback boundary moves by one at the option cap (§5): a
@@ -260,7 +266,7 @@ Capability alone still never switches paths (REQ-COMPAT-01.5,
 
 S1-0 owns exactly: `systemOne.typing`, `systemOne.minConfidence` (with the
 `'typing'` member), `systemOne.onLowConfidence`, the abstain sentinel, the
-receipts in §6-§7, and the `'typing'` maintenance job. Later PRs own:
+receipts in §6-§7, and the `'ontologyBackfill'` maintenance job. Later PRs own:
 `edges` (PR 3), `resolve` (PR 4), `healScreen` (PR 6), `typeOnWrite` (PR 5b),
 `shortlistK` (PR 2b). This spec does not define them.
 `librarian.destructiveEdits` is ruled to D2 / PR 4 — exclude it here.
@@ -279,7 +285,7 @@ receipts in §6-§7, and the `'typing'` maintenance job. Later PRs own:
   `classification_abstained` and `node_type_assigned`, each with a fixed
   severity; `PendingMaintenance` at :1734 gains a typing-pending field;
   `EntityMaintenanceReport` gains a typing counter; `budget_too_small.job`
-  at :1767 widens to include `'typing'`.
+  at :1767 widens to include `'ontologyBackfill'`.
 - `packages/core/src/services/MaintenanceService.ts` — resolver call sites
   (:2085, :2252-2253), question build (:2258-2264), outcome mapping and
   receipts (:2293-2346), generative omission receipts (:2166 region),
@@ -298,7 +304,7 @@ receipts in §6-§7, and the `'typing'` maintenance job. Later PRs own:
   (classifier section: abstain, onLowConfidence, new key names) and the
   old-key mentions at `:206` and `apps/docs/src/content/docs/guides/llm-provider.mdx:151-153`,
   `apps/docs/src/content/docs/reference/wiki-memory.md` — amend the
-  `runPendingMaintenance` row at `:118` (its `jobs` list gains `'typing'`),
+  `runPendingMaintenance` row at `:118` (its `jobs` list gains `'ontologyBackfill'`),
   not a new row; the `runOntologyBackfill` signature row at `:116` stays.
 - R-MAINT-TYPING release note — carried in the `feat(core)` commit body and the
   docs (semantic-release owns `CHANGELOG.md`; plan errata, T3 review 2026-11-21).
@@ -338,12 +344,12 @@ Unit tests (vitest, beside the existing backfill tests):
     back to the generative path.
 12. Scheduler: typing pending reported only for mode-not-`'off'` entities
     with untyped facts past the cutoff; the job runs only when selected,
-    acquires the `'ontologyBackfill'` lock, reports `'typing'` in `busy[]`
+    acquires the `'ontologyBackfill'` lock, reports `'ontologyBackfill'` in `busy[]`
     and in the stop reason, respects `deadlineMs` and `tokenBudget`, and
     `write()` never triggers it. Loop exits when the pass types nothing.
 13. Compatibility: with no new keys, behavior matches the pre-PR baseline
     for resolution, defaults, and cooldowns; the deltas are the sentinel in
-    the classifier question, the new receipts, `'typing'` in the default
+    the classifier question, the new receipts, `'ontologyBackfill'` in the default
     job set, and the 255-slug fallback boundary move (§9 deltas 1-4) —
     assert all four.
 

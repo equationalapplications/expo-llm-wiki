@@ -204,6 +204,8 @@ independent of it; the site conversions wait on the pieces they use.
 
 ### Step 5 — The System-One config surface — PLANNED
 
+Done — merged 2026-11-21, PR #442, spec [system-one-config](../specs/system-one-config/spec.md) (catch-up mark by PR #448; omission tracked in issue #449)
+
 One optional `systemOne` config section: the per-site typing modes, the
 `minConfidence` thresholds, the low-confidence policy (`leave` the fact
 untouched, or re-run it on the generative model), and a classifier
@@ -215,6 +217,8 @@ maintenance job set; nothing types on write by default.
 
 ### Step 6 — A context budget the host can declare — PLANNED
 
+Done — merged 2026-11-21, PR #438, spec [context-budget](../specs/context-budget/spec.md) (catch-up mark by PR #448; omission tracked in issue #449)
+
 Every prompt-size constant in the engine (the resolve and heal caps,
 the extract cap, the ingest chunk default, the characters-per-token
 estimate) resolves through one budget resolver. The default keeps
@@ -224,6 +228,8 @@ declares a budget instead of collecting overflow skips.
 *Gate:* a spec.
 
 ### Step 7 — A per-fact shortlist and its recall report — PLANNED
+
+Done — merged 2026-11-21, PR #439, spec [shortlist-recall](../specs/shortlist-recall/spec.md) (catch-up mark by PR #448; omission tracked in issue #449)
 
 The ontology backfill prompt lists every typed node, title-ordered and
 capped. This step adds a deterministic per-fact shortlist builder and a
