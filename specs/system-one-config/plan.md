@@ -331,3 +331,8 @@ Margin rule (follow-up, owner-ruled); host-declared abstain alias (rejected, D1)
 host-declared provider cap (follow-up); write-triggered `'auto'` typing (rejected,
 R-MAINT-TYPING); `systemOne.preset` (rejected, PLAN-v4); `librarian.destructiveEdits`
 (D2 / PR 4); every threshold site beyond `'typing'` (C5 fence).
+
+## Controller coordination decree (2026-11-21)
+
+1. **R-MAINT-TYPING scheduler machinery ownership (resolves C3):** S1-0 owns it unconditionally — section 8 is implemented in full regardless of #441's merge state. The C3 collapse contingency is void. #441 executes its flip clause (gap-fill/reuse only), because S1-0 codes and merges first (roadmap step 5 precedes every other lane-2 PR).
+2. **Abstain-slug rejection framing (resolves C4):** ratified as planned — rejection lives in the write path (`setOntologyManifest`) and in `mergeEmergentUpdates`; per-read `validateManifest` is untouched. Consistent with #441's spec (which rejects only per-read reservation) and §5 test 11. #441's plan adopts the same framing.
