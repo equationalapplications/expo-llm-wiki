@@ -24,11 +24,20 @@ export { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from './utils/embedDefau
 export { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
+export { resolveOntologyJobDefaults, DEFAULT_ONTOLOGY_JOB_BATCH_SIZE } from './utils/config/ontologyJobDefaults';
+export {
+  resolveSystemOneTyping,
+  resolveTypingMinConfidence,
+  warnOnce,
+  DEFAULT_TYPING_MIN_CONFIDENCE,
+} from './utils/engineDefaults';
+export { ONTOLOGY_ABSTAIN_SENTINEL, isReservedAbstainSlug } from './utils/ontology';
 export type { EmbedFactResult, EmbedFailureKind } from './services/EmbeddingService';
 export {
   ONTOLOGY_BACKFILL_BATCH_SIZE,
   ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
   ONTOLOGY_BACKFILL_RECHECK_MS,
+  CLASSIFIER_MAX_CHOICES,
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_BATCH_SIZE,
   HEAL_MAX_FACT_BODY_CHARS_L3,

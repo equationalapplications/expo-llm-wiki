@@ -52,7 +52,7 @@ import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { TemporalService } from './services/TemporalService';
 import { RememberService } from './services/RememberService';
-import { validateManifest } from './utils/ontology';
+import { validateManifest, isReservedAbstainSlug, ONTOLOGY_ABSTAIN_SENTINEL } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
 import { resolveLibrarianStrategy, warnChangedDefaultsOnce, resolveContextBudgetOrThrow } from './utils/engineDefaults';
@@ -1466,8 +1466,18 @@ export class WikiMemory {
     // never reaches the database and never takes the mutex. `setManifest`
     // validates again inside the transaction; that is the invariant protecting
     // every other repository caller, and is not redundant with this gate.
+    // The reserved abstain sentinel is rejected here on the write path
+    // (specs/system-one-config §5, decree C4); per-read validateManifest is
+    // deliberately untouched so legacy manifests carrying the slug still read.
     for (const entry of entries) {
       validateManifest(entry.manifest);
+      for (const nodeType of entry.manifest.node_types ?? []) {
+        if (isReservedAbstainSlug(nodeType.type)) {
+          throw new Error(
+            `Invalid node type '${nodeType.type}': '${ONTOLOGY_ABSTAIN_SENTINEL}' is reserved for classifier abstention and cannot be declared in a manifest`,
+          );
+        }
+      }
     }
 
     const written: string[] = [];

@@ -53,7 +53,7 @@ import { dirname, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { endpointFromEnv, ChatEndpoint } from './provider';
-import { engineInfo, BenchReport } from './report';
+import { engineInfo, BenchReport, EMBED_MODEL } from './report';
 import { flagsKey, cacheFilePath, EngineFlags } from './longmemeval/ingest';
 import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
@@ -667,6 +667,130 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
 }
 
 // --------------------------------------------------------------------------
+// shortlist-recall subcommand (PR 2a, spec §2)
+// --------------------------------------------------------------------------
+
+export interface ShortlistRecallDeps {
+  argv: string[];
+  /** The entries from `fixtures/statement-kinds.json`. */
+  entries: StatementFixtureEntry[];
+  /**
+   * Injected embedder (tests pass a stub; live mode resolves the local
+   * fastembed singleton). Called ONLY after the ground-truth guard and the
+   * token-spend gate pass, and never on `--dry-run`.
+   */
+  embedFactory?: () => Promise<(text: string) => Promise<number[]>>;
+  /** Overrides `engineInfo().version` (tests). */
+  engineVersion?: string;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Handle the `shortlist-recall` subcommand: the offline PR 2a benchmark.
+ * Zero LLM token spend by construction — there is no endpoint here at all;
+ * the only heavy work is the local fastembed embedder (no API cost). The
+ * gate still follows house style: `--dry-run` prints the estimate and
+ * exits 0 before the guard and before any embedding; without `--yes` the
+ * estimate prints and the command exits 1 having spent nothing.
+ *
+ * Report layout: `results/raw/shortlist-recall-<engine>-<timestamp>.json`
+ * by default, or exactly `--out` (use `--out packages/benchmarks/results/…`
+ * to commit a result).
+ */
+export async function runShortlistRecallCommand(deps: ShortlistRecallDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'shortlist-recall' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  const dryRun = parsed.flags['dry-run'] === true;
+  const yes = parsed.flags.yes === true;
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+  const printEstimate = (): void => {
+    stdout(
+      [
+        'model: (local fastembed only — zero LLM tokens)',
+        `entries: ${deps.entries.length}`,
+        'llm tokens (estimate): 0',
+      ].join('\n') + '\n',
+    );
+  };
+
+  if (dryRun) {
+    printEstimate();
+    return { exitCode: 0 };
+  }
+  if (!yes) {
+    stdout('Re-run with --yes to run the benchmark (no LLM tokens are spent).\n');
+    return { exitCode: 1 };
+  }
+
+  const { groundTruthCheck, buildPools, runShortlistRecall } = await import('./shortlistRecall');
+
+  // Guard first, before touching the embedder: a malformed fixture fails
+  // loudly without spinning up the ONNX runtime (and the injected factory is
+  // never called on a failing fixture).
+  try {
+    groundTruthCheck(buildPools(), deps.entries);
+  } catch (e) {
+    stderr(`${(e as Error).message}\n`);
+    return { exitCode: 1 };
+  }
+  const engineVersion = deps.engineVersion ?? (await engineInfo()).version;
+  const fastembedVersion = (() => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'packages', 'benchmarks', 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return pkg.dependencies?.fastembed ?? pkg.devDependencies?.fastembed ?? 'unknown';
+  })();
+  const embedFactory =
+    deps.embedFactory ??
+    (async () => {
+      const { getEmbedder } = await import('./embed');
+      return getEmbedder();
+    });
+
+  let report: Awaited<ReturnType<typeof runShortlistRecall>>;
+  try {
+    report = await runShortlistRecall({
+      entries: deps.entries,
+      embed: await embedFactory(),
+      meta: { embedModel: EMBED_MODEL, engineVersion, fastembedVersion },
+    });
+  } catch (e) {
+    // Guard failures (fixture target not a seed node / type mismatch) land here.
+    stderr(`${(e as Error).message}\n`);
+    return { exitCode: 1 };
+  }
+  const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `shortlist-recall-${engineVersion}-${nowStamp()}.json`);
+  writeFileAtomic(reportFile, JSON.stringify(report, null, 2));
+  stdout(`\nWrote report to ${reportFile}\n\n`);
+  stdout(renderShortlistRecallSummary(report));
+  return { exitCode: 0 };
+}
+
+/** One-screen stdout summary of a ShortlistRecallReport. */
+function renderShortlistRecallSummary(report: {
+  lexical: Record<string, Record<number, number>>;
+  embedding: Record<string, Record<number, number>>;
+  randomBaseline: Record<string, Record<number, number>>;
+}): string {
+  const lines: string[] = ['shortlist recall@k (lexical | embedding | random):'];
+  for (const pool of ['seed', 'distractor-50', 'distractor-200']) {
+    const ks = Object.keys(report.lexical[pool]).map(Number).sort((a, b) => a - b);
+    const cells = ks.map(
+      (k) => `k=${k}: ${report.lexical[pool][k]} | ${report.embedding[pool][k]} | ${report.randomBaseline[pool][k]}`,
+    );
+    lines.push(`  ${pool}: ${cells.join('  ')}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+// --------------------------------------------------------------------------
 // calibrate subcommand
 // --------------------------------------------------------------------------
 
@@ -992,6 +1116,12 @@ async function main(): Promise<void> {
     process.exitCode = r.exitCode;
     return;
   }
+  if (command === 'shortlist-recall') {
+    const entries = loadStatementFixture(join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'statement-kinds.json'));
+    const r = await runShortlistRecallCommand({ argv, entries });
+    process.exitCode = r.exitCode;
+    return;
+  }
   if (command === 'calibrate') {
     const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
     const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
@@ -1022,6 +1152,7 @@ function renderHelp(): string {
     '  longmemeval [flags]            Run the LongMemEval pipeline',
     '  supersession [flags]           Run the supersession suite (Task 8)',
     '  statement-kinds [flags]        Classify the rule/decision/lesson/trap fixture',
+    '  shortlist-recall [flags]       Offline shortlist recall@k benchmark (PR 2a; zero LLM tokens)',
     '  calibrate [--out <file>]        Offline gate-threshold calibration (Task 1 of PR-D2)',
     '  compare <before.json> <after.json> [--out <file>]',
     '                                  Offline Markdown comparison (Task 2 of PR-D2)',

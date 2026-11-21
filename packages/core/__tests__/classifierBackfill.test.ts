@@ -77,9 +77,9 @@ describe('runOntologyBackfill classifier mode', () => {
     expect(classify).toHaveBeenCalledTimes(2);
     const req = classify!.mock.calls[0][0] as ClassifyRequest;
     expect(Object.keys(req.questions)).toEqual(['okf_type']);
-    expect(req.questions.okf_type).toMatchObject({ kind: 'choice', options: ['person', 'place'] });
+    expect(req.questions.okf_type).toMatchObject({ kind: 'choice', options: ['person', 'place', 'none_of_these'] });
     expect(req.state).toBe('Ada\n\nAda body\n\nTags: t1');
-    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 0, abstained: 0, skipped: 0, remaining: 0, deferred: 0 });
     expect((await row(db, 'f_ada'))!.okf_type).toBe('person');
     expect((await row(db, 'f_ldn'))!.okf_type).toBe('place');
   });

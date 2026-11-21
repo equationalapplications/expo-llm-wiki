@@ -1,6 +1,7 @@
 import type { WikiConfig } from '../types';
 import { resolveContextBudget } from '../config/context';
 import type { ContextBudget } from './contextBudget';
+import type { SystemOneConfig } from '../config/systemOne';
 
 /**
  * The one place the 8.0.0 engine defaults are defined (specs/release-8-0-0).
@@ -75,4 +76,108 @@ export function warnChangedDefaultsOnce(config: WikiConfig | undefined): void {
     warnedDefaults.add(message);
     console.warn(message);
   }
+}
+
+/**
+ * Logs each distinct message at most once per process, sharing the
+ * {@link warnedDefaults} set with `warnChangedDefaultsOnce`. System-One
+ * resolvers use this for invalid config values (treated as unset) and
+ * both-keys-disagree notices (specs/system-one-config §2-§3). Messages carry
+ * a distinct `[core-llm-wiki] systemOne:` prefix, so a malformed message can
+ * never suppress a defaults-changed warning (plan Risks).
+ */
+export function warnOnce(message: string): void {
+  if (warnedDefaults.has(message)) return;
+  warnedDefaults.add(message);
+  console.warn(message);
+}
+
+/**
+ * Formats an invalid config value for a warning message without throwing.
+ * A raw `JSON.stringify` throws on `bigint` (e.g. `systemOne.typing: 1n`)
+ * and on circular references — config arriving from an unvalidated host
+ * store can hold either, and a config warning must never become an
+ * exception. Falls back to a type-named placeholder.
+ */
+export function formatConfigValue(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    return json ?? String(value);
+  } catch {
+    return `[unserializable: ${typeof value}]`;
+  }
+}
+
+const isTypingMode = (v: unknown): v is 'auto' | 'llm' => v === 'auto' || v === 'llm';
+const isConfidenceFloor = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+
+/**
+ * Typing-mode resolution chain (specs/system-one-config §2):
+ * call option `classifier` → `systemOne.typing` →
+ * `ontology.backfillClassifier` → `'llm'`. The caller validates the call
+ * option (a TypeError at the pass boundary); config values validate here.
+ * `??` throughout — falsy config values never participate by accident.
+ */
+export function resolveSystemOneTyping(
+  config: WikiConfig | undefined,
+  classifierCallOption?: 'auto' | 'llm',
+): 'auto' | 'llm' {
+  const systemOne: SystemOneConfig | undefined = config?.systemOne;
+  const legacy = config?.ontology?.backfillClassifier;
+  const systemOneValid = isTypingMode(systemOne?.typing);
+  const legacyValid = isTypingMode(legacy);
+  if (systemOne?.typing !== undefined && !systemOneValid) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.typing\` is ${formatConfigValue(systemOne.typing)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+  }
+  if (legacy !== undefined && !legacyValid) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`ontology.backfillClassifier\` is ${formatConfigValue(legacy)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+  }
+  if (systemOneValid && legacyValid && systemOne!.typing !== legacy) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.typing\` (${systemOne!.typing}) and \`ontology.backfillClassifier\` `
+      + `(${legacy}) disagree; \`systemOne.typing\` wins. Remove the legacy key to silence this warning.`,
+    );
+  }
+  return classifierCallOption
+    ?? (systemOneValid ? systemOne!.typing : undefined)
+    ?? (legacyValid ? legacy : undefined)
+    ?? 'llm';
+}
+
+/** Engine default confidence floor for classifier typing. */
+export const DEFAULT_TYPING_MIN_CONFIDENCE = 0.5 as const;
+
+/**
+ * Confidence-floor chain (specs/system-one-config §3):
+ * `systemOne.minConfidence.typing` → `ontology.classifyMinConfidence` →
+ * `0.5`. `??` throughout, so a configured `0` stays `0`. Only the classifier
+ * typing path reads this; call it there, never on the generative path.
+ */
+export function resolveTypingMinConfidence(config: WikiConfig | undefined): number {
+  const systemOneFloor = config?.systemOne?.minConfidence?.typing;
+  const legacyFloor = config?.ontology?.classifyMinConfidence;
+  const systemOneValid = isConfidenceFloor(systemOneFloor);
+  const legacyValid = isConfidenceFloor(legacyFloor);
+  if (systemOneFloor !== undefined && !systemOneValid) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.minConfidence.typing\` is ${formatConfigValue(systemOneFloor)}, which `
+      + 'is not a finite number in [0, 1]. The key is treated as unset and the chain continues.',
+    );
+  }
+  if (legacyFloor !== undefined && !legacyValid) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`ontology.classifyMinConfidence\` is ${formatConfigValue(legacyFloor)}, which `
+      + 'is not a finite number in [0, 1]. The key is treated as unset and the chain continues.',
+    );
+  }
+  return (systemOneValid ? systemOneFloor : undefined)
+    ?? (legacyValid ? legacyFloor : undefined)
+    ?? DEFAULT_TYPING_MIN_CONFIDENCE;
 }
