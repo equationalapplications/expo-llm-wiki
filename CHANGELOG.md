@@ -1,3 +1,19 @@
+## [9.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.3...v9.6.0) (2026-11-21)
+
+### Features
+
+* **benchmarks:** bench shortlist-recall subcommand (T4) + CLI tests ([0d3875a](https://github.com/equationalapplications/expo-llm-wiki/commit/0d3875a5cac61afad1e400c7e73f6b311964c756))
+* **benchmarks:** pure shortlist-recall benchmark pools, guard, math (T2) ([b167471](https://github.com/equationalapplications/expo-llm-wiki/commit/b167471c020086d1459c3107f5b395cd2a2d6765))
+* **core:** pure lexical shortlist builder (PR 2a T1) ([3a73520](https://github.com/equationalapplications/expo-llm-wiki/commit/3a7352097d98acb152e6189d68de839483a200a8))
+* **core:** scheduler-driven ontology backfill job (S1-0, specs/system-one-config §8) ([96d9db1](https://github.com/equationalapplications/expo-llm-wiki/commit/96d9db1dbb2ab62f751de145b458f64072c97b51))
+* **core:** System-One config surface, abstain sentinel, low-confidence routing, typing receipts (S1-0, specs/system-one-config §3-§7) ([aa5abb9](https://github.com/equationalapplications/expo-llm-wiki/commit/aa5abb9dba8fe9134bcfe134e11dcee794698d34))
+* **core:** System-One config surface, abstain sentinel, low-confidence routing, typing receipts (S1-0, specs/system-one-config §3-§7) ([940686b](https://github.com/equationalapplications/expo-llm-wiki/commit/940686b35f9cf1a781402c28521fbfdf746c8118))
+
+### Bug Fixes
+
+* **core:** buildShortlist drops empty-okf_type rows before dedupe (CodeRabbit PRRT...YiBW) ([fea105a](https://github.com/equationalapplications/expo-llm-wiki/commit/fea105a44a86edbfe3b117c7341a9d2ef4c3a264))
+* **core:** S1-0 review adjudication — safe config warnings, escalation live-mode guard, scheduler deadline precedence (PR [#442](https://github.com/equationalapplications/expo-llm-wiki/issues/442) round 2) ([a6575ec](https://github.com/equationalapplications/expo-llm-wiki/commit/a6575ec9d7348cfbca01ea6cac784d224b0557dd))
+
 ## [9.5.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.5.2...v9.5.3) (2026-11-19)
 
 ### Bug Fixes

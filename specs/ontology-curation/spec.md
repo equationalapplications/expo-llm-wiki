@@ -3,7 +3,7 @@
 **Status: APPROVED (owner ruling 2026-11-21; open question cleared — see Open questions for the owner). Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
 **Revisions:** 2026-11-21 T4 CodeRabbit fold (round 2, head `43710715`): edge resolver fallback pinned to the edge NAME (all triples of the unique slug, caller filters by types); remember door pinned to store the caller's slug verbatim at mode `'off'`; strict person-door miss pinned to throw-only (no receipt); recheck cutoff predicate pinned (`ontology_checked_at <= cutoff` — a cutoff at-or-after the stamp re-queues); lint node-type scan pinned to the deletion-only edge-scan definition; strict merge-rejection proposal counts must be array-guarded.
 2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
-2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved (final rule re-pinned by the T4 fold below: strict person-door miss = throw-only); audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'typing'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
+2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved (final rule re-pinned by the T4 fold below: strict person-door miss = throw-only); audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'ontologyBackfill'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
 **Base: `origin/main` @ `e43095c8`. Every pin below was re-verified live against `e43095c8`.**  
 **Intent check:** implements the owner-approved D1 block of the Lane 2 ontology consult (rulings session 2026-11-20; approved text in
 `records/investigations/2026-11-20-lane2-ontology-strict-consult/memo-r3.md` §D1, as amended by ADJUDICATION-r3a.md and ADJUDICATION-r3b.md).
@@ -252,12 +252,12 @@ write. The release notes state both facts.
 
 Build decisions (this spec pins them so an implementer invents nothing):
 
-- The new job is `'typing'`. `MaintenanceJob` is a closed four-member
-  union today (`packages/core/src/types.ts:1729`); add `'typing'` as a
-  fifth member. `'typing'` is lockable, so `LockedMaintenanceJob`
+- The new job is `'ontologyBackfill'`. `MaintenanceJob` is a closed four-member
+  union today (`packages/core/src/types.ts:1729`); add `'ontologyBackfill'` as a
+  fifth member. `'ontologyBackfill'` is lockable, so `LockedMaintenanceJob`
   (`types.ts:1732`) keeps it (unlike `'externalDeletions'`). Update the
   `jobs` doc comment that says "Default all four" (`types.ts:1759`) and
-  add `'typing'` to the default list.
+  add `'ontologyBackfill'` to the default list.
 - Pending work: an entity counts as having pending typing when
   `findUntypedByEntityId` (section 8's filtered query) returns rows.
   `getPendingMaintenance` and `MaintenanceScheduler`
@@ -323,11 +323,11 @@ Build decisions (this spec pins them so an implementer invents nothing):
 - `packages/core/src/services/IngestionService.ts` — edge door via
   `resolveEdgeDefinitions`; `ingest_zero_facts`; partial-ingest typing.
 - `packages/core/src/services/MaintenanceService.ts` — `recheckCheckedBefore`
-  option; new receipt emissions in the backfill apply path; the `'typing'`
+  option; new receipt emissions in the backfill apply path; the `'ontologyBackfill'`
   job in the `runPendingMaintenance` job set (section 11).
 - `packages/core/src/services/MaintenanceScheduler.ts` — pending-typing
   check and dispatch (section 11).
-- `packages/core/src/WikiMemory.ts` — `'typing'` in the public maintenance
+- `packages/core/src/WikiMemory.ts` — `'ontologyBackfill'` in the public maintenance
   surface (section 11).
 - `packages/core/src/repositories/EntryRepository.ts` — current-facts queue
   filter.

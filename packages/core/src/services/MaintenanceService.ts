@@ -1,6 +1,6 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
 import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
-import { normalizeTitleKey } from '../utils/ontology';
+import { normalizeTitleKey, isReservedAbstainSlug, ONTOLOGY_ABSTAIN_SENTINEL } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
@@ -11,7 +11,8 @@ import { HISTORY_MAX_DEPTH } from './TemporalService';
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
-import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
+import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
@@ -49,6 +50,14 @@ export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Upper bound on one classifier choice question (specs/system-one-config §5):
+ * manifest slugs plus the abstain sentinel. A manifest with more slugs than
+ * the cap allows, or carrying the reserved sentinel slug, falls back to the
+ * generative path for the pass.
+ */
+export const CLASSIFIER_MAX_CHOICES = 255 as const;
+
 // Heal constants live in `utils/healConstants` so PromptService and
 // MaintenanceService cannot drift apart on the anchor cap formula
 // (spec: "values must match"). Re-exported here to preserve the existing
@@ -61,8 +70,10 @@ export { HEAL_MAX_ANCHORS, HEAL_ANCHORS_PER_CANDIDATE, HEAL_MAX_FACT_BODY_CHARS_
 const HEAL_ANCHOR_SEARCH_OVERFETCH = 4;
 
 /** Input bound for heal, mirroring ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS.
- * Independent of output batching: a small number of dense facts is still trimmed. */
-export const HEAL_MAX_PROMPT_CHARS = 40_000;
+ * Independent of output batching: a small number of dense facts is still trimmed.
+ * Moved to `utils/contextCaps` (specs/context-budget T3); re-exported to preserve the public surface. */
+export { HEAL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
+
 
 /**
  * Heal candidates fetched per pass. Bounds the pool runBatched draws from, not
@@ -1053,6 +1064,37 @@ export class MaintenanceService {
   }
 
   /**
+   * Scheduler read view (specs/system-one-config §8): untyped facts still
+   * eligible for typing this pass — outside the 7-day recheck cooldown — or 0
+   * when ontology is off for the entity (nothing is ever eligible there).
+   * Read-only: never materializes a seed manifest, never writes.
+   */
+  async pendingOntologyBackfill(entityId: string): Promise<number> {
+    const ontologyService = this.ontologyService;
+    if (!ontologyService) return 0;
+    const { mode } = await ontologyService.getEffectiveState(entityId);
+    if (mode === 'off') return 0;
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, Date.now() - ONTOLOGY_BACKFILL_RECHECK_MS);
+    return counts.eligible;
+  }
+
+  /**
+   * Emit `ontology_backfill_held` (severity `info`) when the scheduler found
+   * the entity's `ontologyBackfill` lock held by another job. The lock state
+   * names no content, so the fixed template carries all the information a
+   * host needs; `JobManager.isBlocked` does not identify the blocker and the
+   * diagnostic detail surface stays identifier-typed.
+   */
+  noteOntologyBackfillHeld(entityId: string): void {
+    emitDiagnostic(this.options, {
+      code: 'ontology_backfill_held',
+      operation: 'ontologyBackfill',
+      trigger: 'call',
+      entityId,
+    });
+  }
+
+  /**
    * Re-embed facts, honouring per-row failure markers and exponential backoff.
    *
    * Marker lifecycle (spec §2): markers are cleared by a successful embed, by
@@ -1819,7 +1861,7 @@ export class MaintenanceService {
         };
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
-      maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      maxPromptChars: resolveMaxPromptChars(resolveContextBudget(this.options.config), 'heal'),
       // heal's buildPrompt sheds anchors per attemptLevel — escalation is real (errata E2)
       supportsEscalation: true,
       onSkip: (fact, err) => {
@@ -2060,6 +2102,8 @@ export class MaintenanceService {
       /** Overrides the default recheck cooldown: facts stamped after this epoch ms stay deferred. */
       recheckCheckedBefore?: number;
       meter?: UsageMeter;
+      /** Diagnostic trigger stamped on every diagnostic this pass emits. Default `'call'`. */
+      trigger?: WikiDiagnosticTrigger;
     },
   ): Promise<OntologyBackfillResult> {
     const batchSize = options?.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
@@ -2071,13 +2115,19 @@ export class MaintenanceService {
       && (!Number.isInteger(options.recheckCheckedBefore) || options.recheckCheckedBefore < 0)) {
       throw new Error('Invalid recheckCheckedBefore: must be an integer >= 0');
     }
+    if (options?.classifier !== undefined && options.classifier !== 'auto' && options.classifier !== 'llm') {
+      // Same boundary precedent as `deadlineMs` (specs/system-one-config §2):
+      // a call-option typo is a caller bug, thrown not defaulted.
+      throw new TypeError(`Invalid classifier option: ${JSON.stringify(options.classifier)} — must be 'auto' or 'llm'`);
+    }
+    const trigger = options?.trigger ?? 'call';
 
     const now = Date.now();
     // Spec §7 (Task 9): a pass may pin the cooldown cutoff explicitly —
     // useful for tests and for callers that batch sweeps under one clock.
     // The default remains the rolling ONTOLOGY_BACKFILL_RECHECK_MS window.
     const recheckCutoff = options?.recheckCheckedBefore ?? now - ONTOLOGY_BACKFILL_RECHECK_MS;
-    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0 };
+    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, abstained: 0 };
 
     const ontologyService = this.ontologyService;
     if (!ontologyService) {
@@ -2098,15 +2148,120 @@ export class MaintenanceService {
       return { ...zeroed, remaining: counts.eligible, deferred: counts.deferred };
     }
 
-    // Spec §7.3 / REQ-COMPAT-01.5: capability alone never switches paths.
-    const classifierMode = options?.classifier ?? this.options.config?.ontology?.backfillClassifier ?? 'llm';
+    // System-One typing chain (specs/system-one-config §2): call option →
+    // `systemOne.typing` → `ontology.backfillClassifier` → 'llm'. Capability
+    // alone (a classify method on the provider) never switches paths
+    // (REQ-COMPAT-01.5).
+    const classifierMode = resolveSystemOneTyping(this.options.config, options?.classifier);
     const classify = this.options.llmProvider.classify;
     if (classifierMode === 'auto' && typeof classify === 'function') {
       const slugs = effectiveManifest.node_types.map((n) => n.type);
-      if (slugs.length > 0 && slugs.length <= 255) {
-        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter);
+      // Sentinel-reserved manifests and over-cap manifests fall back to the
+      // generative path (§5): the question could not represent them faithfully.
+      if (
+        slugs.length > 0 &&
+        slugs.length + 1 <= CLASSIFIER_MAX_CHOICES &&
+        !slugs.some((s) => isReservedAbstainSlug(s))
+      ) {
+        const classifierRun = await this._runClassifierBackfill(
+          entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter, trigger,
+        );
+        if (classifierRun.abortedOntologyOff || classifierRun.result.budgetStop) {
+          return classifierRun.result;
+        }
+        // Low-confidence escalation (§4): `onLowConfidence: 'llm'` re-runs the
+        // un-stamped escalated facts through the generative step of the same
+        // pass. A no-op when typing resolved 'llm' (nothing escalates).
+        if (classifierRun.escalated.length > 0 && this.resolveSystemOneOnLowConfidence() === 'llm') {
+          // Ontology can be disabled while the classifier step was in flight
+          // (same mid-flight contract as the batch apply's txMode abort). The
+          // live mode is re-checked HERE because when every outcome escalates
+          // `attempted` is empty and the batch apply — which carries its own
+          // check — never runs; without this the escalation would make a
+          // generative LLM call in a disabled mode and stamp cooldowns on
+          // facts that must stay eligible. Off-mode result shape matches the
+          // mode==='off' early return: counters zeroed, remaining 0 so a host
+          // convergence loop terminates.
+          const { mode: liveMode } = await ontologyService.getEffectiveState(entityId);
+          if (liveMode === 'off') {
+            const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+            return { ...zeroed, remaining: 0, deferred: counts.deferred };
+          }
+          const escalated = classifierRun.escalated;
+          const generative = await this._runGenerativeBackfill(entityId, escalated, {
+            promptOverride: options?.promptOverride,
+            meter: options?.meter,
+            trigger,
+            batchSize: escalated.length,
+            recheckCutoff,
+          });
+          // Counter-merge: `scanned` is counted once by the classifier step
+          // (escalated facts were already attempted there); the generative
+          // step's attempts are these same facts, so only its outcome counters
+          // add. remaining/deferred come from the final recount after the
+          // generative step.
+          return {
+            scanned: classifierRun.result.scanned,
+            typed: classifierRun.result.typed + generative.typed,
+            failedValidation: classifierRun.result.failedValidation + generative.failedValidation,
+            edgesAdded: classifierRun.result.edgesAdded + generative.edgesAdded,
+            abstained: classifierRun.result.abstained + generative.abstained,
+            skipped: classifierRun.result.skipped + generative.skipped,
+            remaining: generative.remaining,
+            deferred: generative.deferred,
+            ...(generative.budgetStop ? { budgetStop: generative.budgetStop } : {}),
+          };
+        }
+        return classifierRun.result;
       }
     }
+
+    return this._runGenerativeBackfill(entityId, candidates, {
+      promptOverride: options?.promptOverride,
+      meter: options?.meter,
+      trigger,
+      recheckCutoff,
+    });
+  }
+
+  /**
+   * Low-confidence routing (specs/system-one-config §4): `'leave'` (default)
+   * keeps classifier abstains/low-confidence facts untyped and
+   * cooldown-stamped; `'llm'` escalates them to the generative step. Invalid
+   * config warns once and is treated as unset. Cost/quality setting, not a
+   * safety mechanism — it cannot catch a confidently wrong classifier.
+   */
+  private resolveSystemOneOnLowConfidence(): 'leave' | 'llm' {
+    const raw = this.options.config?.systemOne?.onLowConfidence;
+    if (raw !== undefined && raw !== 'leave' && raw !== 'llm') {
+      warnOnce(
+        `[core-llm-wiki] systemOne: \`systemOne.onLowConfidence\` is ${formatConfigValue(raw)}, which is not `
+        + "'leave' or 'llm'. The key is treated as unset; the default ('leave') applies.",
+      );
+      return 'leave';
+    }
+    return raw ?? 'leave';
+  }
+
+  /**
+   * Generative-mode backfill step: the original `generateText` pass over
+   * `candidates`. Also the escalation target of the classifier step (§4) —
+   * there `candidates` holds only the escalated facts and `batchSize` is
+   * sized to send them in one batch.
+   */
+  private async _runGenerativeBackfill(
+    entityId: string,
+    candidates: WikiFact[],
+    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number },
+  ): Promise<OntologyBackfillResult> {
+    const batchSize = runOpts.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
+
+    const ontologyService = this.ontologyService!;
+    const now = Date.now();
+    // Spec §7 (Task 9): the pinned cutoff from `recheckCheckedBefore` (or the
+    // rolling default, computed once in doRunOntologyBackfill) flows through so
+    // recounts and cooldown stamps inside this step agree with the queue query.
+    const recheckCutoff = runOpts.recheckCutoff;
 
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
 
@@ -2137,7 +2292,7 @@ export class MaintenanceService {
     const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
     const buildPrompt = (facts: WikiFact[]) => this.promptService.buildOntologyBackfillPrompt(
       facts.map(toPromptShape),
-      options?.promptOverride,
+      runOpts.promptOverride,
       ontologyContext,
       titleCatalog,
     );
@@ -2145,7 +2300,7 @@ export class MaintenanceService {
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
       items: candidates,
       buildPrompt,
-      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call', meter: options?.meter }, prompts),
+      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: runOpts.trigger, meter: runOpts.meter }, prompts),
       parse: (responseText, batch) => {
         const parsed = parseJsonResponse<{
           classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
@@ -2162,7 +2317,7 @@ export class MaintenanceService {
       onSkip: (fact, err) => {
         if (isContextOverflowError(err)) {
           emitDiagnostic(this.options, {
-            entityId, operation: 'ontologyBackfill', trigger: 'call', code: 'context_overflow_skipped',
+            entityId, operation: 'ontologyBackfill', trigger: runOpts.trigger, code: 'context_overflow_skipped',
             detail: { factId: fact.id },
           });
           return;
@@ -2177,10 +2332,13 @@ export class MaintenanceService {
     let failedValidation = 0;
     let edgesAdded = 0;
     let scanned = 0;
+    let abstained = 0;
     let abortedOntologyOff = false;
+    const diagBuffer = new DiagnosticBuffer();
+    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger: runOpts.trigger };
 
     for (const batchResult of outcome.results) {
-      const applied = await this._applyOntologyBackfillBatch(entityId, batchResult, now);
+      const applied = await this._applyOntologyBackfillBatch(entityId, batchResult, now, 'llm', runOpts.trigger);
       if (applied.abortedOntologyOff) {
         abortedOntologyOff = true;
         break;
@@ -2188,8 +2346,20 @@ export class MaintenanceService {
       typed += applied.typed;
       failedValidation += applied.failedValidation;
       edgesAdded += applied.edgesAdded;
+      // Generative omission receipts (§6): a batch fact the model sent no
+      // usable classification for — including the `changes === 0` race. The
+      // silent gap at this site in earlier releases is closed here.
+      for (const factId of applied.omittedIds) {
+        abstained += 1;
+        diagBuffer.push({
+          ...diagBase,
+          code: 'classification_abstained',
+          detail: { factId, writer: 'llm' },
+        });
+      }
       scanned += batchResult.batch.length;
     }
+    diagBuffer.flush(this.options);
 
     if (abortedOntologyOff) {
       // remaining stays 0 so a host convergence loop (while remaining > 0)
@@ -2208,6 +2378,7 @@ export class MaintenanceService {
         typed,
         failedValidation,
         edgesAdded,
+        abstained,
         skipped: outcome.skipped.length,
         remaining: 0,
         deferred: counts.deferred,
@@ -2245,6 +2416,7 @@ export class MaintenanceService {
       typed,
       failedValidation,
       edgesAdded,
+      abstained,
       skipped: outcome.skipped.length,
       remaining: counts.eligible,
       deferred: counts.deferred,
@@ -2253,10 +2425,14 @@ export class MaintenanceService {
   }
 
   /**
-   * Classifier-mode backfill (spec §7.3): one `choice` question per untyped
-   * fact over the effective manifest's node-type slugs. Accepted answers go
-   * through `_applyOntologyBackfillBatch` exactly like LLM classifications.
-   * No edges are proposed.
+   * Classifier-mode backfill (spec §7.3, S1-0 §5): one `choice` question per
+   * untyped fact over the effective manifest's node-type slugs plus the
+   * reserved abstain sentinel. Accepted answers go through
+   * `_applyOntologyBackfillBatch` exactly like LLM classifications. No edges
+   * are proposed. Abstains and low-confidence answers are cooldown-stamped
+   * omissions under `onLowConfidence: 'leave'`; under `'llm'` they are
+   * returned un-stamped in `escalated` for the generative step. Always
+   * returns the `OntologyBackfillResult` for its step plus escalation state.
    */
   private async _runClassifierBackfill(
     entityId: string,
@@ -2264,24 +2440,31 @@ export class MaintenanceService {
     manifest: OntologyManifest,
     now: number,
     recheckCutoff: number,
-    meter?: UsageMeter,
-  ): Promise<OntologyBackfillResult> {
-    const rawMin = this.options.config?.ontology?.classifyMinConfidence;
-    const minConfidence = typeof rawMin === 'number' && Number.isFinite(rawMin) && rawMin >= 0 && rawMin <= 1 ? rawMin : 0.5;
+    meter: UsageMeter | undefined,
+    trigger: WikiDiagnosticTrigger,
+  ): Promise<{ result: OntologyBackfillResult; escalated: WikiFact[]; abortedOntologyOff: boolean }> {
+    // Floor chain (§3): `systemOne.minConfidence.typing` →
+    // `ontology.classifyMinConfidence` → 0.5. Only the classifier path reads
+    // a floor, so only this site resolves it.
+    const minConfidence = resolveTypingMinConfidence(this.options.config);
     const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
     const concurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1 ? Math.floor(rawConcurrency) : 1;
 
     // Manifest descriptions are host-authored ontology vocabulary, not fact content.
+    // The abstain sentinel is appended last (§5): a classifier that trusts none of
+    // the manifest slugs can decline instead of guessing.
     const question: ClassifierQuestion = {
       kind: 'choice',
-      options: manifest.node_types.map((n) => n.type),
+      options: [...manifest.node_types.map((n) => n.type), ONTOLOGY_ABSTAIN_SENTINEL],
       instructions:
-        'Choose the ontology node type that best describes this fact.\n' +
-        manifest.node_types.map((n) => `- ${n.type}: ${n.description}`).join('\n'),
+        'Choose the ontology node type that best describes this fact, or choose '
+        + `"${ONTOLOGY_ABSTAIN_SENTINEL}" if none of the listed types fits.\n`
+        + manifest.node_types.map((n) => `- ${n.type}: ${n.description}`).join('\n'),
     };
 
     type Outcome =
       | { fact: WikiFact; kind: 'accepted'; okfType: string }
+      | { fact: WikiFact; kind: 'abstain' }
       | { fact: WikiFact; kind: 'low_confidence' }
       | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
       | { fact: WikiFact; kind: 'threw' }
@@ -2296,7 +2479,7 @@ export class MaintenanceService {
         try {
           response = await callClassify(
             this.options,
-            { operation: 'ontologyBackfill', entityId, trigger: 'call', meter },
+            { operation: 'ontologyBackfill', entityId, trigger, meter },
             { state: classifierStateForFact(fact), questions: { okf_type: question } },
           );
         } catch (err) {
@@ -2310,14 +2493,29 @@ export class MaintenanceService {
         const checked = validateClassifierAnswer(response, 'okf_type', question);
         if (!checked.ok) return { fact, kind: 'invalid', reason: checked.reason };
         if (checked.answer.kind !== 'choice') return { fact, kind: 'invalid', reason: 'kind_mismatch' };
+        // The sentinel check precedes the confidence comparison (§5): an
+        // abstain at any confidence is a decline, never a low-confidence
+        // near-miss on a manifest slug.
+        if (isReservedAbstainSlug(checked.answer.choice)) return { fact, kind: 'abstain' };
         if (checked.answer.confidence < minConfidence) return { fact, kind: 'low_confidence' };
         return { fact, kind: 'accepted', okfType: checked.answer.choice };
       }),
       concurrency,
     );
 
+    const escalate = this.resolveSystemOneOnLowConfidence() === 'llm';
+    // Escalated facts are NOT cooldown-stamped (§4): they are handed to the
+    // generative step of the same pass instead, and stay eligible if it dies.
+    const escalated = escalate
+      ? outcomes.filter((o) => o.kind === 'abstain' || o.kind === 'low_confidence').map((o) => o.fact)
+      : [];
+    const isEscalated = (o: Outcome): boolean =>
+      escalate && (o.kind === 'abstain' || o.kind === 'low_confidence');
+
     // Thrown calls are transient (like `call_error`): no cooldown stamp.
-    const attempted = outcomes.filter((o) => o.kind !== 'threw' && o.kind !== 'unattempted').map((o) => o.fact);
+    const attempted = outcomes
+      .filter((o) => o.kind !== 'threw' && o.kind !== 'unattempted' && !isEscalated(o))
+      .map((o) => o.fact);
     const unattemptedCount = outcomes.filter((o) => o.kind === 'unattempted').length;
     // Overflow skips are deterministic, so they ARE stamped (in `attempted`;
     // errata E2) to avoid re-paying for the same oversized fact every pass.
@@ -2327,19 +2525,22 @@ export class MaintenanceService {
       .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
       .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
     const invalidCount = outcomes.filter((o) => o.kind === 'invalid').length;
+    const abstainCount = outcomes.filter((o) => o.kind === 'abstain' && !isEscalated(o)).length;
 
     let typed = 0;
     let failedValidation = 0;
     let edgesAdded = 0;
-    let aborted = false;
+    let abortedOntologyOff = false;
     if (attempted.length > 0) {
       const applied = await this._applyOntologyBackfillBatch(
         entityId,
         { batch: attempted, classifications, ontologyUpdates: undefined },
         now,
+        'classifier',
+        trigger,
       );
-      aborted = applied.abortedOntologyOff;
-      if (!aborted) {
+      abortedOntologyOff = applied.abortedOntologyOff;
+      if (!abortedOntologyOff) {
         typed = applied.typed;
         failedValidation = invalidCount + applied.failedValidation;
         edgesAdded = applied.edgesAdded;
@@ -2347,9 +2548,17 @@ export class MaintenanceService {
     }
 
     const diagBuffer = new DiagnosticBuffer();
-    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger: 'call' as const };
+    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger };
     for (const o of outcomes) {
-      if (o.kind === 'low_confidence') {
+      if (o.kind === 'abstain') {
+        // Escalated abstains get no receipt here: if the generative step
+        // omits them, it emits `classification_abstained` with `writer:
+        // 'llm'` — the receipt names the step that actually declined.
+        if (isEscalated(o)) continue;
+        diagBuffer.push({ ...diagBase, code: 'classification_abstained', detail: { factId: o.fact.id, writer: 'classifier' } });
+      } else if (o.kind === 'low_confidence') {
+        // Fires even under escalation (§4): the classifier answer itself is
+        // described by the diagnostic; the routing is a separate decision.
         diagBuffer.push({ ...diagBase, code: 'classification_low_confidence', detail: { factId: o.fact.id, reason: 'below_threshold' } });
       } else if (o.kind === 'invalid') {
         diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: o.reason } });
@@ -2365,20 +2574,30 @@ export class MaintenanceService {
     diagBuffer.flush(this.options);
 
     const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-    if (aborted) {
+    const budgetStop = stopped ? { requiredEstimate: stopped.requiredEstimate } : undefined;
+    if (abortedOntologyOff) {
       // Mirrors the LLM path: nothing from the aborted batch was written; the host loop terminates.
-      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred, ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}) };
+      return {
+        result: { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, abstained: 0, skipped, remaining: 0, deferred: counts.deferred, ...(budgetStop ? { budgetStop } : {}) },
+        escalated: [],
+        abortedOntologyOff,
+      };
     }
     this.searchService.evictCache(entityId);
     return {
-      scanned: candidates.length - unattemptedCount,
-      typed,
-      failedValidation,
-      edgesAdded,
-      skipped,
-      remaining: counts.eligible,
-      deferred: counts.deferred,
-      ...(stopped ? { budgetStop: { requiredEstimate: stopped.requiredEstimate } } : {}),
+      result: {
+        scanned: candidates.length - unattemptedCount,
+        typed,
+        failedValidation,
+        edgesAdded,
+        abstained: abstainCount,
+        skipped,
+        remaining: counts.eligible,
+        deferred: counts.deferred,
+        ...(budgetStop ? { budgetStop } : {}),
+      },
+      escalated,
+      abortedOntologyOff: false,
     };
   }
 
@@ -2392,7 +2611,22 @@ export class MaintenanceService {
     entityId: string,
     batchResult: OntologyBackfillBatch,
     now: number,
-  ): Promise<{ typed: number; failedValidation: number; edgesAdded: number; abortedOntologyOff: boolean }> {
+    writer: 'classifier' | 'llm',
+    trigger: WikiDiagnosticTrigger,
+  ): Promise<{
+    typed: number;
+    failedValidation: number;
+    edgesAdded: number;
+    abortedOntologyOff: boolean;
+    /** Batch facts that received an okf_type (receipts, §6). */
+    typedIds: string[];
+    /** Batch facts left untyped by this batch — model omissions (no usable
+     * classification, or the `changes === 0` race). The caller decides
+     * whether they are abstentions or counters; receipts for the generative
+     * path are emitted by the caller so classifier facts can never be
+     * mislabeled `writer: 'llm'`. */
+    omittedIds: string[];
+  }> {
     const ontologyService = this.ontologyService!;
     const { batch, classifications, ontologyUpdates } = batchResult;
 
@@ -2400,8 +2634,14 @@ export class MaintenanceService {
     let failedValidation = 0;
     let edgesAdded = 0;
     let abortedOntologyOff = false;
+    const typedIds: string[] = [];
+    const omittedIds: string[] = [];
+    // Facts with a classification entry that parsed and referenced a batch
+    // fact. Post-tx, batch facts outside this set are model omissions (§6:
+    // "no classification entry in the batch result").
+    const classifiedIds = new Set<string>();
     const diagBuffer = new DiagnosticBuffer();
-    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger: 'call' as const };
+    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger };
 
     await this.db.withTransactionAsync(async (tx) => {
       let { mode: txMode, manifest } = await ontologyService.getEffectiveState(entityId, tx);
@@ -2447,6 +2687,7 @@ export class MaintenanceService {
           continue;
         }
         applied.add(fact.id);
+        classifiedIds.add(fact.id);
 
         const validationDrops: EdgeDrop[] = [];
         const normalized = ontologyService.validateAndNormalizeFact(
@@ -2479,10 +2720,23 @@ export class MaintenanceService {
 
         const result = await this.entryRepo.updateOkfType(fact.id, entityId, normalized.okf_type, tx);
         // changes === 0 → typed concurrently between select and update; the
-        // okf_type IS NULL guard left it untouched. Counted as an omission.
-        if (result.changes === 0) continue;
+        // okf_type IS NULL guard left it untouched. Counted as an omission
+        // (§6) and receipted as one by the generative caller.
+        if (result.changes === 0) {
+          omittedIds.push(fact.id);
+          continue;
+        }
 
         typed++;
+        typedIds.push(fact.id);
+        // Typing receipt (§6): emitted only while the manifest is live — this
+        // line sits after the mode-'off' abort check — and only when mode ≠
+        // 'off' (guaranteed here by the same check).
+        diagBuffer.push({
+          ...diagBase,
+          code: 'node_type_assigned',
+          detail: { factId: fact.id, okfType: normalized.okf_type, writer },
+        });
         titleIndex.set(normalizeTitleKey(fact.title), { id: fact.id, okf_type: normalized.okf_type });
         if (normalized.edges.length > 0) {
           pendingEdges.push({ sourceId: fact.id, sourceType: normalized.okf_type, edges: normalized.edges });
@@ -2505,9 +2759,21 @@ export class MaintenanceService {
       await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
     });
 
+    // Batch facts never typed by this batch are omissions (§6): no usable
+    // classification entry (computed post-tx from `classifiedIds`) or the
+    // `changes === 0` race (already pushed above). Facts whose classification
+    // failed validation are NOT omissions — they are `failedValidation`.
+    // Computed AFTER the tx: on an ontology-off abort nothing was attempted,
+    // and the caller's omission counters/receipts must stay empty too.
+    if (!abortedOntologyOff) {
+      for (const fact of batch) {
+        if (!classifiedIds.has(fact.id)) omittedIds.push(fact.id);
+      }
+    }
+
     diagBuffer.flush(this.options);
 
-    return { typed, failedValidation, edgesAdded, abortedOntologyOff };
+    return { typed, failedValidation, edgesAdded, abortedOntologyOff, typedIds, omittedIds };
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {

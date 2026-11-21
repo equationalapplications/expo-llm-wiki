@@ -18,7 +18,8 @@ import type { EmbeddingService } from './EmbeddingService';
 import type { VectorRemovalService } from './VectorRemovalService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
-import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
+import { DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
+import { resolveContextBudget, resolveDefaultChunkLength } from '../config/context';
 import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 import { callLlm } from '../utils/llmCall';
@@ -126,7 +127,7 @@ export class IngestionService {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? resolveDefaultChunkLength(resolveContextBudget(this.options.config));
     const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
     const chunkOverlap = Math.min(
       Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : DEFAULT_CHUNK_OVERLAP,

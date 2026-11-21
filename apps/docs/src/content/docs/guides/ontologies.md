@@ -185,17 +185,25 @@ A non-generative classifier can do the typing at lower cost. Add `classify` to t
 ```ts
 createWiki(db, {
   llmProvider: { generateText, classify },
-  config: { ontology: { backfillClassifier: 'auto', classifyMinConfidence: 0.5 } },
+  config: { systemOne: { typing: 'auto', minConfidence: { typing: 0.5 } } },
 });
 
 await wiki.runOntologyBackfill('user-1');                        // uses classify
 await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the generative path
 ```
 
-- Each untyped fact gets one `choice` question over the manifest's node types.
-- Answers below `classifyMinConfidence` stay untyped.
+- Each untyped fact gets one `choice` question over the manifest's node types plus a reserved
+  `none_of_these` sentinel, so the classifier can decline instead of guessing. An abstain is an
+  omission: the fact stays untyped, is retried after the cooldown, and is reported in the new
+  `abstained` counter with a `classification_abstained` diagnostic.
+- Answers below the floor (`systemOne.minConfidence.typing`, then `ontology.classifyMinConfidence`,
+  default `0.5`) stay untyped. Set `systemOne.onLowConfidence: 'llm'` to escalate low-confidence
+  and abstain outcomes to the generative step of the same pass — a cost/quality setting, not a
+  safety mechanism.
 - **Classifier mode proposes no edges.** Use `classifier: 'llm'` when you want edges.
-- More than 255 node types, or no `classify` function, means the generative path is used.
+- More than 254 node types (the sentinel needs a slot), a manifest that carries the reserved
+  `none_of_these` slug, or no `classify` function means the generative path is used. The slug
+  cannot be declared: `setOntologyManifest` rejects it and emergent merges drop it.
 
 [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) uses this with a
 Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.
@@ -203,5 +211,5 @@ Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type unty
 `classify` receives `{ state, questions }`, where each question is `choice`, `binary`, or
 `score`. It returns `{ answers }`, which the engine validates as untrusted input: off-list choices
 and out-of-range probabilities count toward `failedValidation`, and a `classify` call that throws
-counts toward `skipped` and is retried on the next pass. Answers below `classifyMinConfidence` are
+counts toward `skipped` and is retried on the next pass. Answers below the confidence floor are
 retried after the cooldown.

@@ -46,8 +46,11 @@ describe('classification diagnostics', () => {
     expect(JSON.stringify(d)).not.toContain('secret');
   });
 
-  it('accepted answers emit nothing', async () => {
+  it('accepted answers emit only the node_type_assigned receipt (S1-0 §6 delta)', async () => {
     const d = await run(async () => ({ answers: { okf_type: { kind: 'choice', choice: 'person', confidence: 0.9, probabilities: {} } } }));
-    expect(d).toEqual([]);
+    expect(d).toEqual([expect.objectContaining({
+      code: 'node_type_assigned', severity: 'info', operation: 'ontologyBackfill', trigger: 'call',
+      detail: { factId: 'f1', okfType: 'person', writer: 'classifier' },
+    })]);
   });
 });

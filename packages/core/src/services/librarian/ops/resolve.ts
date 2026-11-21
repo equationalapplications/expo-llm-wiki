@@ -1,11 +1,12 @@
 import { callLlm } from '../../../utils/llmCall';
 import { clip, parseJsonResponse, safeSlice } from '../../../utils/pure';
 import { runBatched, isContextOverflowError } from '../../BoundedLlmCall';
+import { OPS_RESOLVE_MAX_PROMPT_CHARS } from '../../../utils/contextCaps';
+import { resolveMaxPromptChars } from '../../../config/context';
+import type { ContextBudget } from '../../../utils/contextBudget';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import type { GatedCandidate } from './gate';
 import { OPS_NEIGHBOUR_BODY_CHARS, parseValidFrom } from './text';
-
-const OPS_RESOLVE_MAX_PROMPT_CHARS = 40_000;
 
 export type ResolvedOp =
   | { op: 'ADD' }
@@ -70,6 +71,7 @@ export async function runResolve(
   deps: LibrarianDeps,
   ctx: LibrarianPassContext,
   ambiguous: GatedCandidate[],
+  budget?: ContextBudget,
 ): Promise<ResolveOutcome> {
   const out: ResolveOutcome = { ops: new Map(), rejected: [], failed: [], overflowSkipped: [] };
   if (ambiguous.length === 0) return out;
@@ -101,7 +103,7 @@ export async function runResolve(
       // re-emitting the same diagnostic on the next pass.
       if (isContextOverflowError(err)) out.overflowSkipped.push(g.candidate.index);
     },
-    maxPromptChars: OPS_RESOLVE_MAX_PROMPT_CHARS,
+    maxPromptChars: budget ? resolveMaxPromptChars(budget, 'resolve') : OPS_RESOLVE_MAX_PROMPT_CHARS,
     maxOutputTokens: deps.options.llmProvider.maxOutputTokens,
   });
 

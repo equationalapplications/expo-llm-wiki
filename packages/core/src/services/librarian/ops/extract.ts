@@ -4,12 +4,15 @@ import type { WikiDiagnosticInput } from '../../../utils/diagnostics';
 import { callLlm } from '../../../utils/llmCall';
 import { isContextOverflowError } from '../../BoundedLlmCall';
 import { estimateTokens, type UsageMeter } from '../../../utils/usage';
+import { resolveMaxPromptChars } from '../../../config/context';
+import type { ContextBudget } from '../../../utils/contextBudget';
 import { parseJsonResponse, validateFact, validateTask, factRejectionReason, taskRejectionReason } from '../../../utils/pure';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import { labelEvents, parseValidFrom, type LabeledEvent } from './text';
 
 export const OPS_MAX_EVENTS_PER_PASS = 50;
-export const OPS_MAX_EXTRACT_CHARS = 24_000;
+/** Re-exported from `utils/contextCaps` (specs/context-budget T3); consumers keep importing this name. */
+export { OPS_MAX_EXTRACT_CHARS } from '../../../utils/contextCaps';
 /** A batch is extracted only when this multiple of its prompt estimate fits, leaving room for the resolve call. */
 const RESOLVE_RESERVE_FACTOR = 2;
 
@@ -55,14 +58,16 @@ export async function selectBatch(
   wm: LibrarianWatermark | null,
   meter?: UsageMeter,
   guidance?: string,
+  budget?: ContextBudget,
 ): Promise<{ batch: LabeledEvent[] } | { budgetStop: { requiredEstimate: number } }> {
   const events: WikiEvent[] = await deps.eventRepo.getAfter(entityId, wm, OPS_MAX_EVENTS_PER_PASS);
   if (events.length === 0) return { batch: [] };
 
+  const extractCap = resolveMaxPromptChars(budget ?? { mode: 'legacy', charsPerToken: 4, safetyFraction: 0.9, outputReserveTokens: 4000 }, 'extract');
   let n = 0;
   let chars = 0;
   for (const e of events) {
-    if (n > 0 && chars + e.summary.length > OPS_MAX_EXTRACT_CHARS) break;
+    if (n > 0 && chars + e.summary.length > extractCap) break;
     chars += e.summary.length;
     n++;
   }

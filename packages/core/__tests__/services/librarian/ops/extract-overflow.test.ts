@@ -28,7 +28,7 @@ describe('ops extract overflow retry', () => {
       return JSON.stringify({ facts: labelsOf(p).map((l, i) => fact(`Fact from ${l} number ${p.userPrompt.length}${i}`, l)), tasks: [] });
     });
     for (let i = 1; i <= 5; i++) await ev(`evt_${i}`, i * 10, `summary ${i}`);
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1', 'evt_2', 'evt_3', 'evt_4', 'evt_5']);
     expect(new Set(out.candidates.map((c) => c.sourceEventId))).toEqual(new Set(['evt_1', 'evt_2', 'evt_3', 'evt_4', 'evt_5']));
@@ -42,7 +42,7 @@ describe('ops extract overflow retry', () => {
     });
     // >2x the window: needs recursive halving (7500 chars -> 4 segments of ~1875; 6 calls, within MAX_SEGMENT_CALLS)
     await ev('evt_1', 10, 'word '.repeat(1500));
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.candidates.map((c) => c.sourceLabel)).toEqual([
       'e1#1.1', 'e1#1.2', 'e1#2.1', 'e1#2.2',
@@ -93,7 +93,7 @@ describe('ops extract overflow retry', () => {
     }, undefined, { grounding: { mode: 'draft', writers: ['librarian'] } });
     await ev('evt_1', 10, `POISON ${'word '.repeat(100)}`);
     await ev('evt_2', 20, 'normal second summary');
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1', 'evt_2']);
     expect(out.candidates).toHaveLength(1);
@@ -153,7 +153,7 @@ describe('ops extract overflow retry', () => {
     });
     await ev('evt_1', 10, `POISON ${'word '.repeat(119)}`);
     const ctx: any = { entityId: 'u', trigger: 'call', meter };
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     await expect(runExtract(deps, ctx, sel.batch ?? sel)).rejects.toThrow(WikiBudgetExhausted);
     // calls === 1 only because callLlm's PRE-CALL budget check (llmCall.ts) throws
     // before reaching the provider; if that check ever moved after the provider call,
@@ -175,7 +175,7 @@ describe('ops extract overflow retry', () => {
       return JSON.stringify({ facts: labelsOf(p).map((l) => fact(`Fact from ${l} here`, l)), tasks: [] });
     });
     for (let i = 1; i <= 5; i++) await ev(`evt_${i}`, i * 10, `summary ${i}`);
-    const sel: any = await selectBatch(deps, 'u', null);
+    const sel: any = await selectBatch(deps, 'u', null, undefined, undefined, undefined);
     const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, sel.batch);
     expect(probeCalls).toBe(1);
     expect(out.batch.map((l) => l.event.id)).toEqual(['evt_1', 'evt_2', 'evt_3', 'evt_4', 'evt_5']);
