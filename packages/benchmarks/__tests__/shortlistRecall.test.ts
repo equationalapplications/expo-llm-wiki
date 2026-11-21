@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { parseStatementFixture } from '../src/statementKinds/run';
 import {
   DISTRACTOR_SEED,
+  VARIANT_SEED,
+  VARIANT_SYNONYMS,
+  MUTATION_KINDS,
   buildDistractors,
+  buildVariantDistractors,
   buildPools,
   groundTruthCheck,
   randomBaseline,
@@ -69,14 +73,59 @@ describe('buildDistractors', () => {
   });
 });
 
+describe('buildVariantDistractors', () => {
+  const WORD_LIST_B = [
+    'protocol', 'ledger', 'compass', 'blueprint', 'chronicle', 'beacon',
+    'reservoir', 'anchor', 'citadel', 'horizon', 'boulder', 'prism',
+    'anvil', 'monsoon', 'cipher', 'terrace', 'mosaic', 'relay',
+  ];
+  const seedKeys = new Set(['orbit', 'deploy', 'acme labs']);
+
+  it('is deterministic across calls (same variant seed → same rows)', () => {
+    expect(buildVariantDistractors(50)).toEqual(buildVariantDistractors(50));
+    expect(VARIANT_SEED).toBe('shortlist-recall-2026-11-variant');
+    expect(MUTATION_KINDS).toEqual(['reorder', 'synonym', 'truncate']);
+    expect(VARIANT_SYNONYMS).toEqual({
+      Orbit: ['Orbital', 'Halo', 'Reverie'],
+      Deploy: ['Deployment', 'Release', 'Rollout'],
+      Acme: ['Apex', 'Zenith', 'Vertex'],
+      Labs: ['Laboratories', 'Workshop', 'Studio'],
+    });
+  });
+
+  it('returns 50 rows with unique titles under normalizeTitleKey', () => {
+    const rows = buildVariantDistractors(50);
+    expect(rows).toHaveLength(50);
+    const keys = rows.map((r) => normalizeTitleKey(r.title));
+    expect(new Set(keys).size).toBe(50);
+  });
+
+  it('never collides with a seed title key', () => {
+    for (const r of buildVariantDistractors(50)) {
+      expect(seedKeys.has(normalizeTitleKey(r.title))).toBe(false);
+    }
+  });
+
+  it('every title ends with a WORD_LIST_B word and mentions variant in the body', () => {
+    for (const r of buildVariantDistractors(50)) {
+      const last = r.title.toLowerCase().split(/\s+/).pop()!;
+      expect(WORD_LIST_B).toContain(last);
+      expect(r.body).toContain('variant');
+      expect(['area', 'software_application', 'organization']).toContain(r.okf_type);
+    }
+  });
+});
+
 describe('pools', () => {
   it('seed pool has exactly the 3 fixture targets; others nest it', () => {
     const pools = buildPools();
     expect(pools.seed).toHaveLength(3);
     expect(pools['distractor-50']).toHaveLength(53);
     expect(pools['distractor-200']).toHaveLength(203);
+    expect(pools['distractor-variants']).toHaveLength(53);
+    expect(pools['distractor-variants'].slice(0, 3)).toEqual(pools.seed);
     const seedKeys = new Set(pools.seed.map((r) => normalizeTitleKey(r.title)));
-    for (const pool of ['distractor-50', 'distractor-200'] as const) {
+    for (const pool of ['distractor-50', 'distractor-200', 'distractor-variants'] as const) {
       for (const r of pools[pool].slice(0, 3)) {
         expect(seedKeys.has(normalizeKeyOf(r))).toBe(true);
       }
@@ -144,8 +193,13 @@ describe('runShortlistRecall (stub embed, no model download)', () => {
       meta: { embedModel: 'stub/test', engineVersion: '9.5.3', fastembedVersion: '3.0.0' },
     });
     expect(report.fixtureEntries).toBe(entries.length);
-    expect(report.pools).toEqual({ seed: { size: 3 }, 'distractor-50': { size: 53 }, 'distractor-200': { size: 203 } });
-    expect(Object.keys(report.lexical).sort()).toEqual(['distractor-200', 'distractor-50', 'seed']);
+    expect(report.pools).toEqual({
+      seed: { size: 3 },
+      'distractor-50': { size: 53 },
+      'distractor-200': { size: 203 },
+      'distractor-variants': { size: 53 },
+    });
+    expect(Object.keys(report.lexical)).toEqual(['seed', 'distractor-50', 'distractor-200', 'distractor-variants']);
     // k sweep present, rounded to 4 decimals, all in [0,1]
     for (const scorer of [report.lexical, report.embedding]) {
       for (const pool of ['distractor-50', 'distractor-200'] as PoolName[]) {
@@ -156,14 +210,19 @@ describe('runShortlistRecall (stub embed, no model download)', () => {
       }
     }
     expect(report.randomBaseline['distractor-50'][10]).toBeCloseTo(10 / 53, 4);
+    expect(report.randomBaseline['distractor-variants'][10]).toBeCloseTo(10 / 53, 4);
     // determinism fields recorded
     expect(report.determinism.distractorSeed).toBe('shortlist-recall-2026-11');
     expect(report.determinism.hash).toBe('fnv1a-32');
     expect(report.determinism.embedModel).toBe('stub/test');
     expect(report.determinism.engineVersion).toBe('9.5.3');
     expect(report.determinism.fastembedVersion).toBe('3.0.0');
+    expect(report.determinism.variantSeed).toBe('shortlist-recall-2026-11-variant');
+    expect(report.determinism.mutationKinds).toEqual(['reorder', 'synonym', 'truncate']);
+    expect(report.determinism.variantSynonyms).toEqual(VARIANT_SYNONYMS);
+    expect(report.determinism.variantSynonyms).not.toBe(VARIANT_SYNONYMS);
     // per-entry records for every entry x pool
-    expect(report.perEntry).toHaveLength(entries.length * 3);
+    expect(report.perEntry).toHaveLength(entries.length * 4);
   });
 
   it('is deterministic: same inputs → byte-identical report', async () => {
