@@ -103,13 +103,21 @@ export const MUTATION_KINDS = ['reorder', 'synonym', 'truncate'] as const;
 
 export type PoolName = 'seed' | 'distractor-50' | 'distractor-200' | 'distractor-variants';
 
+/**
+ * The three seed rows every pool nests (ground-truth targets). Single source
+ * of truth: `buildPools` nests these rows, and `buildVariantDistractors`
+ * derives its seed-key guard from these titles, so a seed-title rename moves
+ * the guard with it (T3 review #447 m4).
+ */
+export const SEED_ROWS: ShortlistRow[] = [
+  { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
+  { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
+  { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
+];
+
 /** The four evaluation pools, each self-contained (seed rows always present). */
 export function buildPools(): Record<PoolName, ShortlistRow[]> {
-  const seed: ShortlistRow[] = [
-    { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
-    { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
-    { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
-  ];
+  const seed = SEED_ROWS;
   const d50 = buildDistractors(50);
   const d200 = buildDistractors(200);
   return {
@@ -161,10 +169,11 @@ function mutateTitle(base: string, kind: (typeof MUTATION_KINDS)[number], h: num
  * Deterministic title-variant distractors: hard negatives built by
  * reordering, synonym-swapping or truncating a seed title (FNV-1a hashed
  * from {@link VARIANT_SEED}-`i`), suffixed with a {@link WORD_LIST_B} word
- * for uniqueness headroom. The skip-and-advance loop can never emit a
- * duplicate key; the seen-key guard throws (fail loudly) if one ever
- * collides with another variant or a seed title, because rankRows dedupes
- * by normalizeTitleKey last-wins and such a row would corrupt ground truth.
+ * for uniqueness headroom. The skip-and-advance loop silently skips any
+ * duplicate key (one is never emitted), and the seed keys are pre-seeded into
+ * the seen-set, so a variant title colliding with a seed title is skipped too
+ * — never emitted — which is what protects ground truth, since rankRows
+ * dedupes by normalizeTitleKey last-wins and such a row would corrupt it.
  * The candidate keyspace is finite (unique titles across bases × kinds ×
  * WORD_LIST_B), so `count` above the keyspace size can never terminate:
  * the iteration cap throws instead of hanging (pre-PR review finding,
@@ -173,7 +182,7 @@ function mutateTitle(base: string, kind: (typeof MUTATION_KINDS)[number], h: num
 const MAX_VARIANT_ITERATIONS = 50_000;
 
 export function buildVariantDistractors(count = 50): ShortlistRow[] {
-  const seedKeys = new Set(['orbit', 'deploy', 'acme labs']);
+  const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
   const seen = new Set<string>(seedKeys);
   const rows: ShortlistRow[] = [];
   let i = 0;
@@ -189,12 +198,13 @@ export function buildVariantDistractors(count = 50): ShortlistRow[] {
     const extra = WORD_LIST_B[(h >>> 16) % WORD_LIST_B.length];
     const title = `${mutateTitle(base, kind, h)} ${extra}`;
     const key = normalizeTitleKey(title);
+    const typeIndex = i; // pre-increment index, matching buildDistractors (T3 review #447 m7)
     i++;
     if (seen.has(key)) continue; // skip-and-advance
     seen.add(key);
     rows.push({
       title,
-      okf_type: TARGET_TYPES[i % TARGET_TYPES.length],
+      okf_type: TARGET_TYPES[typeIndex % TARGET_TYPES.length],
       body: VARIANT_BODIES[base](extra.toLowerCase()),
     });
   }

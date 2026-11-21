@@ -6,6 +6,7 @@ import {
   VARIANT_SEED,
   VARIANT_SYNONYMS,
   MUTATION_KINDS,
+  SEED_ROWS,
   buildDistractors,
   buildVariantDistractors,
   buildPools,
@@ -79,7 +80,7 @@ describe('buildVariantDistractors', () => {
     'reservoir', 'anchor', 'citadel', 'horizon', 'boulder', 'prism',
     'anvil', 'monsoon', 'cipher', 'terrace', 'mosaic', 'relay',
   ];
-  const seedKeys = new Set(['orbit', 'deploy', 'acme labs']);
+  const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
 
   it('throws instead of hanging when count exceeds the finite candidate keyspace', () => {
     // Pre-PR review finding (2026-11-21): the unique-title keyspace is 288 with
@@ -208,7 +209,7 @@ describe('runShortlistRecall (stub embed, no model download)', () => {
     expect(Object.keys(report.lexical)).toEqual(['seed', 'distractor-50', 'distractor-200', 'distractor-variants']);
     // k sweep present, rounded to 4 decimals, all in [0,1]
     for (const scorer of [report.lexical, report.embedding]) {
-      for (const pool of ['distractor-50', 'distractor-200'] as PoolName[]) {
+      for (const pool of ['distractor-50', 'distractor-200', 'distractor-variants'] as PoolName[]) {
         for (const k of [1, 3, 5, 10, 25]) {
           expect(scorer[pool][k]).toBeGreaterThanOrEqual(0);
           expect(scorer[pool][k]).toBeLessThanOrEqual(1);
