@@ -1,7 +1,7 @@
 # LEDGER — PR 2b (backfill shortlist wiring)
 
-What's in flight: plan-review ladder (T1.5 complete; Opus T3 r1 returned
-findings, folded). No implementation tasks started.
+What's in flight: plan-review ladder COMPLETE (T1.5 + Opus T3 r1 +
+delta). No implementation tasks started.
 
 - [ ] T1 — `shortlistK` knob + resolver (commit: `feat(core): shortlistK config knob…`)
   Evidence: 
@@ -30,9 +30,18 @@ findings, folded). No implementation tasks started.
   missing from T6; M2 zero-pool spec/plan conflict; M3 resolver throw
   precedent + WikiConfig signature) + 8 MINOR. $0.5392/7 turns
   (`2b-plan-opus-r1.json`). All findings grep-verified real and folded
-  into spec.md/plan.md (fold commit: see git log, `docs(spec): fold opus-t3…`).
-- [ ] Opus T3 delta (verification round)
-  Evidence: 
+  into spec.md/plan.md in 6518c069.
+- [x] Opus T3 delta (verification round)
+  Evidence: **REQUEST CHANGES** — 1 MAJOR (the fold's invented 8000-char
+  sections budget: catalog CHAR_BUDGET rationale does not carry over to
+  per-batch sections; would wrongly truncate multi-fact batches) + 5
+  MINOR (renderer owns the zero-pool footer; comment-block cite
+  2268–2282; runBatched call cite :2300; OQ3 ruling clarification note;
+  ledger fold hash). $0.4780/7 turns (`2b-plan-opus-r2.json`), range
+  66c7d506..6518c069. All folded in the final ladder commit; per the
+  announced ladder shape (one delta max), the ladder closes here —
+  every delta finding is a fold of round-1/r2 material, no new design
+  surface.
 
 ## Spend
 
@@ -40,4 +49,5 @@ findings, folded). No implementation tasks started.
 - Rung 2 (sonnet high/xhigh): $0.1144
 - Rung 3 (haiku max): $0.0057
 - Opus T3 r1 (medium): $0.5392
-- Running total: $0.6648 (house cap $5 for this ladder)
+- Opus T3 delta (medium): $0.4780
+- Total: $1.1428 (house cap $5 — under cap)

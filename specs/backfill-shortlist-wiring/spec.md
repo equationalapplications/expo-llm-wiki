@@ -116,7 +116,7 @@ owner-pinned value from `specs/shortlist-recall/spec.md`.
 
 `buildShortlist` already returns the whole deduped pool when the pool is
 smaller than k. Zero typed nodes render no per-fact candidate sections;
-the user prompt carries one shared footer line with the non-exclusive
+the renderer emits one shared footer line with the non-exclusive
 wording ("this memory contains no typed nodes yet" — omit `edges`
 rather than invent a target), so the omit-edges instruction never
 disappears with the catalog block that used to carry it
@@ -196,7 +196,12 @@ Rejected alternatives:
 - **OQ3 — k knob: approved.** `OntologyConfig.shortlistK`, default 10
   (the benchmark-proven point), strict boundary validation — finite
   integer >= 1, throws on invalid — matching the system-one-config
-  validation patterns.
+  validation patterns. [Clarified 2026-11-21, Opus T3 delta: the
+  ruling's last clause conflicts with its own "throws on invalid"
+  contract — the system-one-config patterns warn-and-fall-back. Spec §3
+  governs: the throw contract stands; the comparison covers key
+  placement and message style only. Pending owner confirmation at the
+  next check-in.]
 - **OQ4 — receipts: confirmed none.** An unlisted-but-valid target is a
   successful edge resolution. A miss diagnostic would be noise. The
   existing `classification_abstained` and edge-drop diagnostics suffice.

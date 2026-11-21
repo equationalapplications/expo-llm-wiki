@@ -66,14 +66,18 @@ captures RED before the source change goes green.
   unlisted valid target stays valid; omit `edges` rather than invent a
   target.
 - Zero-pool behavior (spec §4): when the typed pool is empty, the
-  renderer emits NO per-fact sections; the caller appends one shared
-  footer line with the non-exclusive no-nodes wording so the
-  omit-edges instruction never disappears.
-- The sections block carries its own 8000-char budget, mirroring the
-  catalog's `CHAR_BUDGET` (`packages/core/src/prompts.ts:99`) with the
-  same skip-don't-break semantics: an oversized lone fact is still sent
-  by `runBatched` alone, so the block bounds itself and never relies on
-  the 40000-char cap alone.
+  renderer emits NO per-fact sections and returns the one shared
+  footer line with the non-exclusive no-nodes wording itself (with
+  k >= 1 every fact has rows whenever the pool is non-empty, so the
+  renderer detects the empty pool reliably). The omit-edges
+  instruction never disappears.
+- No section-level char budget: per-fact sections are bounded by
+  `runBatched`'s per-prompt 40000-char cap
+  (`MaintenanceService.ts:2300`), which splits batches instead of
+  overflowing, and a lone fact carries at most k candidate lines. The
+  catalog's `CHAR_BUDGET` rationale (one pass-wide block, up to 200
+  entries, prompts.ts:96-99) does not carry over to per-batch
+  sections — do not port it.
 - Extract a shared line formatter if that avoids duplicating the catalog
   line shape; `buildTitleCatalogBlock` stays exported (its tests and the
   placeholder-branch comment reference it; no caller removal in this PR
@@ -81,7 +85,7 @@ captures RED before the source change goes green.
 - Tests first (RED): format parity with the catalog line, header names
   the fact id, order follows the given rows (shortlist order, score
   descending — the caller owns ranking), fewer-than-k pool, zero pool
-  (no sections, shared footer), budget truncation (skip-don't-break).
+  (no sections; renderer returns the shared no-nodes footer).
 - Commit: `feat(core): per-fact candidate section renderer (spec §1)`
 
 ### T3 — the scoring query reads `body`
@@ -142,7 +146,7 @@ captures RED before the source change goes green.
   `packages/core/src/types.ts` (lines 1785–1791, verified) that
   references the data-scope note, citing this spec's errata. Also
   update the catalog rationale comment block in
-  `_runGenerativeBackfill` (`packages/core/src/services/MaintenanceService.ts:2262-2282`):
+  `_runGenerativeBackfill` (`packages/core/src/services/MaintenanceService.ts:2268-2282`):
   reword the timing/dedup honesty notes for the shortlist read and
   drop the parts that only describe the catalog.
 - Update the `TITLE CATALOG` reference in
@@ -152,7 +156,8 @@ captures RED before the source change goes green.
   placeholder branch, the payload cap still bounds the prompt, fewer
   than k typed nodes renders the whole pool, zero typed nodes renders
   no sections and the shared no-nodes footer, `shortlistK` invalid
-  config throws.
+  config throws, `runBatched` splits an oversized batch rather than
+  overflowing the cap.
 - Tests first (RED) for every new pin.
 - Commit: `feat(core): shortlist wiring in the ontology backfill pass (spec §1)`
 
@@ -176,11 +181,12 @@ captures RED before the source change goes green.
 ## Risks
 
 - **Payload growth.** 25 facts × ~10 candidate lines adds prompt length.
-  The 40000-char cap bounds the shared prompt shape, but `runBatched`
-  still sends an oversized lone fact alone
-  (`MaintenanceService.ts:2286-2291`), so the sections block carries its
-  own 8000-char budget (T2, mirroring the catalog). Pin both with tests
-  (T2, T5).
+  Per-fact sections are bounded by `runBatched`'s per-prompt
+  40000-char cap (`MaintenanceService.ts:2300`), which splits batches
+  rather than overflowing; a lone fact carries at most k candidate
+  lines, so no section-level budget is added (the catalog's
+  CHAR_BUDGET rationale does not carry over). Pin the batch-split
+  behavior with a test (T5).
 - **Prompt-shape change moves model behavior.** Mitigation is design,
   not tests: validity is not narrowed (unlisted targets stay valid), so
   a shortlist miss degrades the hint, not correctness (owner ruling OQ4).
