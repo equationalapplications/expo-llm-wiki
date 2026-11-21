@@ -338,3 +338,8 @@ the spec's Files-touched list (as amended) plus the new test files.
    window, since the extract prompt also carries fixed parts. Resolution folded here:
    extract derives at ×24/40 of the resolve/heal cap (today's ratio), floor still applied.
    Controller: confirm or overrule this interpretation before implementation.
+
+## Controller decree (2026-11-21)
+
+1. **Ambiguity 6 RATIFIED:** the declared-mode extract cap derives at ×24/40 of the resolve/heal cap, floor still applied. Rationale: preserves today's 60% proportionality; a uniform formula would let extract summaries consume the whole window and force overflow probes every pass. The ruled defaults are provisional by the owner's own ruling — receipts make misjudgment visible and correctable, and the owner can re-rule the ratio later without structural change.
+2. **Spec Files-touched amendments RATIFIED:** `ops/index.ts` (threading site) and `utils/contextCaps.ts` (constant leaf) are mechanical completeness fixes with no behavior change — folded during plan review, now part of the approved surface.
