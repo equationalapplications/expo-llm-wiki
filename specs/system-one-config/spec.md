@@ -44,7 +44,7 @@ inside `runPendingMaintenance`, so hosts schedule it by hand.
 - `batchSize` validates by throwing: `MaintenanceService.ts:2056-2058`
   (backfill) and `:1667-1668` (heal). This is the precedent for invalid call
   options.
-- The scheduler job set at `MaintenanceScheduler.ts:112` and
+- The scheduler job set at `MaintenanceScheduler.ts:120` (spec-era `:112`) and
   `MaintenanceJob` (`types.ts:1729`) list librarian, heal, reembed,
   externalDeletions. No typing job exists.
 
@@ -210,9 +210,9 @@ codes ride the existing diagnostic buffer pattern
 ### 8. Typing joins runPendingMaintenance (R-MAINT-TYPING)
 
 Add `'ontologyBackfill'` (spec-era name `'typing'`) to `MaintenanceJob` (`types.ts:1795`) and to the default job
-set at `MaintenanceScheduler.ts:112`. The full integration:
+set at `MaintenanceScheduler.ts:120` (spec-era `:112`). The full integration:
 
-- `PendingMaintenance` (`types.ts:1734`) gains a typing-pending field;
+- `PendingMaintenance` (`types.ts:1800`; spec-era `:1734`) gains a typing-pending field;
   pending detection in `getPending` (`MaintenanceScheduler.ts:47-86`) sets
   it for entities whose ontology mode is not `'off'` and that hold untyped
   facts past the recheck cutoff.
@@ -220,9 +220,9 @@ set at `MaintenanceScheduler.ts:112`. The full integration:
   entities whose only pending work is typing) and the `State`/`openJobs`
   handling in the loop.
 - `MaintenanceStopReason.job` widens too: `budget_too_small.job` is
-  `'librarian' | 'heal'` today (`types.ts:1767`).
+  `'librarian' | 'heal'` today (`types.ts:1767`; now the widened union at `:1840`).
 - Adding `'ontologyBackfill'` to `MaintenanceJob` makes it a `LockedMaintenanceJob`
-  (`types.ts:1732`) automatically. The typing job acquires the existing
+  (`types.ts:1798`; spec-era `:1732`) automatically. The typing job acquires the existing
   `'ontologyBackfill'` lock (`MaintenanceService.ts:1037`); `busy[]`
   reports `'ontologyBackfill'` while that lock is held.
 - `EntityMaintenanceReport` gains a typing counter.
