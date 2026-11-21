@@ -31,7 +31,9 @@ export function shortlistScore(factTitle: string, factBody: string, row: Shortli
  *   `prompts.ts` `buildTitleCatalogBlock`).
  * - Sorts descending by score; ties break by `title` ascending in UTF-16
  *   code-unit order (`<` comparison, same order the catalog uses).
- * - Rows with an empty `title` are skipped (the catalog skips them too).
+ * - Rows with an empty `title` or an empty `okf_type` are skipped BEFORE
+ *   dedupe, exactly like the catalog (`buildTitleCatalogBlock`), so an
+ *   invalid row can never replace a valid row under the same key.
  * - `k <= 0` returns `[]`; `k` a non-integer or NaN throws; `k` greater
  *   than the deduped pool size returns the whole deduped pool.
  */
@@ -49,6 +51,7 @@ export function buildShortlist(
   const byKey = new Map<string, ShortlistRow>();
   for (const r of rows) {
     if (typeof r.title !== 'string' || r.title.length === 0) continue;
+    if (typeof r.okf_type !== 'string' || r.okf_type.length === 0) continue;
     byKey.set(normalizeTitleKey(r.title), r);
   }
   const scored = [...byKey.values()].map((row) => ({ row, score: score(fact, row) }));

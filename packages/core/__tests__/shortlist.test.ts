@@ -78,6 +78,14 @@ describe('buildShortlist', () => {
     expect(out.map((r) => r.title)).toEqual(['real']);
   });
 
+  it('skips empty-okf_type rows BEFORE dedupe so they cannot replace a valid row with the same key', () => {
+    const valid: ShortlistRow = { title: 'Orbit', okf_type: 'software_application' };
+    const invalid: ShortlistRow = { title: 'Orbit', okf_type: '' };
+    const out = buildShortlist({ title: '', body: 'orbit' }, [valid, invalid], 5);
+    expect(out).toEqual([valid]);
+    expect(out[0].okf_type).toBe('software_application');
+  });
+
   it('uses the injected score function (stub flips the ranking)', () => {
     const rows = [row('aaa'), row('bbb')];
     const fact = { title: '', body: 'x' };
