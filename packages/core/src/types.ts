@@ -296,6 +296,24 @@ export interface LibrarianConfig {
 }
 
 export interface WikiConfig {
+  /**
+   * Context-budget section (specs/context-budget). Absent, or
+   * `budget: 'legacy'`, keeps today's caps byte-identical.
+   * `budget: 'declared'` requires `contextWindowTokens` and derives the
+   * per-op prompt caps from the host's declared window; invalid values throw
+   * at construction (fail-fast, never fall back to legacy).
+   */
+  context?: {
+    budget: 'legacy' | 'declared';
+    /** Required under `budget: 'declared'`. */
+    contextWindowTokens?: number;
+    /** Chars per token for the host's tokenizer. Default 4. */
+    charsPerToken?: number;
+    /** Fraction of the derived window usable for prompts. Default 0.9. */
+    safetyFraction?: number;
+    /** Tokens held back for the model's reply. Default 4000. */
+    outputReserveTokens?: number;
+  };
   /** Source-store limits (spec source-store section 9). Defaults live in SourceStoreService. */
   sourceStore?: { maxCharsPerSource?: number; maxTotalChars?: number };
   /**
