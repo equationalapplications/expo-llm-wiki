@@ -12,6 +12,7 @@ const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HI
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
@@ -69,8 +70,10 @@ export { HEAL_MAX_ANCHORS, HEAL_ANCHORS_PER_CANDIDATE, HEAL_MAX_FACT_BODY_CHARS_
 const HEAL_ANCHOR_SEARCH_OVERFETCH = 4;
 
 /** Input bound for heal, mirroring ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS.
- * Independent of output batching: a small number of dense facts is still trimmed. */
-export const HEAL_MAX_PROMPT_CHARS = 40_000;
+ * Independent of output batching: a small number of dense facts is still trimmed.
+ * Moved to `utils/contextCaps` (specs/context-budget T3); re-exported to preserve the public surface. */
+export { HEAL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
+
 
 /**
  * Heal candidates fetched per pass. Bounds the pool runBatched draws from, not
@@ -1851,7 +1854,7 @@ export class MaintenanceService {
         };
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
-      maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      maxPromptChars: resolveMaxPromptChars(resolveContextBudget(this.options.config), 'heal'),
       // heal's buildPrompt sheds anchors per attemptLevel — escalation is real (errata E2)
       supportsEscalation: true,
       onSkip: (fact, err) => {

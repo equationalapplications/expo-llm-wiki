@@ -55,7 +55,7 @@ import { RememberService } from './services/RememberService';
 import { validateManifest, isReservedAbstainSlug, ONTOLOGY_ABSTAIN_SENTINEL } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
-import { resolveLibrarianStrategy, warnChangedDefaultsOnce } from './utils/engineDefaults';
+import { resolveLibrarianStrategy, warnChangedDefaultsOnce, resolveContextBudgetOrThrow } from './utils/engineDefaults';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -143,6 +143,9 @@ export class WikiMemory {
     this.db = withSerializedTransactions(db);
     this.options = options;
     warnChangedDefaultsOnce(options.config);
+    // Fail-fast: an invalid `config.context` section throws at construction,
+    // never mid-pass (specs/context-budget T4).
+    resolveContextBudgetOrThrow(options.config);
     this.prefix = options.config?.tablePrefix ?? 'llm_wiki_';
     if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
       throw new Error(

@@ -1,4 +1,6 @@
 import type { WikiConfig } from '../types';
+import { resolveContextBudget } from '../config/context';
+import type { ContextBudget } from './contextBudget';
 import type { SystemOneConfig } from '../config/systemOne';
 
 /**
@@ -15,6 +17,15 @@ export function resolveLibrarianStrategy(config: WikiConfig | undefined): 'legac
 
 export function resolveMaintenanceMode(config: WikiConfig | undefined): 'auto' | 'deferred' {
   return config?.maintenance ?? DEFAULT_MAINTENANCE_MODE;
+}
+
+/**
+ * Fail-fast context-budget resolution (specs/context-budget T4): called in the
+ * WikiMemory construction path so an invalid `config.context` section throws
+ * at construction, never mid-pass. Never falls back to legacy on a bad value.
+ */
+export function resolveContextBudgetOrThrow(config: WikiConfig | undefined): ContextBudget {
+  return resolveContextBudget(config);
 }
 
 /**
