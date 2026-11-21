@@ -5,6 +5,7 @@ import { runExtract, selectBatch } from './extract';
 import { gateCandidates, gateNeedsKeyword, resolveGateConfig } from './gate';
 import { WikiSearchUnavailableError } from '../../../types';
 import { runResolve } from './resolve';
+import { resolveContextBudget } from '../../../config/context';
 import { applyOps } from './apply';
 
 /**
@@ -30,7 +31,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
   await deps.seedWatermark(entityId);
   const wm = await deps.getWatermark(entityId);
-  const sel = await selectBatch(deps, entityId, wm, ctx.meter, ctx.guidance);
+  const sel = await selectBatch(deps, entityId, wm, ctx.meter, ctx.guidance, resolveContextBudget(deps.options.config));
   if ('budgetStop' in sel) return { processedThrough: null, factsWritten: 0, budgetStop: sel.budgetStop };
   if (sel.batch.length === 0) return { processedThrough: null, factsWritten: 0 };
 
@@ -64,7 +65,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   }
   diagnostics.push(gateDiagnostic);
 
-  const res = await runResolve(deps, ctx, gated.filter((g) => g.decision.kind === 'ambiguous'));
+  const res = await runResolve(deps, ctx, gated.filter((g) => g.decision.kind === 'ambiguous'), resolveContextBudget(deps.options.config));
   // Resolve reported overflow skips without emitting (so a budget stop can
   // discard them with the pass buffer); buffer them BEFORE the budgetStop check.
   for (const itemIndex of res.overflowSkipped) {
