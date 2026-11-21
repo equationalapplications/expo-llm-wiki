@@ -17,6 +17,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
+  resolveNodeTypeMatch,
   resolveEdgeDefinitions,
   typeSatisfies,
   validateInlineEdges,
@@ -95,7 +96,7 @@ export class OntologyService {
     entityId: string,
     updates: OntologyUpdates,
     tx: SQLiteAdapter,
-  ): Promise<OntologyManifest> {
+  ): Promise<{ manifest: OntologyManifest; rejected: string[] }> {
     // Reserved abstain slug (specs/system-one-config §5, decree C4): the
     // emergent merge drops it instead of persisting it, so a model proposing
     // 'none_of_these' as a node type can never smuggle the sentinel into the
@@ -104,20 +105,25 @@ export class OntologyService {
     const filtered: OntologyUpdates = updates.node_types
       ? { ...updates, node_types: updates.node_types.filter((nt) => !isReservedAbstainSlug(nt.type)) }
       : updates;
-    const merged = await this.metadataRepo.mergeManifestUpdates(entityId, filtered, tx);
+    const { manifest: merged, rejected } = await this.metadataRepo.mergeManifestUpdates(entityId, filtered, tx);
     this.invalidateCache(entityId);
-    return merged;
+    return { manifest: merged, rejected };
   }
 
   validateAndNormalizeFact(
     fact: ExtractedFactWithOntology,
     manifest: OntologyManifest,
     opts?: { strict?: boolean; entityId?: string; drops?: EdgeDrop[] },
-  ): { okf_type: string | null; edges: ExtractedFactEdge[] } {
+  ): {
+    okf_type: string | null;
+    edges: ExtractedFactEdge[];
+    /** Resolution evidence. Absent on a miss. Callers must not re-run resolution. */
+    match?: { raw: string; canonical: string; via: 'exact' | 'normalize' };
+  } {
     const rawType = typeof fact.okf_type === 'string' ? fact.okf_type : '';
     const strict = opts?.strict === true;
-    const canonical = resolveNodeType(rawType, manifest);
-    if (!canonical) {
+    const match = resolveNodeTypeMatch(rawType, manifest);
+    if (!match) {
       if (strict) throw new WikiStrictOntologyViolation(opts?.entityId ?? '', 'node', rawType);
       if (opts?.drops && Array.isArray(fact.edges)) {
         for (const edge of fact.edges) {
@@ -132,8 +138,13 @@ export class OntologyService {
       }
       return { okf_type: null, edges: [] };
     }
+    const canonical = match.slug;
     const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
-    return { okf_type: canonical, edges };
+    return {
+      okf_type: canonical,
+      edges,
+      match: { raw: rawType, canonical, via: match.via },
+    };
   }
 
   /**

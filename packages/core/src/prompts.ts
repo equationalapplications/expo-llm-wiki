@@ -52,7 +52,8 @@ Return ONLY a valid JSON object matching this schema:
 {
   "facts": [{ "title": "string (max 80 chars)", "body": "string (max 800 chars)", "tags": ["string"], "confidence": "certain|inferred|tentative" }]
 }
-Extract verbatim factual content. JSON escaping rules: every literal " character in the source must be escaped as \\" inside any JSON string body, and every literal newline as \\n. Source prose containing quotes (e.g. a worked example with "...") must still be reproduced exactly — re-escape, do not omit. Do not return markdown, just raw JSON.`;
+Extract verbatim factual content. JSON escaping rules: every literal " character in the source must be escaped as \\" inside any JSON string body, and every literal newline as \\n. Source prose containing quotes (e.g. a worked example with "...") must still be reproduced exactly — re-escape, do not omit. Do not return markdown, just raw JSON.
+When the ontology manifest is present in your instructions, supply okf_type for each fact: use a manifest slug exactly as spelled (spelling variants like underscores, hyphens, or spaces are folded to the manifest form), or omit okf_type when no manifest type fits.`;
 
 export const ONTOLOGY_BACKFILL_SYSTEM_PROMPT = `You are a knowledge classification agent. You will receive existing memory facts that currently have no ontology type. For each input fact { "id", "title", "body", "tags" }, assign the best matching okf_type from the ontology manifest and optionally propose edges to related facts by title.
 Return ONLY a valid JSON object matching this schema:
@@ -61,7 +62,7 @@ Return ONLY a valid JSON object matching this schema:
     { "id": "string (input fact id, copied verbatim)", "okf_type": "string (manifest node type slug)", "edges": [{ "edge_type": "string", "target_title": "string" }] }
   ]
 }
-If no manifest type fits a fact, omit that fact from "classifications" entirely — do not guess.
+If no manifest type fits a fact, assign the closest type the fact is an example of; omit that fact from "classifications" only when no type applies even broadly. Use the manifest slug EXACTLY as spelled (spelling variants are folded to the manifest form).
 When echoing an existing fact's title verbatim into "target_title", preserve every JSON escape sequence (\\", \\n, \\\\, \\/) exactly as it appeared in the input body — do not strip backslashes, do not add unescaped quotes. Do not return markdown, just raw JSON.`;
 
 /**

@@ -1798,29 +1798,40 @@ export class EntryRepository extends BaseRepository {
   /**
    * Live untyped facts eligible for ontology backfill, oldest first.
    * Skips facts checked within the recheck cooldown (ontology_checked_at > recheckCutoff).
+   * The queue sees CURRENT facts only (ontology-curation Task 10): rows whose
+   * validity window excludes "now" are invisible to typing, matching the
+   * read-time liveness definition (utils/temporal.ts).
    */
   async findUntypedByEntityId(entityId: string, limit: number, recheckCutoff: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    // Validity is evaluated at the current sample time, NOT at recheckCutoff:
+    // a fact that became live after the cutoff must still queue, and one that
+    // expired since must not (CodeRabbit #441, EntryRepository:1813).
+    const now = Date.now();
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries
        WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
          AND (ontology_checked_at IS NULL OR ontology_checked_at <= ?)
+         AND ${liveAtSql('current')}
        ORDER BY updated_at ASC LIMIT ?`,
-      [entityId, recheckCutoff, limit],
+      [entityId, recheckCutoff, now, now, limit],
     );
     return rows.map(mapRowToFact);
   }
 
-  /** Counts live untyped facts: eligible (past cooldown) vs deferred (in cooldown). */
+  /** Counts live untyped facts: eligible (past cooldown) vs deferred (in cooldown). Current facts only, as {@link findUntypedByEntityId}. */
   async countUntypedByEntityId(entityId: string, recheckCutoff: number, tx?: SQLiteAdapter): Promise<{ eligible: number; deferred: number }> {
     const executor = this.getExecutor(tx);
+    // Same current-time validity sampling as {@link findUntypedByEntityId}.
+    const now = Date.now();
     const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
       `SELECT
          SUM(CASE WHEN ontology_checked_at IS NULL OR ontology_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
          SUM(CASE WHEN ontology_checked_at IS NOT NULL AND ontology_checked_at > ? THEN 1 ELSE 0 END) AS deferred
        FROM ${this.prefix}entries
-       WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL`,
-      [recheckCutoff, recheckCutoff, entityId],
+       WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
+         AND ${liveAtSql('current')}`,
+      [recheckCutoff, recheckCutoff, entityId, now, now],
     );
     return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
   }

@@ -176,7 +176,7 @@ export class WikiMemory {
       new MiniSearchIndexStrategy(),
     );
     this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
-    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService);
+    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService, this.options);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
@@ -936,7 +936,14 @@ export class WikiMemory {
    */
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      classifier?: 'auto' | 'llm';
+      tokenBudget?: number;
+      /** Overrides the default recheck cooldown: facts stamped after this epoch ms stay deferred. */
+      recheckCheckedBefore?: number;
+    },
   ): Promise<OntologyBackfillResult> {
     return this.maintenanceService.runOntologyBackfill(entityId, options);
   }

@@ -107,9 +107,12 @@ describe('remember(): okf_type (spec §3.4)', () => {
   });
 
   it('stores null for an unknown type under emergent, and for an entity with no manifest', async () => {
+    // Mode 'off' (which includes an entity with no ontology configured) stores
+    // the caller's slug VERBATIM: the off host sees no ontology behavior at the
+    // remember door (CodeRabbit #441 round 2 — release-surface guarantee).
     await wiki.setOntologyManifest('e1', manifest, { mode: 'emergent' });
     expect((await wiki.remember('e1', { title: 'T', body: 'B', okf_type: 'Spaceship' })).okf_type).toBeNull();
-    expect((await wiki.remember('e2', { title: 'T', body: 'B', okf_type: 'Person' })).okf_type).toBeNull();
+    expect((await wiki.remember('e2', { title: 'T', body: 'B', okf_type: 'Person' })).okf_type).toBe('Person');
   });
 });
 

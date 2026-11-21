@@ -345,9 +345,9 @@ describe('classifier abstain sentinel (spec §5)', () => {
     const wiki = createWiki(db, { llmProvider: { generateText: async () => '{}' } });
     await wiki.setup();
     await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'emergent' });
-    const merged = await (wiki as unknown as {
+    const { manifest: merged } = await (wiki as unknown as {
       ontologyService: {
-        mergeEmergentUpdates: (e: string, u: unknown, tx: SQLiteAdapter) => Promise<OntologyManifest>;
+        mergeEmergentUpdates: (e: string, u: unknown, tx: SQLiteAdapter) => Promise<{ manifest: OntologyManifest; rejected: string[] }>;
       };
     }).ontologyService.mergeEmergentUpdates('e1', {
       node_types: [

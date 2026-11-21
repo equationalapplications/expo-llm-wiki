@@ -21,7 +21,7 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, factRejectionReason, taskRejectionReason } from '../../utils/pure';
 import { checkGrounding, groundingOutcome } from '../../utils/grounding';
 import { normalizeTitleKey, type EdgeDrop } from '../../utils/ontology';
-import { DiagnosticBuffer, edgeDropDiagnostic } from '../../utils/diagnostics';
+import { DiagnosticBuffer, edgeDropDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts } from '../../utils/diagnostics';
 import { generateId } from '../../utils/ids';
 import { callLlm } from '../../utils/llmCall';
 import { WikiBudgetExhausted } from '../../utils/usage';
@@ -109,7 +109,17 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
         ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
 
       if (mode === 'emergent' && ontologyUpdates && deps.ontologyService) {
-        manifest = await deps.ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
+        const { manifest: merged, rejected } = await deps.ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
+        manifest = merged;
+        for (const reason of rejected) {
+          diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
+        }
+      } else if (mode === 'strict' && ontologyUpdates) {
+        const proposalCount = (Array.isArray(ontologyUpdates.node_types) ? ontologyUpdates.node_types.length : 0)
+          + (Array.isArray(ontologyUpdates.edge_types) ? ontologyUpdates.edge_types.length : 0);
+        for (let i = 0; i < proposalCount; i++) {
+          diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
+        }
       }
 
       const titleIndex = new Map<string, TitleIndexEntry>();
@@ -156,6 +166,18 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
         const normalized = deps.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
           ?? { okf_type: null, edges: [] };
         for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
+        // Model-door receipts (spec §4): never throws in any mode; suppressed at 'off'.
+        if (shouldEmitOntologyReceipt(mode)) {
+          for (const receipt of nodeTypeReceipts(
+            { entityId, operation: 'librarian', trigger },
+            id,
+            ontologyFact.okf_type ?? '',
+            normalized.okf_type,
+            normalized.match,
+          )) {
+            diagBuffer.push(receipt);
+          }
+        }
 
         const grounding = librarianGrounding
           ? groundingOutcome(checkGrounding(fact.evidence, librarianCorpus, librarianGrounding), now)

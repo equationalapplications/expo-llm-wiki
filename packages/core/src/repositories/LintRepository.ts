@@ -60,4 +60,15 @@ export class LintRepository extends BaseRepository {
       [entityId, afterId, limit],
     );
   }
+
+  /** Keyset page of TYPED facts in this entity (id + stored slug). Read-only. "Typed" here means the deletion-only scan the edge-violation query uses: soft-deleted and draft rows are out; validity windows are NOT consulted — the count mirrors `pageLiveEdgeViolations` exactly (spec §9, CodeRabbit #441). */
+  async pageLiveTypedFacts(entityId: string, afterId: string, limit: number): Promise<Array<{ id: string; okf_type: string }>> {
+    return this.db.getAllAsync(
+      `SELECT id, okf_type FROM ${this.prefix}entries
+        WHERE entity_id = ? AND id > ? AND deleted_at IS NULL
+          AND lifecycle_status != 'draft' AND okf_type IS NOT NULL
+        ORDER BY id ASC LIMIT ?`,
+      [entityId, afterId, limit],
+    );
+  }
 }
