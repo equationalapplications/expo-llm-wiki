@@ -6,6 +6,7 @@ import type {
   WikiDiagnosticSeverity,
   WikiDiagnosticTrigger,
   WikiOptions,
+  OntologyMode,
 } from '../types';
 import type { EdgeDrop } from './ontology';
 
@@ -14,7 +15,7 @@ export type WikiDiagnosticInput = Omit<WikiDiagnostic, 'severity' | 'message' | 
 
 type DiagnosticTarget = Pick<WikiOptions, 'onDiagnostic'>;
 
-const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
+export const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   ingest_chunk_failed: 'warn',
   fact_rejected: 'warn',
   task_rejected: 'warn',
@@ -59,10 +60,15 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   source_store_hash_mismatch: 'warn',
   source_store_duplicate_hash: 'warn',
   source_store_text_not_storable: 'warn',
+  node_type_dropped: 'warn',
+  node_type_folded: 'info',
+  node_type_assigned: 'info',
+  ontology_update_rejected: 'warn',
+  ingest_zero_facts: 'warn',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
-const MESSAGE: Record<WikiDiagnosticCode, string> = {
+export const MESSAGE: Record<WikiDiagnosticCode, string> = {
   ingest_chunk_failed: 'One or more document chunks failed to parse or generate.',
   fact_rejected: 'An extracted fact failed validation and was not written.',
   task_rejected: 'An extracted task failed validation and was not written.',
@@ -107,7 +113,22 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   source_store_hash_mismatch: 'A source document text did not match its recorded hash and was not stored.',
   source_store_duplicate_hash: 'A source document duplicated the hash of one already stored and was not stored.',
   source_store_text_not_storable: 'A source document text could not be stored as given.',
+  node_type_dropped: 'A supplied node type missed the ontology manifest and the fact was stored untyped.',
+  node_type_folded: 'A supplied node type was normalized into the manifest canonical slug.',
+  node_type_assigned: 'A fact was assigned an ontology node type by a typing path.',
+  ontology_update_rejected: 'An emergent ontology proposal was rejected during the merge.',
+  ingest_zero_facts: 'A re-ingest tombstoned prior facts and edges and then wrote zero facts.',
 };
+
+/** Ontology receipts emit only when the entity's ontology mode ≠ `'off'`. */
+export function shouldEmitOntologyReceipt(mode: OntologyMode): boolean {
+  return mode !== 'off';
+}
+
+/** Receipt slugs are content-free identifiers, capped at 64 characters. */
+export function capReceiptSlug(slug: string): string {
+  return typeof slug === 'string' ? slug.slice(0, 64) : '';
+}
 
 const warnedNonFunction = new WeakSet<object>();
 
