@@ -81,6 +81,12 @@ describe('buildVariantDistractors', () => {
   ];
   const seedKeys = new Set(['orbit', 'deploy', 'acme labs']);
 
+  it('throws instead of hanging when count exceeds the finite candidate keyspace', () => {
+    // Pre-PR review finding (2026-11-21): the unique-title keyspace is 288 with
+    // the current lists; requesting more must throw, not spin forever.
+    expect(() => buildVariantDistractors(289)).toThrow(/keyspace exhausted/);
+  });
+
   it('is deterministic across calls (same variant seed → same rows)', () => {
     expect(buildVariantDistractors(50)).toEqual(buildVariantDistractors(50));
     expect(VARIANT_SEED).toBe('shortlist-recall-2026-11-variant');

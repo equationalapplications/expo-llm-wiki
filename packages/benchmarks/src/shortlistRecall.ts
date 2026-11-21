@@ -165,18 +165,31 @@ function mutateTitle(base: string, kind: (typeof MUTATION_KINDS)[number], h: num
  * duplicate key; the seen-key guard throws (fail loudly) if one ever
  * collides with another variant or a seed title, because rankRows dedupes
  * by normalizeTitleKey last-wins and such a row would corrupt ground truth.
+ * The candidate keyspace is finite (unique titles across bases × kinds ×
+ * WORD_LIST_B), so `count` above the keyspace size can never terminate:
+ * the iteration cap throws instead of hanging (pre-PR review finding,
+ * 2026-11-21; keyspace is 288 with the current lists).
  */
+const MAX_VARIANT_ITERATIONS = 50_000;
+
 export function buildVariantDistractors(count = 50): ShortlistRow[] {
   const seedKeys = new Set(['orbit', 'deploy', 'acme labs']);
   const seen = new Set<string>(seedKeys);
   const rows: ShortlistRow[] = [];
-  for (let i = 0; rows.length < count; i++) {
+  let i = 0;
+  while (rows.length < count) {
+    if (i >= MAX_VARIANT_ITERATIONS) {
+      throw new Error(
+        `buildVariantDistractors: candidate keyspace exhausted after ${i} iterations (requested ${count} unique rows)`,
+      );
+    }
     const h = fnv1a(`${VARIANT_SEED}-${i}`);
     const base = VARIANT_BASES[h % 3];
     const kind = MUTATION_KINDS[(h >>> 8) % 3];
     const extra = WORD_LIST_B[(h >>> 16) % WORD_LIST_B.length];
     const title = `${mutateTitle(base, kind, h)} ${extra}`;
     const key = normalizeTitleKey(title);
+    i++;
     if (seen.has(key)) continue; // skip-and-advance
     seen.add(key);
     rows.push({
