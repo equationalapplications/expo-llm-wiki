@@ -277,3 +277,13 @@ native-engine gate is untouched.
 decided after this spec's real run — the recall numbers pick. (3) The
 generator ships as-is; extend to title-variant distractors only if the
 recall curve saturates suspiciously early.
+
+**Detail note, 2026-11-21 (plan review, no intent change):** the "one k row
+per k value below the pool size" preamble and the parenthetical
+"(k = 5, 10, 25 for the distractor pools; k = 1 for the seed pool)" conflict.
+Ruled reading: the sweep k = 1, 3, 5, 10, 25 is reported in full on both
+distractor pools (all k < 50), and k = 1 only on the seed pool. Also,
+`normalizeTitleKey` (`ontology.ts:13`) folds case and whitespace only — not
+punctuation; the hit rule inherits exactly that. And the committed result
+file must be written via `--out`: the default results dir
+`packages/benchmarks/results/raw/` is gitignored.
