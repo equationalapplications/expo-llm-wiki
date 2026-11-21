@@ -58,6 +58,9 @@ export interface PromptOverrides {
 
 export type OntologyMode = 'strict' | 'emergent' | 'off';
 
+export type { SystemOneConfig, SystemOneThresholdSite } from './config/systemOne';
+import type { SystemOneConfig } from './config/systemOne';
+
 export interface OntologyNodeType {
   type: string;
   description: string;
@@ -106,6 +109,13 @@ export interface OntologyConfig {
   backfillClassifier?: 'auto' | 'llm';
   /** Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Default 0.5. */
   classifyMinConfidence?: number;
+  /**
+   * Batch size for scheduler-driven (`runPendingMaintenance`) ontology
+   * backfill passes. Finite integer >= 1; invalid values fall back to the
+   * default. Default 50. Does not change the manual `runOntologyBackfill`
+   * default (25).
+   */
+  schedulerBatchSize?: number;
 }
 
 export interface ExtractedFactEdge {
@@ -124,7 +134,7 @@ export interface OntologyPromptContext {
 }
 
 /** Result of a single ontology backfill run. Omissions (facts the model declined
- * to classify) are derivable as scanned − typed − failedValidation. */
+ * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {
   /** Untyped facts sent to the model this run. */
   scanned: number;
@@ -132,6 +142,12 @@ export interface OntologyBackfillResult {
   typed: number;
   /** Model classifications rejected (unknown/duplicate id, non-manifest type). */
   failedValidation: number;
+  /** Untyped facts the typing model declined to classify — classifier abstains under
+   * `onLowConfidence: 'leave'`, and generative omissions (facts the model sent no
+   * classification for, including the `changes === 0` race). `scanned − typed −
+   * failedValidation` no longer pins this down once escalation routes facts
+   * between steps (specs/system-one-config §4-§5). */
+  abstained: number;
   /** Edges persisted. */
   edgesAdded: number;
   /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0.
@@ -361,6 +377,13 @@ export interface WikiConfig {
    */
   enableOutbox?: boolean;
   ontology?: OntologyConfig;
+  /**
+   * System-One config surface (specs/system-one-config §1): typing mode,
+   * per-site confidence floor, and low-confidence routing. Resolution chains
+   * live in `utils/engineDefaults.ts` (`resolveSystemOneTyping`,
+   * `resolveTypingMinConfidence`).
+   */
+  systemOne?: SystemOneConfig;
   /** Default node cap for traverseGraph(), unless overridden per-call. Default 20. */
   maxTraversalNodes?: number;
   /**
@@ -883,11 +906,14 @@ export type WikiDiagnosticCode =
   | 'grounding_failed'
   | 'classification_low_confidence'
   | 'classification_invalid'
+  | 'classification_abstained'
+  | 'node_type_assigned'
   | 'context_overflow_skipped'
   | 'llm_usage'
   | 'librarian_gate'
   | 'librarian_op_rejected'
   | 'contradicts_document'
+  | 'ontology_backfill_held'
   | 'resolve_failed'
   | 'read_budget'
   | 'event_retention_held'
@@ -938,6 +964,10 @@ export interface WikiDiagnosticDetail {
   itemIndex?: number;
   /** Machine-readable sub-reason, e.g. `'target_not_found'`. */
   reason?: string;
+  /** `node_type_assigned` only: the manifest slug applied to the fact. */
+  okfType?: string;
+  /** Typing receipts only: which path produced the outcome. */
+  writer?: 'classifier' | 'llm';
   /** Aggregated `ingest_chunk_failed` only; the first 20 failed chunk indexes. */
   chunkIndexes?: number[];
   /** Aggregated emissions only. */
@@ -1726,7 +1756,7 @@ export interface WikiInstructions {
   ontologyBackfill: string;
 }
 
-export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions';
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions' | 'ontologyBackfill';
 
 /** The jobs that hold a per-entity lock (everything but `externalDeletions`). */
 export type LockedMaintenanceJob = Exclude<MaintenanceJob, 'externalDeletions'>;
@@ -1747,6 +1777,13 @@ export interface PendingMaintenance {
   reembedPending: boolean;
   /** Removals still owed to the host's vector index for this entity (absent when none). */
   pendingExternalDeletions?: number;
+  /**
+   * Untyped facts still eligible for ontology typing (absent when none).
+   * Counts only facts outside the recheck cooldown — `deferred` ones are
+   * waiting, not work the next pass will attempt. Always false-shaped (absent)
+   * while ontology is off for the entity.
+   */
+  pendingOntologyBackfill?: number;
 }
 
 export interface RunPendingMaintenanceOptions {
@@ -1756,7 +1793,7 @@ export interface RunPendingMaintenanceOptions {
   tokenBudget?: number;
   /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
   deadlineMs?: number;
-  /** Default all four. `externalDeletions` runs first and is not metered by `tokenBudget`. */
+  /** Default all five. `externalDeletions` runs first and is not metered by `tokenBudget`. */
   jobs?: MaintenanceJob[];
 }
 
@@ -1764,7 +1801,7 @@ export type MaintenanceStopReason =
   | { reason: 'complete' }
   | { reason: 'deadline' }
   | { reason: 'budget_exhausted' }
-  | { reason: 'budget_too_small'; job: 'librarian' | 'heal'; entityId: string; requiredEstimate: number };
+  | { reason: 'budget_too_small'; job: 'librarian' | 'heal' | 'ontologyBackfill'; entityId: string; requiredEstimate: number };
 
 export interface EntityMaintenanceReport {
   entityId: string;
@@ -1772,6 +1809,10 @@ export interface EntityMaintenanceReport {
   factsWritten: number;
   healPasses: number;
   reembedded: boolean;
+  /** Scheduler-driven ontology-backfill passes run for this entity (0 when the job was off). */
+  ontologyBackfillPasses: number;
+  /** Facts that received an okf_type during this run's ontology-backfill passes. */
+  typed: number;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: LockedMaintenanceJob[];
   /**

@@ -88,8 +88,18 @@ createWiki(db, {
 |---|---|---|
 | `ontology.mode` | `'off'` | Global default: `'off'`, `'strict'`, or `'emergent'` |
 | `ontology.seedManifests` | — | `{ [entityId]: { manifest, mode? } }` |
-| `ontology.backfillClassifier` | `'llm'` | `'auto'` uses `llmProvider.classify` |
-| `ontology.classifyMinConfidence` | `0.5` | Classifier answers below this are left untyped |
+| `ontology.backfillClassifier` | `'llm'` | `'auto'` uses `llmProvider.classify`. Superseded by `systemOne.typing`, which wins when both are set |
+| `ontology.classifyMinConfidence` | `0.5` | Classifier answers below this are left untyped. Superseded by `systemOne.minConfidence.typing` |
+
+## System-One
+
+| Field | Default | Description |
+|---|---|---|
+| `systemOne.typing` | `'llm'` | Typing mode: `'auto'` uses `llmProvider.classify` (no edges proposed); `'llm'` always uses `generateText`. Wins over `ontology.backfillClassifier` when both are set (a one-time warning names the disagreement) |
+| `systemOne.minConfidence.typing` | `0.5` | Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Wins over `ontology.classifyMinConfidence` |
+| `systemOne.onLowConfidence` | `'leave'` | `'llm'` escalates classifier low-confidence and abstain outcomes to the generative step of the same pass. A cost/quality setting, not a safety mechanism — it cannot catch a confidently wrong classifier. No-op when typing resolves `'llm'` |
+
+Invalid values for these keys warn once (distinct `[core-llm-wiki] systemOne:` prefix) and are treated as unset.
 
 ## Prompts
 

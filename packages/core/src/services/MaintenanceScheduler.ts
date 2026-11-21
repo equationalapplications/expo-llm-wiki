@@ -9,11 +9,13 @@ import type {
   RunPendingMaintenanceOptions,
   RunPendingMaintenanceResult,
   HealResult,
+  OntologyBackfillResult,
 } from '../types';
 import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import { MaintenanceService, MAX_EMBED_ATTEMPTS } from './MaintenanceService';
 import type { LibrarianResult } from './librarian';
 import { UsageMeter } from '../utils/usage';
+import { resolveOntologyJobDefaults } from '../utils/config/ontologyJobDefaults';
 import { MetadataRepository } from '../repositories/MetadataRepository';
 import { EventRepository } from '../repositories/EventRepository';
 import { EntryRepository } from '../repositories/EntryRepository';
@@ -38,6 +40,10 @@ export class MaintenanceScheduler {
     private vectorRemovalService: VectorRemovalService,
     private vectorRemovalRepo: VectorRemovalRepository,
   ) {}
+
+  /** Batch size for scheduler-driven ontology passes; resolved once (spec §8). */
+  private readonly schedulerBatchSize: number =
+    resolveOntologyJobDefaults(this.options.config?.ontology).batchSize;
 
   /**
    * Entities with **any** pending work only, sorted by `pendingEvents` desc
@@ -75,10 +81,12 @@ export class MaintenanceScheduler {
       const healDue = eventCount - healCheckpoint >= autoHealThreshold;
       const reembedPending = canEmbed && (await this.entryRepo.countReembedPending(entityId, MAX_EMBED_ATTEMPTS)) > 0;
       const owedCount = owed.get(entityId) ?? 0;
-      if (pendingEvents > 0 || healDue || reembedPending || owedCount > 0) {
+      const ontologyBackfillPending = await this.maintenanceService.pendingOntologyBackfill(entityId);
+      if (pendingEvents > 0 || healDue || reembedPending || owedCount > 0 || ontologyBackfillPending > 0) {
         out.push({
           entityId, pendingEvents, pendingTokensEstimate: Math.ceil(chars / 4), healDue, reembedPending,
           ...(owedCount > 0 ? { pendingExternalDeletions: owedCount } : {}),
+          ...(ontologyBackfillPending > 0 ? { pendingOntologyBackfill: ontologyBackfillPending } : {}),
         });
       }
     }
@@ -109,23 +117,24 @@ export class MaintenanceScheduler {
     const meter = new UsageMeter(opts.tokenBudget);
     const budget = opts.tokenBudget;
     const deadline = opts.deadlineMs !== undefined ? Date.now() + Math.max(0, opts.deadlineMs) : Infinity;
-    const jobs = new Set<MaintenanceJob>(opts.jobs ?? ['librarian', 'heal', 'reembed', 'externalDeletions']);
+    const jobs = new Set<MaintenanceJob>(opts.jobs ?? ['librarian', 'heal', 'reembed', 'externalDeletions', 'ontologyBackfill']);
     const externalDeletions = await this.runExternalDeletions(opts.entityIds, jobs.has('externalDeletions'), deadline);
     // Removal-only entities are reported by externalDeletions, not as per-entity maintenance.
-    const pending = (await this.getPending(opts.entityIds)).filter((p) => p.pendingEvents > 0 || p.healDue || p.reembedPending);
+    const pending = (await this.getPending(opts.entityIds)).filter((p) => p.pendingEvents > 0 || p.healDue || p.reembedPending || (p.pendingOntologyBackfill ?? 0) > 0);
 
-    type State = { p: PendingMaintenance; report: EntityMaintenanceReport; librarian: boolean; heal: boolean; reembed: boolean };
+    type State = { p: PendingMaintenance; report: EntityMaintenanceReport; librarian: boolean; heal: boolean; reembed: boolean; ontology: boolean };
     const states: State[] = pending.map((p) => ({
       p,
-      report: { entityId: p.entityId, librarianPasses: 0, factsWritten: 0, healPasses: 0, reembedded: false },
+      report: { entityId: p.entityId, librarianPasses: 0, factsWritten: 0, healPasses: 0, reembedded: false, ontologyBackfillPasses: 0, typed: 0 },
       librarian: jobs.has('librarian') && p.pendingEvents > 0,
       heal: jobs.has('heal') && p.healDue,
       reembed: jobs.has('reembed') && p.reembedPending,
+      ontology: jobs.has('ontologyBackfill') && (p.pendingOntologyBackfill ?? 0) > 0,
     }));
 
     let stopped: MaintenanceStopReason = { reason: 'complete' };
     let tooSmall: MaintenanceStopReason | null = null;
-    const classify = (job: 'librarian' | 'heal', entityId: string, requiredEstimate: number): 'too_small' | 'exhausted' => {
+    const classify = (job: 'librarian' | 'heal' | 'ontologyBackfill', entityId: string, requiredEstimate: number): 'too_small' | 'exhausted' => {
       if (budget !== undefined && requiredEstimate > budget) {
         tooSmall ??= { reason: 'budget_too_small', job, entityId, requiredEstimate };
         return 'too_small';
@@ -146,13 +155,13 @@ export class MaintenanceScheduler {
     // that clears one (a skip: busy, outage, too small, nothing processed)
     // counts as progress — it must re-run so the entity reaches its later
     // jobs — and the loop still terminates.
-    const openJobs = () => states.reduce((n, s) => n + +s.librarian + +s.heal + +s.reembed, 0);
+    const openJobs = () => states.reduce((n, s) => n + +s.librarian + +s.heal + +s.reembed + +s.ontology, 0);
 
     rounds: for (;;) {
       let progressed = false;
       const openAtStart = openJobs();
       for (const st of states) {
-        if (!st.librarian && !st.heal && !st.reembed) continue;
+        if (!st.librarian && !st.heal && !st.reembed && !st.ontology) continue;
         if (Date.now() >= deadline) { stopped = { reason: 'deadline' }; break rounds; }
         const entityId = st.p.entityId;
 
@@ -236,6 +245,61 @@ export class MaintenanceScheduler {
             if (err instanceof WikiBusyError) markBusy(st, 'reembed');
             else throw err;
           }
+        }
+
+        if (st.ontology) {
+          // The between-units deadline check at the top of the entity
+          // iteration ran BEFORE librarian/heal/reembed; an awaited unit can
+          // lapse the deadline, and the ontology pass must not start against
+          // an expired one. Spec §10 precedence: stop with 'deadline'; the
+          // caller retries as-is (nothing was spent here).
+          if (Date.now() >= deadline) {
+            stopped = { reason: 'deadline' };
+            break rounds;
+          }
+          st.ontology = false;
+          if (this.jobManager.isBlocked('ontologyBackfill', entityId)) {
+            // Same handling as a busy librarian/heal: a held pass is a real
+            // scheduler outcome (the lock is owned by another job right now),
+            // so report it and tell the host via `ontology_backfill_held`.
+            markBusy(st, 'ontologyBackfill');
+            this.maintenanceService.noteOntologyBackfillHeld(entityId);
+            progressed = true;
+            continue;
+          }
+          this.jobManager.acquireLock('ontologyBackfill', entityId);
+          let r: OntologyBackfillResult;
+          try {
+            r = await this.maintenanceService.doRunOntologyBackfill(entityId, {
+              meter,
+              batchSize: this.schedulerBatchSize,
+            });
+          } finally {
+            this.jobManager.releaseLock('ontologyBackfill', entityId);
+          }
+          st.report.ontologyBackfillPasses++;
+          st.report.typed += r.typed;
+          progressed = true;
+          if (r.budgetStop) {
+            if (classify('ontologyBackfill', entityId, r.budgetStop.requiredEstimate) === 'exhausted') {
+              // Route through exhaustedStop() like the librarian/heal
+              // branches: budget exhaustion is only reported when the budget
+              // actually ran out — a deadline that lapsed inside the awaited
+              // pass outranks it (spec §10 precedence).
+              stopped = exhaustedStop();
+              break rounds;
+            }
+            continue;
+          }
+          if (r.remaining === 0 || r.typed === 0) {
+            // Converged, or this pass typed nothing it can ever type (every
+            // candidate failed validation) — a further pass would burn rounds
+            // without progress, so stop driving the job for this entity.
+            continue;
+          }
+          // More eligible facts remain and this pass made typing progress; the
+          // job stays closed for this run — leftover work waits for the next
+          // run() (host convergence signal: getPendingMaintenance).
         }
       }
       if (!progressed && openJobs() === openAtStart) break;

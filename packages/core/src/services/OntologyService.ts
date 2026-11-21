@@ -21,6 +21,7 @@ import {
   typeSatisfies,
   validateInlineEdges,
   validateManifest,
+  isReservedAbstainSlug,
   type EdgeDrop,
 } from '../utils/ontology';
 import { generateId } from '../utils/ids';
@@ -95,7 +96,15 @@ export class OntologyService {
     updates: OntologyUpdates,
     tx: SQLiteAdapter,
   ): Promise<OntologyManifest> {
-    const merged = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
+    // Reserved abstain slug (specs/system-one-config §5, decree C4): the
+    // emergent merge drops it instead of persisting it, so a model proposing
+    // 'none_of_these' as a node type can never smuggle the sentinel into the
+    // manifest. Write-path reservation lives in WikiMemory.setOntologyManifests;
+    // per-read validateManifest is deliberately untouched.
+    const filtered: OntologyUpdates = updates.node_types
+      ? { ...updates, node_types: updates.node_types.filter((nt) => !isReservedAbstainSlug(nt.type)) }
+      : updates;
+    const merged = await this.metadataRepo.mergeManifestUpdates(entityId, filtered, tx);
     this.invalidateCache(entityId);
     return merged;
   }

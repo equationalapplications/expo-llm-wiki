@@ -21,6 +21,22 @@ export function resolveNodeType(raw: string, manifest: OntologyManifest): string
   return hit?.type ?? null;
 }
 
+/**
+ * Reserved abstain sentinel (specs/system-one-config §5): appended to the
+ * classifier choice question so a classifier can decline every offered
+ * manifest slug. Comparison is case-insensitive and whitespace-trimmed, and
+ * the reservation is enforced on the write paths (`setOntologyManifests`,
+ * `mergeEmergentUpdates`) — per-read `validateManifest` is deliberately
+ * untouched (coordination decree C4), so a legacy manifest carrying the slug
+ * only forecloses the classifier fast path; it never breaks reads.
+ */
+export const ONTOLOGY_ABSTAIN_SENTINEL = 'none_of_these';
+
+/** True when a raw slug is the reserved abstain sentinel (case/trim-insensitive). */
+export function isReservedAbstainSlug(raw: unknown): boolean {
+  return typeof raw === 'string' && raw.trim().toLowerCase() === ONTOLOGY_ABSTAIN_SENTINEL;
+}
+
 export function resolveEdgeDefinitions(
   rawEdgeType: string,
   manifest: OntologyManifest,

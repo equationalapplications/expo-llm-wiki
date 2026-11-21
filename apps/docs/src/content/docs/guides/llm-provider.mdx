@@ -150,7 +150,8 @@ generateTextWithUsage: async ({ systemPrompt, userPrompt }) => {
 ## `classify` (optional, non-generative typing)
 
 A System-One classifier can assign ontology types to facts during backfill without generating
-text. It's off until you opt in with `config.ontology.backfillClassifier: 'auto'`. See
+text. It's off until you opt in with `config.systemOne.typing: 'auto'` (the legacy
+`config.ontology.backfillClassifier: 'auto'` still works; the new key wins when both are set). See
 [Ontologies → classifier mode](/expo-llm-wiki/guides/ontologies/#classifier-mode).
 
 ## Callbacks that sit beside `llmProvider`
