@@ -3,6 +3,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
+  resolveNodeTypeMatch,
   validateManifest,
   mergeOntologyUpdates,
   validateInlineEdges,
@@ -602,5 +603,87 @@ describe('ontology parent inheritance', () => {
     });
     expect(merged.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
     expect('parent_type' in merged.node_types[0]).toBe(false);
+  });
+});
+
+describe('normalized matching (ontology-curation Task 1)', () => {
+  const sepManifest: OntologyManifest = {
+    node_types: [
+      { type: 'foo_bar', description: 'underscore form.' },
+      { type: 'baz qux', description: 'space form.' },
+    ],
+    edge_types: [
+      { type: 'relates-to', source_type: 'foo_bar', target_type: 'baz qux', description: 'Edge.' },
+    ],
+  };
+
+  it('exact case-insensitive hit wins over any normalized candidate', () => {
+    // Both `foo_bar` and `foo-bar` in one manifest: exact spelling resolves
+    // exactly, never through the ambiguous normalized map.
+    const both: OntologyManifest = {
+      node_types: [
+        { type: 'foo_bar', description: 'a' },
+        { type: 'foo-bar', description: 'b' },
+      ],
+      edge_types: [],
+    };
+    expect(resolveNodeType('FOO_BAR', both)).toBe('foo_bar');
+    expect(resolveNodeType('FOO-BAR', both)).toBe('foo-bar');
+  });
+
+  it('unique normalized hit resolves', () => {
+    expect(resolveNodeType('foo-bar', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('foo bar', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('FOO  BAR', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('baz_qux', sepManifest)).toBe('baz qux');
+    expect(resolveNodeType('baz-qux', sepManifest)).toBe('baz qux');
+    expect(resolveEdgeDefinitions('relates_to', sepManifest)[0].type).toBe('relates-to');
+    expect(resolveEdgeDefinitions('relates to', sepManifest)[0].type).toBe('relates-to');
+  });
+
+  it('ambiguous normalized query returns null / empty, never throws', () => {
+    expect(resolveNodeType('a-b', {
+      node_types: [{ type: 'a_b', description: '' }, { type: 'a b', description: '' }],
+      edge_types: [],
+    })).toBeNull();
+    expect(resolveEdgeDefinitions('about_x', polyManifest)).toHaveLength(0);
+  });
+
+  it('empty or whitespace input returns null / empty', () => {
+    expect(resolveNodeType('', sepManifest)).toBeNull();
+    expect(resolveNodeType('   ', sepManifest)).toBeNull();
+    expect(resolveEdgeDefinitions('', sepManifest)).toHaveLength(0);
+    expect(resolveEdgeDefinitions('  ', sepManifest)).toHaveLength(0);
+  });
+
+  it('miss returns null / empty', () => {
+    expect(resolveNodeType('nope', sepManifest)).toBeNull();
+    expect(resolveEdgeDefinitions('nope', sepManifest)).toHaveLength(0);
+  });
+
+  it('exact edge-name hit keeps multi-triple behavior and canonical casing', () => {
+    const defs = resolveEdgeDefinitions('ABOUT', polyManifest);
+    expect(defs).toHaveLength(4);
+    expect(defs.every(d => d.type === 'about')).toBe(true);
+  });
+
+  it('property: resolution never throws for arbitrary model-style spellings', () => {
+    const corpus = [manifest, polyManifest, sepManifest, emptyManifest()];
+    const spellings = ['', '  ', 'PERSON', 'person_', '_person', 'a_b_c', 'Reports To',
+      'REPORTS-TO', 'reports   to', 'ünicode', 'about', 'ABOUT__', 'relates_to'];
+    for (const m of corpus) {
+      for (const s of spellings) {
+        expect(() => resolveNodeType(s, m)).not.toThrow();
+        expect(() => resolveEdgeDefinitions(s, m)).not.toThrow();
+      }
+    }
+  });
+
+  it('resolveNodeTypeMatch reports via exact vs normalize', () => {
+    expect(resolveNodeTypeMatch('person', manifest)).toEqual({ slug: 'person', via: 'exact' });
+    expect(resolveNodeTypeMatch('PERSON', manifest)).toEqual({ slug: 'person', via: 'exact' });
+    expect(resolveNodeTypeMatch('foo-bar', sepManifest)).toEqual({ slug: 'foo_bar', via: 'normalize' });
+    expect(resolveNodeTypeMatch('nope', manifest)).toBeNull();
+    expect(resolveNodeTypeMatch('', manifest)).toBeNull();
   });
 });

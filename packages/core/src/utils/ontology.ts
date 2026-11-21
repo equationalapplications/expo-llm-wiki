@@ -14,20 +14,60 @@ export function normalizeTitleKey(title: string): string {
   return title.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-export function resolveNodeType(raw: string, manifest: OntologyManifest): string | null {
-  const slug = raw.trim();
+/**
+ * Canonical slug form for normalized (second-chance) matching: lowercase;
+ * `_`, `-`, and whitespace runs collapse to a single `_` separator. Used by
+ * both resolvers so a model's spelling (`relates_to`) maps to the manifest's
+ * spelling (`relates-to`) without changing what a person stored.
+ */
+function normalizeSlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[_\-\s]+/g, '_');
+}
+
+export type NodeTypeMatch = { slug: string; via: 'exact' | 'normalize' };
+
+/**
+ * Resolution evidence for the node-type resolver: which canonical slug was
+ * chosen and whether the raw spelling hit exactly (case-insensitive) or
+ * through the unique-normalized fallback. Returns null on a miss.
+ */
+export function resolveNodeTypeMatch(raw: string, manifest: OntologyManifest): NodeTypeMatch | null {
+  const slug = typeof raw === 'string' ? raw.trim() : '';
   if (!slug) return null;
-  const hit = manifest.node_types.find(n => n.type.toLowerCase() === slug.toLowerCase());
-  return hit?.type ?? null;
+  const lowered = slug.toLowerCase();
+  const exact = manifest.node_types.find(n => n.type.toLowerCase() === lowered);
+  if (exact) return { slug: exact.type, via: 'exact' };
+  // Unique-normalized fallback: exactly one manifest entry may match the
+  // canonical form; ambiguity resolves to nothing (never an error, never a
+  // guess between two candidates).
+  const normalized = normalizeSlug(slug);
+  if (!normalized) return null;
+  const candidates = manifest.node_types.filter(n => normalizeSlug(n.type) === normalized);
+  return candidates.length === 1 ? { slug: candidates[0].type, via: 'normalize' } : null;
+}
+
+export function resolveNodeType(raw: string, manifest: OntologyManifest): string | null {
+  return resolveNodeTypeMatch(raw, manifest)?.slug ?? null;
 }
 
 export function resolveEdgeDefinitions(
   rawEdgeType: string,
   manifest: OntologyManifest,
 ): OntologyManifest['edge_types'][number][] {
-  const slug = rawEdgeType.trim();
+  const slug = typeof rawEdgeType === 'string' ? rawEdgeType.trim() : '';
   if (!slug) return [];
-  return manifest.edge_types.filter(e => e.type.toLowerCase() === slug.toLowerCase());
+  const lowered = slug.toLowerCase();
+  const exact = manifest.edge_types.filter(e => e.type.toLowerCase() === lowered);
+  if (exact.length > 0) return exact;
+  // Unique-normalized fallback, keyed on the edge NAME: all triples of the
+  // one uniquely-matching name are returned, mirroring the exact path.
+  const normalized = normalizeSlug(slug);
+  if (!normalized) return [];
+  const names = new Set(
+    manifest.edge_types.filter(e => normalizeSlug(e.type) === normalized).map(e => e.type.toLowerCase()),
+  );
+  if (names.size !== 1) return [];
+  return manifest.edge_types.filter(e => e.type.toLowerCase() === [...names][0]);
 }
 
 function edgeTripleKey(type: string, sourceType: string, targetType: string): string {
