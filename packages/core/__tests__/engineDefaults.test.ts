@@ -1,9 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { OPS_EXTRACT_SYSTEM_PROMPT } from '../src/prompts';
-import { changedDefaultWarnings, resolveLibrarianStrategy, resolveMaintenanceMode } from '../src/utils/engineDefaults';
+import { changedDefaultWarnings, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping } from '../src/utils/engineDefaults';
 import type { WikiConfig } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+
+describe('unserializable invalid config values (PR #442 review)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // A raw JSON.stringify throws on bigint and on circular references; config
+  // arriving from an unvalidated host store can hold either, and a warning
+  // must never become an exception.
+  it('bigint and circular invalid values warn once without throwing and are treated as unset', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveSystemOneTyping({ systemOne: { typing: 1n as never } })).toBe('llm');
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(resolveSystemOneTyping({ systemOne: { typing: circular as never } })).toBe('llm');
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('[unserializable: bigint]'))).toBe(true);
+  });
+});
 
 describe('8.0.0 engine defaults', () => {
   afterEach(() => {

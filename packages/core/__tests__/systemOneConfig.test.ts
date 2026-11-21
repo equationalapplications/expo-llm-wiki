@@ -249,6 +249,35 @@ describe('classifier abstain sentinel (spec §5)', () => {
     expect((await row(h.db, 'f_ada'))!.ontology_checked_at).toBeNull();
   });
 
+  it('escalation checks the live ontology mode before the generative call (mid-flight off)', async () => {
+    // Ontology is disabled while the classifier step is in flight and EVERY
+    // outcome escalates (attempted is empty, so the batch apply — which
+    // carries its own off check — never runs). The escalation must not make
+    // a generative LLM call in a disabled mode: the live mode is re-checked
+    // before starting it, and the existing off-mode result is returned
+    // without stamping the candidates.
+    const db = openTestDatabase();
+    const generateText = vi.fn(async () => JSON.stringify({ classifications: [] }));
+    let wiki!: ReturnType<typeof createWiki>;
+    const classify = vi.fn(async () => {
+      // Flip the mode from inside the classifier step, before it returns.
+      await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'off' });
+      return choice('none_of_these', 1);
+    });
+    wiki = createWiki(db, {
+      llmProvider: { generateText, classify },
+      config: { systemOne: { typing: 'auto', onLowConfidence: 'llm' } },
+    });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    await seed(db, 'f_ada', 'Ada');
+    const result = await wiki.runOntologyBackfill('e1', { classifier: 'auto' });
+    expect(classify).toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+    expect(result.remaining).toBe(0);
+    expect((await row(db, 'f_ada'))!.ontology_checked_at).toBeNull();
+  });
+
   it('a manifest carrying the reserved slug falls back to the generative path', async () => {
     // The write path rejects the slug, so the only way a manifest can carry it
     // is a legacy row or an unvalidated seed — exactly the compatibility
@@ -381,7 +410,7 @@ describe('compatibility lock (spec §9, test 13)', () => {
     expect(h.diagnostics.map((d) => d.code)).toEqual(['node_type_assigned']);
   });
 
-  it("delta 3: the ontologyBackfill job rides the default runPendingMaintenance job set", async () => {
+  it('delta 3: the ontologyBackfill job rides the default runPendingMaintenance job set', async () => {
     const h = await makeWiki({ config: { systemOne: { typing: 'auto' } }, classify: async () => choice('person') });
     const pending = await h.wiki.getPendingMaintenance(['e1']);
     expect(Array.isArray(pending)).toBe(true);
@@ -389,5 +418,24 @@ describe('compatibility lock (spec §9, test 13)', () => {
     const result = await h.wiki.runPendingMaintenance({ jobs: ['ontologyBackfill'] });
     expect(result.perEntity.length).toBe(1);
     expect(result.perEntity[0].typed).toBe(1);
+  });
+
+  it('delta 4: at the option cap (255 manifest slugs + sentinel) the legacy auto path falls back to the generative path', async () => {
+    // Pre-PR baseline: the guard was `slugs.length <= 255`, so a 255-slug
+    // manifest under `ontology.backfillClassifier: 'auto'` ran the classifier.
+    // Appending the sentinel pushes the option count to 256, over
+    // CLASSIFIER_MAX_CHOICES — the fallback boundary moves by one (spec §5,
+    // §9 delta 4). This test pins the NEW behavior as a documented delta.
+    const node_types = Array.from({ length: CLASSIFIER_MAX_CHOICES }, (_, i) => ({
+      type: `t${i}`, description: `type ${i}`,
+    }));
+    const h = await makeWiki({
+      config: { ontology: { backfillClassifier: 'auto' } },
+      classify: byTitle,
+      manifest: { node_types, edge_types: [] },
+    });
+    await h.wiki.runOntologyBackfill('e1');
+    expect(h.classify).not.toHaveBeenCalled();
+    expect(h.generateText).toHaveBeenCalled();
   });
 });

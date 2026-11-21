@@ -307,9 +307,13 @@ verification, per house rule.
 ## Final step (after T8 converges, before `gh pr ready`)
 
 One cleanup commit on the same PR: flip the spec Status to **Implemented** (house
-lifecycle step 4), delete `plan.md` and `LEDGER.md`, and write the roadmap step-5
-done mark in `docs/ROADMAP.md` (the PR that completes a roadmap step carries the
-mark). Time it once review loops converge; never a separate cleanup PR.
+lifecycle step 4) and delete `plan.md` and `LEDGER.md`. Do NOT write a roadmap
+done mark here: the earlier wording of this step named a "step-5 done mark" in
+`docs/ROADMAP.md`, but `docs/ROADMAP.md` defines Steps 1-4 only — lane 2
+("roadmap step 5" in plan prose) has no roadmap heading yet and spans four PRs,
+of which this is one. The done mark belongs to whichever PR completes the last
+lane-2 PR. Time the cleanup commit once review loops converge; never a separate
+cleanup PR.
 
 ## Risks
 

@@ -81,6 +81,22 @@ export function warnOnce(message: string): void {
   console.warn(message);
 }
 
+/**
+ * Formats an invalid config value for a warning message without throwing.
+ * A raw `JSON.stringify` throws on `bigint` (e.g. `systemOne.typing: 1n`)
+ * and on circular references — config arriving from an unvalidated host
+ * store can hold either, and a config warning must never become an
+ * exception. Falls back to a type-named placeholder.
+ */
+export function formatConfigValue(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    return json ?? String(value);
+  } catch {
+    return `[unserializable: ${typeof value}]`;
+  }
+}
+
 const isTypingMode = (v: unknown): v is 'auto' | 'llm' => v === 'auto' || v === 'llm';
 const isConfidenceFloor = (v: unknown): v is number =>
   typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -102,13 +118,13 @@ export function resolveSystemOneTyping(
   const legacyValid = isTypingMode(legacy);
   if (systemOne?.typing !== undefined && !systemOneValid) {
     warnOnce(
-      `[core-llm-wiki] systemOne: \`systemOne.typing\` is ${JSON.stringify(systemOne.typing)}, which is not `
+      `[core-llm-wiki] systemOne: \`systemOne.typing\` is ${formatConfigValue(systemOne.typing)}, which is not `
       + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
     );
   }
   if (legacy !== undefined && !legacyValid) {
     warnOnce(
-      `[core-llm-wiki] systemOne: \`ontology.backfillClassifier\` is ${JSON.stringify(legacy)}, which is not `
+      `[core-llm-wiki] systemOne: \`ontology.backfillClassifier\` is ${formatConfigValue(legacy)}, which is not `
       + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
     );
   }
@@ -140,13 +156,13 @@ export function resolveTypingMinConfidence(config: WikiConfig | undefined): numb
   const legacyValid = isConfidenceFloor(legacyFloor);
   if (systemOneFloor !== undefined && !systemOneValid) {
     warnOnce(
-      `[core-llm-wiki] systemOne: \`systemOne.minConfidence.typing\` is ${JSON.stringify(systemOneFloor)}, which `
+      `[core-llm-wiki] systemOne: \`systemOne.minConfidence.typing\` is ${formatConfigValue(systemOneFloor)}, which `
       + 'is not a finite number in [0, 1]. The key is treated as unset and the chain continues.',
     );
   }
   if (legacyFloor !== undefined && !legacyValid) {
     warnOnce(
-      `[core-llm-wiki] systemOne: \`ontology.classifyMinConfidence\` is ${JSON.stringify(legacyFloor)}, which `
+      `[core-llm-wiki] systemOne: \`ontology.classifyMinConfidence\` is ${formatConfigValue(legacyFloor)}, which `
       + 'is not a finite number in [0, 1]. The key is treated as unset and the chain continues.',
     );
   }

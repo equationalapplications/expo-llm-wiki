@@ -248,6 +248,15 @@ export class MaintenanceScheduler {
         }
 
         if (st.ontology) {
+          // The between-units deadline check at the top of the entity
+          // iteration ran BEFORE librarian/heal/reembed; an awaited unit can
+          // lapse the deadline, and the ontology pass must not start against
+          // an expired one. Spec §10 precedence: stop with 'deadline'; the
+          // caller retries as-is (nothing was spent here).
+          if (Date.now() >= deadline) {
+            stopped = { reason: 'deadline' };
+            break rounds;
+          }
           st.ontology = false;
           if (this.jobManager.isBlocked('ontologyBackfill', entityId)) {
             // Same handling as a busy librarian/heal: a held pass is a real
@@ -273,7 +282,11 @@ export class MaintenanceScheduler {
           progressed = true;
           if (r.budgetStop) {
             if (classify('ontologyBackfill', entityId, r.budgetStop.requiredEstimate) === 'exhausted') {
-              stopped = { reason: 'budget_exhausted' };
+              // Route through exhaustedStop() like the librarian/heal
+              // branches: budget exhaustion is only reported when the budget
+              // actually ran out — a deadline that lapsed inside the awaited
+              // pass outranks it (spec §10 precedence).
+              stopped = exhaustedStop();
               break rounds;
             }
             continue;

@@ -129,7 +129,10 @@ Add `systemOne.onLowConfidence?: 'leave' | 'llm'`, default `'leave'`
   possibility of edges) or omits it. This is a cost and quality setting, not
   a safety mechanism. It cannot catch a confidently wrong classifier.
   Document it that way. It is a no-op when typing resolves to `'llm'`;
-  document the no-op and emit no warning.
+  document the no-op and emit no warning. An invalid `systemOne.onLowConfidence`
+  value (anything but `'leave'` or `'llm'`) warns once per process, names the
+  key, and is treated as unset: the default `'leave'` applies (same
+  treated-as-unset contract as the `§2` keys).
 
 Escalation control flow (both low-confidence facts under `'llm'` routing and
 abstains under §5): `_runClassifierBackfill` returns the escalated facts
@@ -152,7 +155,11 @@ Add an engine-owned sentinel option. The sentinel string is exactly
   that the classifier must pick `'none_of_these'` when no listed type fits.
 - The option cap at `MaintenanceService.ts:2089` stays `255` total: at most
   254 manifest slugs plus the sentinel. Passes with 255 manifest slugs fall
-  back to the generative path, as today (`MaintenanceService.ts:2089-2091`).
+  back to the generative path: appending the sentinel pushes the option
+  count to 256, over the 255 cap. This moves the fallback boundary by one
+  relative to the pre-PR baseline, which ran the classifier with up to 255
+  slugs (`slugs.length <= 255`) — a deliberate compatibility delta recorded
+  in §9 (delta 4), not "as today".
   Name the cap as a constant (`CLASSIFIER_MAX_CHOICES`) at the fallback
   site; the literal has no constant or comment today.
 - The engine catches the sentinel BEFORE the confidence comparison, inside
@@ -228,7 +235,7 @@ With no `systemOne` key set and no call option, every path still uses
 today's resolution chain and defaults: typing resolves `'llm'` unless
 `ontology.backfillClassifier` says otherwise, the floor is
 `classifyMinConfidence` or `0.5`, and low-confidence facts stay untyped.
-Three deliberate changes remain even with no new keys; §9 lists all of
+Four deliberate changes remain even with no new keys; §9 lists all of
 them:
 
 1. The classifier question appends the `'none_of_these'` sentinel whenever
@@ -240,6 +247,11 @@ them:
 3. `'typing'` joins the default `runPendingMaintenance` job set (§8), so a
    host that calls it with no `jobs` now spends `generateText` tokens on
    typing.
+4. The classifier fallback boundary moves by one at the option cap (§5): a
+   pass over 255 manifest slugs — the sentinel appended, 256 options over
+   `CLASSIFIER_MAX_CHOICES` (255) — falls back to the generative path,
+   where the pre-PR baseline ran the classifier with 255 slugs. This is the
+   only change to a legacy-`'auto'` path with no new keys.
 
 Capability alone still never switches paths (REQ-COMPAT-01.5,
 `types.ts:765`).
@@ -330,9 +342,10 @@ Unit tests (vitest, beside the existing backfill tests):
     and in the stop reason, respects `deadlineMs` and `tokenBudget`, and
     `write()` never triggers it. Loop exits when the pass types nothing.
 13. Compatibility: with no new keys, behavior matches the pre-PR baseline
-    for resolution, defaults, and cooldowns; the only deltas are the
-    sentinel in the classifier question, the new receipts, and `'typing'`
-    in the default job set — assert all three.
+    for resolution, defaults, and cooldowns; the deltas are the sentinel in
+    the classifier question, the new receipts, `'typing'` in the default
+    job set, and the 255-slug fallback boundary move (§9 deltas 1-4) —
+    assert all four.
 
 ## Out of scope / rejected alternatives
 

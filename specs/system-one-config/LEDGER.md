@@ -1,13 +1,18 @@
 # LEDGER — S1-0 System-One config surface (PR #442)
 
-Status: plan authored and T3-reviewed (one Opus rung, 2026-11-21, verdict
-REQUEST CHANGES, all findings folded). Implementation NOT started — gated on
-Kurt's plan approval.
+Status: implementation LANDED on PR #442 (T1-T8 through the T8 compatibility
+commit; review-adjudication fixes followed). Plan authored and T3-reviewed (one
+Opus rung, 2026-11-21, verdict REQUEST CHANGES, all findings folded). Spec
+Status stays APPROVED until the cleanup commit (ship-time lifecycle step, plan
+Final step) — the flip is scheduled, not missing.
 
 ## What's in flight
 
-Nothing. Awaiting controller review of the converged plan; coding is the next
-phase.
+CodeRabbit review adjudication (round 2, current head): real findings fixed
+test-first (safe warning formatter, escalation live-mode check, scheduler
+deadline re-checks, spec §4/§5/§9 delta-4 documentation), stale ledger text
+corrected here. Full core suite green locally before push. Task boxes below are
+ticked only where the landed tree carries the verifying tests, per house rule.
 
 ## Tasks
 
@@ -23,6 +28,11 @@ phase.
 
 ## Pre-flight log
 
-- C1/C3 (PR #441 state): not yet run — run before T5 and T6 dispatch.
-- C4 controller confirmation (#441 plan adopts write-path framing): pending.
-- C3 controller confirmation (one PR carries scheduler machinery): pending.
+- C1/C3 (PR #441 state): resolved by ruling, not by a run — the controller
+  decree (plan.md, Controller decree section, decree 1) makes S1-0 own the
+  scheduler machinery unconditionally; #441 executes its flip clause.
+- C4 controller confirmation (#441 plan adopts write-path framing): ruled —
+  reserved-slug enforcement is write-path-only (decree C4), implemented and
+  tested (spec §5, sentinel-rejection tests).
+- C3 controller confirmation (one PR carries scheduler machinery): ruled as
+  above (decree 1).

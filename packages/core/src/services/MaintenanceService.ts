@@ -11,7 +11,7 @@ import { HISTORY_MAX_DEPTH } from './TemporalService';
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
-import { resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
@@ -2153,6 +2153,20 @@ export class MaintenanceService {
         // un-stamped escalated facts through the generative step of the same
         // pass. A no-op when typing resolved 'llm' (nothing escalates).
         if (classifierRun.escalated.length > 0 && this.resolveSystemOneOnLowConfidence() === 'llm') {
+          // Ontology can be disabled while the classifier step was in flight
+          // (same mid-flight contract as the batch apply's txMode abort). The
+          // live mode is re-checked HERE because when every outcome escalates
+          // `attempted` is empty and the batch apply — which carries its own
+          // check — never runs; without this the escalation would make a
+          // generative LLM call in a disabled mode and stamp cooldowns on
+          // facts that must stay eligible. Off-mode result shape matches the
+          // mode==='off' early return: counters zeroed, remaining 0 so a host
+          // convergence loop terminates.
+          const { mode: liveMode } = await ontologyService.getEffectiveState(entityId);
+          if (liveMode === 'off') {
+            const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+            return { ...zeroed, remaining: 0, deferred: counts.deferred };
+          }
           const escalated = classifierRun.escalated;
           const generative = await this._runGenerativeBackfill(entityId, escalated, {
             promptOverride: options?.promptOverride,
@@ -2199,7 +2213,7 @@ export class MaintenanceService {
     const raw = this.options.config?.systemOne?.onLowConfidence;
     if (raw !== undefined && raw !== 'leave' && raw !== 'llm') {
       warnOnce(
-        `[core-llm-wiki] systemOne: \`systemOne.onLowConfidence\` is ${JSON.stringify(raw)}, which is not `
+        `[core-llm-wiki] systemOne: \`systemOne.onLowConfidence\` is ${formatConfigValue(raw)}, which is not `
         + "'leave' or 'llm'. The key is treated as unset; the default ('leave') applies.",
       );
       return 'leave';

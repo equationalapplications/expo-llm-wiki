@@ -142,6 +142,72 @@ describe('runPendingMaintenance', () => {
     expect(generateText).toHaveBeenCalledTimes(1);
   });
 
+  it('deadline is re-checked before the ontology pass starts in the same entity iteration', async () => {
+    // The between-units deadline check runs once per entity per round, BEFORE
+    // the librarian branch. Librarian → (heal) → reembed → ontology run in one
+    // iteration without re-checking, so a librarian unit that lapses the
+    // deadline would previously start an ontology pass against an expired
+    // deadline. Spec §10 precedence: stop with 'deadline', retry as-is.
+    const generateText = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      return noFacts;
+    });
+    const { wiki, db } = await mk({ generateText });
+    await wiki.write('a', { event_type: 'observation', summary: 'hello' });
+    await wiki.setOntologyManifest('a', {
+      node_types: [{ type: 'person', description: 'a human' }],
+      edge_types: [],
+    }, { mode: 'strict' });
+    // Untyped entries well past the 7-day recheck cutoff → typing pending.
+    for (const id of ['fact_a', 'fact_b']) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count, deleted_at, okf_type, ontology_checked_at)
+         VALUES (?, 'a', ?, 'body', '[]', 'certain', 'user_stated', 1000, 1000, 0, NULL, NULL, NULL)`,
+        [id, `title ${id}`],
+      );
+    }
+    const ms = (wiki.__testAccess as any).maintenanceService;
+    const backfillCalls = vi.fn();
+    const origBackfill = ms.doRunOntologyBackfill.bind(ms);
+    vi.spyOn(ms, 'doRunOntologyBackfill').mockImplementation(async (...args: unknown[]) => {
+      backfillCalls();
+      return origBackfill(...args);
+    });
+    const r = await wiki.runPendingMaintenance({ deadlineMs: 10 });
+    expect(r.stoppedReason).toEqual({ reason: 'deadline' });
+    expect(backfillCalls).not.toHaveBeenCalled();
+  });
+
+  it('ontology budgetStop re-checks the deadline: deadline outranks budget_exhausted', async () => {
+    // The ontology budgetStop branch set `{ reason: 'budget_exhausted' }`
+    // directly, unlike the librarian/heal branches which route through
+    // `exhaustedStop()`. A pass whose awaited LLM calls lapse the deadline
+    // must report 'deadline' (caller retries as-is), per spec §10.
+    const { wiki, db } = await mk();
+    await wiki.setOntologyManifest('a', {
+      node_types: [{ type: 'person', description: 'a human' }],
+      edge_types: [],
+    }, { mode: 'strict' });
+    for (const id of ['fact_a', 'fact_b']) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count, deleted_at, okf_type, ontology_checked_at)
+         VALUES (?, 'a', ?, 'body', '[]', 'certain', 'user_stated', 1000, 1000, 0, NULL, NULL, NULL)`,
+        [id, `title ${id}`],
+      );
+    }
+    const ms = (wiki.__testAccess as any).maintenanceService;
+    vi.spyOn(ms, 'doRunOntologyBackfill').mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+      return {
+        scanned: 2, typed: 0, failedValidation: 0, edgesAdded: 0,
+        abstained: 0, skipped: 0, remaining: 3, deferred: 0,
+        budgetStop: { requiredEstimate: 50 },
+      } as any;
+    });
+    const r = await wiki.runPendingMaintenance({ jobs: ['ontologyBackfill'], tokenBudget: 100, deadlineMs: 10 });
+    expect(r.stoppedReason).toEqual({ reason: 'deadline' });
+  });
+
   it('a throw mid-batch leaves the watermark unchanged and propagates', async () => {
     const generateText = vi.fn(async () => { throw new Error('provider down'); });
     const { wiki } = await mk({ generateText });
