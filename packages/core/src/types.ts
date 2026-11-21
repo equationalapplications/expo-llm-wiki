@@ -58,6 +58,9 @@ export interface PromptOverrides {
 
 export type OntologyMode = 'strict' | 'emergent' | 'off';
 
+export type { SystemOneConfig, SystemOneThresholdSite } from './config/systemOne';
+import type { SystemOneConfig } from './config/systemOne';
+
 export interface OntologyNodeType {
   type: string;
   description: string;
@@ -131,7 +134,7 @@ export interface OntologyPromptContext {
 }
 
 /** Result of a single ontology backfill run. Omissions (facts the model declined
- * to classify) are derivable as scanned − typed − failedValidation. */
+ * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {
   /** Untyped facts sent to the model this run. */
   scanned: number;
@@ -139,6 +142,12 @@ export interface OntologyBackfillResult {
   typed: number;
   /** Model classifications rejected (unknown/duplicate id, non-manifest type). */
   failedValidation: number;
+  /** Untyped facts the typing model declined to classify — classifier abstains under
+   * `onLowConfidence: 'leave'`, and generative omissions (facts the model sent no
+   * classification for, including the `changes === 0` race). `scanned − typed −
+   * failedValidation` no longer pins this down once escalation routes facts
+   * between steps (specs/system-one-config §4-§5). */
+  abstained: number;
   /** Edges persisted. */
   edgesAdded: number;
   /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0.
@@ -368,6 +377,13 @@ export interface WikiConfig {
    */
   enableOutbox?: boolean;
   ontology?: OntologyConfig;
+  /**
+   * System-One config surface (specs/system-one-config §1): typing mode,
+   * per-site confidence floor, and low-confidence routing. Resolution chains
+   * live in `utils/engineDefaults.ts` (`resolveSystemOneTyping`,
+   * `resolveTypingMinConfidence`).
+   */
+  systemOne?: SystemOneConfig;
   /** Default node cap for traverseGraph(), unless overridden per-call. Default 20. */
   maxTraversalNodes?: number;
   /**
@@ -890,6 +906,8 @@ export type WikiDiagnosticCode =
   | 'grounding_failed'
   | 'classification_low_confidence'
   | 'classification_invalid'
+  | 'classification_abstained'
+  | 'node_type_assigned'
   | 'context_overflow_skipped'
   | 'llm_usage'
   | 'librarian_gate'
@@ -946,6 +964,10 @@ export interface WikiDiagnosticDetail {
   itemIndex?: number;
   /** Machine-readable sub-reason, e.g. `'target_not_found'`. */
   reason?: string;
+  /** `node_type_assigned` only: the manifest slug applied to the fact. */
+  okfType?: string;
+  /** Typing receipts only: which path produced the outcome. */
+  writer?: 'classifier' | 'llm';
   /** Aggregated `ingest_chunk_failed` only; the first 20 failed chunk indexes. */
   chunkIndexes?: number[];
   /** Aggregated emissions only. */
