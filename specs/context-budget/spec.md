@@ -1,6 +1,6 @@
 # Spec — PR 7a: Context-Budget Resolver
 
-Status: draft (spec stage). Lane 2, wave 1, unconditional.
+Status: APPROVED (owner ruling 2026-11-21; all open questions cleared — see Open questions for the owner). Lane 2, wave 1, unconditional.
 Base: origin/main @ `e43095c8` (the only commits after `9790dbbf` are dependency-only; every pin below re-verified live against `e43095c8`). Repo: expo-llm-wiki. Product rule: hosts bring their own models. Core stays unopinionated about providers.
 
 ## Problem
@@ -75,5 +75,8 @@ Rejected alternatives:
 ## Open questions for the owner
 
 1. Under `context.budget: 'declared'`, what are the default `charsPerToken`, `safetyFraction`, and `outputReserveTokens` values? The consult leaves this to the spec; the owner rules the numbers.
+   → **Ruled by owner, 2026-11-21:** `charsPerToken: 4`, `safetyFraction: 0.9`, `outputReserveTokens: 4000`. These are provisional — the receipts make misjudgment visible and correctable. Per-operation floors sit at today's hardcoded caps as one-batch minimums.
 2. Does the declared-mode formula scale the ingest chunk default too, or does the chunk default stay at 12000 in both modes? Ingest chunks feed embeddings as well as generation, so the ruling is not obvious.
+   → **Ruled by owner, 2026-11-21:** the chunk default stays 12000 in both modes. Chunks feed embeddings, not just generation; decoupling them from the generative prompt budget is the conservative read.
 3. Which declared input does the resolver read in this PR: a new `context.contextWindowTokens` config field now, or nothing until the provider-declared-window PR lands (leaving `'declared'` unreachable)? Ruling needed, because it decides whether `'declared'` ships reachable in 7a. Either way the Proposed change 4 throw rule stands: an unreachable `'declared'` setting throws, it never silently falls back to `'legacy'`.
+   → **Ruled by owner, 2026-11-21:** `context.contextWindowTokens` ships in this PR and `'declared'` is reachable. The throw-on-missing rule stands unchanged.
