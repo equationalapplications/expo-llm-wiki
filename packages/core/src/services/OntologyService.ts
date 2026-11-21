@@ -17,6 +17,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
+  resolveNodeTypeMatch,
   resolveEdgeDefinitions,
   typeSatisfies,
   validateInlineEdges,
@@ -94,21 +95,26 @@ export class OntologyService {
     entityId: string,
     updates: OntologyUpdates,
     tx: SQLiteAdapter,
-  ): Promise<OntologyManifest> {
-    const merged = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
+  ): Promise<{ manifest: OntologyManifest; rejected: string[] }> {
+    const { manifest: merged, rejected } = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
     this.invalidateCache(entityId);
-    return merged;
+    return { manifest: merged, rejected };
   }
 
   validateAndNormalizeFact(
     fact: ExtractedFactWithOntology,
     manifest: OntologyManifest,
     opts?: { strict?: boolean; entityId?: string; drops?: EdgeDrop[] },
-  ): { okf_type: string | null; edges: ExtractedFactEdge[] } {
+  ): {
+    okf_type: string | null;
+    edges: ExtractedFactEdge[];
+    /** Resolution evidence. Absent on a miss. Callers must not re-run resolution. */
+    match?: { raw: string; canonical: string; via: 'exact' | 'normalize' };
+  } {
     const rawType = typeof fact.okf_type === 'string' ? fact.okf_type : '';
     const strict = opts?.strict === true;
-    const canonical = resolveNodeType(rawType, manifest);
-    if (!canonical) {
+    const match = resolveNodeTypeMatch(rawType, manifest);
+    if (!match) {
       if (strict) throw new WikiStrictOntologyViolation(opts?.entityId ?? '', 'node', rawType);
       if (opts?.drops && Array.isArray(fact.edges)) {
         for (const edge of fact.edges) {
@@ -123,8 +129,13 @@ export class OntologyService {
       }
       return { okf_type: null, edges: [] };
     }
+    const canonical = match.slug;
     const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
-    return { okf_type: canonical, edges };
+    return {
+      okf_type: canonical,
+      edges,
+      match: { raw: rawType, canonical, via: match.via },
+    };
   }
 
   /**

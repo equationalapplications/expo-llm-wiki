@@ -188,7 +188,7 @@ describe('OntologyService', () => {
         },
         edgeManifest,
       );
-      expect(result).toEqual({ okf_type: 'Person', edges: [] });
+      expect(result).toEqual({ okf_type: 'Person', edges: [], match: { raw: 'person', canonical: 'Person', via: 'exact' } });
     });
 
     it('throws WikiStrictOntologyViolation on unknown node type when strict: true', () => {
@@ -502,6 +502,70 @@ describe('OntologyService', () => {
         [{ edge_type: 'assigns', target_title: 'Jane Doe' }], manifest,
         new Map([['jane doe', { id: 'p1', okf_type: 'person' }]]), 1000);
       expect(edges).toEqual([]);
+    });
+  });
+
+  describe('validateAndNormalizeFact match evidence (ontology-curation Task 2)', () => {
+    const sepManifest: OntologyManifest = {
+      node_types: [{ type: 'foo_bar', description: 'a' }],
+      edge_types: [],
+    };
+
+    it('exact hit carries via exact with raw + canonical', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const result = svc.validateAndNormalizeFact(
+        { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'Person' },
+        manifest,
+      );
+      expect(result.match).toEqual({ raw: 'Person', canonical: 'person', via: 'exact' });
+    });
+
+    it('normalized hit carries via normalize with raw + canonical', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const result = svc.validateAndNormalizeFact(
+        { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'foo-bar' },
+        sepManifest,
+      );
+      expect(result.okf_type).toBe('foo_bar');
+      expect(result.match).toEqual({ raw: 'foo-bar', canonical: 'foo_bar', via: 'normalize' });
+    });
+
+    it('miss has no match and null okf_type', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const result = svc.validateAndNormalizeFact(
+        { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'nope' },
+        manifest,
+      );
+      expect(result).toEqual({ okf_type: null, edges: [] });
+      expect(result.match).toBeUndefined();
+    });
+
+    it('strict miss still throws WikiStrictOntologyViolation', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      expect(() =>
+        svc.validateAndNormalizeFact(
+          { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'nope' },
+          manifest,
+          { strict: true, entityId: 'e' },
+        ),
+      ).toThrow(WikiStrictOntologyViolation);
+    });
+
+    it('edge-drop accumulation unchanged on a miss', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const drops: EdgeDrop[] = [];
+      svc.validateAndNormalizeFact(
+        { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'nope', edges: [{ edge_type: 'relates_to', target_title: 'X' }] },
+        manifest,
+        { drops },
+      );
+      expect(drops).toHaveLength(1);
+      expect(drops[0].reason).toBe('no_source_type');
     });
   });
 });

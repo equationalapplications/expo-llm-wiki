@@ -1,7 +1,7 @@
 import type { WikiLintReport } from '../types';
 import type { LintRepository } from '../repositories/LintRepository';
 import type { OntologyService } from './OntologyService';
-import { edgeTripleAllowed } from '../utils/ontology';
+import { edgeTripleAllowed, resolveNodeType } from '../utils/ontology';
 
 const LINT_SAMPLE_SIZE = 20;
 const LINT_PAGE_SIZE = 500;
@@ -41,11 +41,35 @@ export class LintService {
       }
     }
 
+    // Node-type violations (ontology-curation Task 11): a live fact whose
+    // stored okf_type no longer resolves against the effective manifest.
+    // Uses the same normalized resolver as the doors, so a stored slug that
+    // folds into a manifest entry is not a violation. 0 when ontology is off
+    // or the manifest declares no node_types.
+    let nodeTypeViolations = 0;
+    const nodeTypeViolationIds: string[] = [];
+    const nodesConstrained = mode !== 'off' && (manifest.node_types?.length ?? 0) > 0;
+    if (nodesConstrained) {
+      let after = '';
+      for (;;) {
+        const page = await this.lintRepo.pageLiveTypedFacts(entityId, after, LINT_PAGE_SIZE);
+        for (const f of page) {
+          if (resolveNodeType(f.okf_type, manifest) === null) {
+            nodeTypeViolations++;
+            if (nodeTypeViolationIds.length < LINT_SAMPLE_SIZE) nodeTypeViolationIds.push(f.id);
+          }
+        }
+        if (page.length < LINT_PAGE_SIZE) break;
+        after = page[page.length - 1].id;
+      }
+    }
+
     return {
       danglingEdges,
       manifestViolations,
+      nodeTypeViolations,
       ...health,
-      sample: { danglingEdgeIds, manifestViolationEdgeIds },
+      sample: { danglingEdgeIds, manifestViolationEdgeIds, nodeTypeViolationIds },
     };
   }
 }

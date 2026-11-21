@@ -14,20 +14,61 @@ export function normalizeTitleKey(title: string): string {
   return title.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-export function resolveNodeType(raw: string, manifest: OntologyManifest): string | null {
-  const slug = raw.trim();
+/**
+ * Canonical slug form for normalized (second-chance) matching: lowercase;
+ * `_`, `-`, and whitespace separators are removed entirely, so `per_son`,
+ * `per-son`, and `per son` all fold into `person` and `relates_to` folds
+ * into `relates-to`. Used by both resolvers so a model's spelling maps to
+ * the manifest's spelling without changing what a person stored.
+ */
+function normalizeSlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[_\-\s]+/g, '');
+}
+
+export type NodeTypeMatch = { slug: string; via: 'exact' | 'normalize' };
+
+/**
+ * Resolution evidence for the node-type resolver: which canonical slug was
+ * chosen and whether the raw spelling hit exactly (case-insensitive) or
+ * through the unique-normalized fallback. Returns null on a miss.
+ */
+export function resolveNodeTypeMatch(raw: string, manifest: OntologyManifest): NodeTypeMatch | null {
+  const slug = typeof raw === 'string' ? raw.trim() : '';
   if (!slug) return null;
-  const hit = manifest.node_types.find(n => n.type.toLowerCase() === slug.toLowerCase());
-  return hit?.type ?? null;
+  const lowered = slug.toLowerCase();
+  const exact = manifest.node_types.find(n => n.type.toLowerCase() === lowered);
+  if (exact) return { slug: exact.type, via: 'exact' };
+  // Unique-normalized fallback: exactly one manifest entry may match the
+  // canonical form; ambiguity resolves to nothing (never an error, never a
+  // guess between two candidates).
+  const normalized = normalizeSlug(slug);
+  if (!normalized) return null;
+  const candidates = manifest.node_types.filter(n => normalizeSlug(n.type) === normalized);
+  return candidates.length === 1 ? { slug: candidates[0].type, via: 'normalize' } : null;
+}
+
+export function resolveNodeType(raw: string, manifest: OntologyManifest): string | null {
+  return resolveNodeTypeMatch(raw, manifest)?.slug ?? null;
 }
 
 export function resolveEdgeDefinitions(
   rawEdgeType: string,
   manifest: OntologyManifest,
 ): OntologyManifest['edge_types'][number][] {
-  const slug = rawEdgeType.trim();
+  const slug = typeof rawEdgeType === 'string' ? rawEdgeType.trim() : '';
   if (!slug) return [];
-  return manifest.edge_types.filter(e => e.type.toLowerCase() === slug.toLowerCase());
+  const lowered = slug.toLowerCase();
+  const exact = manifest.edge_types.filter(e => e.type.toLowerCase() === lowered);
+  if (exact.length > 0) return exact;
+  // Unique-normalized fallback, keyed on the edge NAME: all triples of the
+  // one uniquely-matching name are returned, mirroring the exact path.
+  const normalized = normalizeSlug(slug);
+  if (!normalized) return [];
+  const names = new Set(
+    manifest.edge_types.filter(e => normalizeSlug(e.type) === normalized).map(e => e.type.toLowerCase()),
+  );
+  if (names.size !== 1) return [];
+  return manifest.edge_types.filter(e => e.type.toLowerCase() === [...names][0]);
 }
 
 function edgeTripleKey(type: string, sourceType: string, targetType: string): string {
@@ -172,12 +213,19 @@ export function buildDeclaresParentIndex(
   return declaresParent;
 }
 
+/**
+ * Merge an emergent-proposal batch into a manifest. Untrusted input (D6):
+ * malformed proposals are dropped, never thrown. Returns the merged manifest
+ * alongside one machine reason per dropped proposal, so callers can emit
+ * `ontology_update_rejected` receipts without re-running the merge.
+ */
 export function mergeOntologyUpdates(
   current: OntologyManifest,
   updates: OntologyUpdates,
-): OntologyManifest {
+): { manifest: OntologyManifest; rejected: string[] } {
   const node_types = [...current.node_types];
   const edge_types = [...current.edge_types];
+  const rejected: string[] = [];
   const nodeSlugs = new Set(node_types.map(n => n.type.trim().toLowerCase()));
   const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
   const edgeNames = new Map(edge_types.map(e => [e.type.trim().toLowerCase(), e.type.trim()]));
@@ -193,9 +241,15 @@ export function mergeOntologyUpdates(
 
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
-    if (!type) continue;
+    if (!type) {
+      rejected.push('invalid_shape');
+      continue;
+    }
     const key = type.toLowerCase();
-    if (nodeSlugs.has(key)) continue;
+    if (nodeSlugs.has(key)) {
+      rejected.push('duplicate_node_type');
+      continue;
+    }
     // Drop a non-string, blank, unresolvable, self-referential, or two-deep
     // parent rather than letting it throw inside the caller's transaction (D6).
     // `declaresParent.get(...) === false` is the whole gate: `undefined` means
@@ -216,13 +270,22 @@ export function mergeOntologyUpdates(
     const rawEdgeType = edge?.type?.trim();
     const sourceType = edge?.source_type?.trim();
     const targetType = edge?.target_type?.trim();
-    if (!rawEdgeType || !sourceType || !targetType) continue;
+    if (!rawEdgeType || !sourceType || !targetType) {
+      rejected.push('invalid_shape');
+      continue;
+    }
     // First-seen casing wins for a given edge name, as with node types, so a
     // later triple spelled differently cannot make the manifest fail validation.
     const edgeType = edgeNames.get(rawEdgeType.toLowerCase()) ?? rawEdgeType;
     const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
-    if (edgeKeys.has(edgeKey)) continue;
-    if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) continue;
+    if (edgeKeys.has(edgeKey)) {
+      rejected.push('duplicate_edge');
+      continue;
+    }
+    if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) {
+      rejected.push('unknown_endpoint');
+      continue;
+    }
     edgeNames.set(edgeType.toLowerCase(), edgeType);
     edge_types.push({
       type: edgeType,
@@ -232,7 +295,7 @@ export function mergeOntologyUpdates(
     });
     edgeKeys.add(edgeKey);
   }
-  return { node_types, edge_types };
+  return { manifest: { node_types, edge_types }, rejected };
 }
 
 export type EdgeDropReason =

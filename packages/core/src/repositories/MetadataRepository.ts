@@ -313,13 +313,13 @@ export class MetadataRepository extends BaseRepository {
     entityId: string,
     updates: OntologyUpdates,
     tx: SQLiteAdapter,
-  ): Promise<OntologyManifest> {
+  ): Promise<{ manifest: OntologyManifest; rejected: string[] }> {
     const current = (await this.getManifest(entityId, tx)) ?? {
       mode: 'emergent' as OntologyMode,
       manifest: emptyManifest(),
     };
-    const merged = mergeOntologyUpdates(current.manifest, updates);
+    const { manifest: merged, rejected } = mergeOntologyUpdates(current.manifest, updates);
     await this.setManifest(entityId, { mode: current.mode, manifest: merged }, tx);
-    return merged;
+    return { manifest: merged, rejected };
   }
 }

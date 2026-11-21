@@ -1,6 +1,6 @@
 import { chunkText, withConcurrency, validateFact, factRejectionReason, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
-import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
-import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import { normalizeTitleKey, typeSatisfies, resolveEdgeDefinitions } from '../utils/ontology';
+import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts } from '../utils/diagnostics';
 import type { WikiDiagnosticInput } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { generateId } from '../utils/ids';
@@ -398,6 +398,15 @@ export class IngestionService {
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
+          // Zero-fact re-ingest receipt (spec §5): a full re-ingest that
+          // tombstoned prior facts/edges and then wrote nothing. Emitted
+          // only when the ontology is active; the buffer flushes post-commit.
+          if (ontologyContext !== null && insertedFacts.length === 0 && deletedSourceFactIds.length > 0) {
+            diagBuffer.push({
+              entityId, operation: 'ingest', trigger: 'call', code: 'ingest_zero_facts',
+              detail: { sourceRef, chunks: chunks.length },
+            });
+          }
         } else {
           // Partial path — append dedup-only, NO supersession, NO ownership update.
           // See spec §4.2. `insertedFacts` carries the per-fact descriptors
@@ -647,6 +656,23 @@ export class IngestionService {
         strict: strictEffective,
         entityId,
       }) ?? { okf_type: null, edges: [] };
+      // Door receipts (spec §4): person/host door. In strict mode the caller
+      // never gets here on a miss (the resolver threw), so these are the
+      // non-strict non-off cases only.
+      if (shouldEmitOntologyReceipt(mode)) {
+        for (const receipt of nodeTypeReceipts(
+          { entityId, operation: opts?.diag?.operation ?? 'upsertGraph', trigger: 'call' },
+          node.id,
+          node.type ?? '',
+          normalized.okf_type,
+          normalized.match,
+        )) {
+          opts?.diag?.buffer.push({
+            ...receipt,
+            detail: { ...receipt.detail, sourceRef: params.sourceRef },
+          });
+        }
+      }
       const wikiFact: WikiFact = {
         id: node.id,
         entity_id: entityId,
@@ -716,9 +742,8 @@ export class IngestionService {
         continue;
       }
       const sourceType = sourceIdToType.get(edge.sourceId);
-      const candidates = (manifest.edge_types ?? []).filter(d =>
-        d.type.toLowerCase() === edge.type.toLowerCase()
-        && typeSatisfies(d.source_type, sourceType ?? '', manifest),
+      const candidates = resolveEdgeDefinitions(edge.type, manifest).filter(d =>
+        typeSatisfies(d.source_type, sourceType ?? '', manifest),
       );
       const match = candidates[0];
       if (!match) {
@@ -852,9 +877,22 @@ export class IngestionService {
 
     for (const { facts, ontology_updates } of orderedChunkFacts) {
       if (mode === 'emergent' && ontology_updates && this.ontologyService) {
-        manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+        const { manifest: merged, rejected } = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+        manifest = merged;
+        for (const reason of rejected) {
+          diagBuffer.push({ entityId, operation: 'ingest', trigger: 'call', code: 'ontology_update_rejected', detail: { reason } });
+        }
         ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
         mode = ontologyState.mode;
+      } else if (mode === 'strict' && ontology_updates) {
+        // ontology_updates is parsed model JSON: guard the proposal counts so a
+        // malformed `{"node_types":{"length":1e9}}` cannot buffer unbounded
+        // diagnostics inside an open transaction (CodeRabbit #441).
+        const proposalCount = (Array.isArray(ontology_updates.node_types) ? ontology_updates.node_types.length : 0)
+          + (Array.isArray(ontology_updates.edge_types) ? ontology_updates.edge_types.length : 0);
+        for (let i = 0; i < proposalCount; i++) {
+          diagBuffer.push({ entityId, operation: 'ingest', trigger: 'call', code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
+        }
       }
 
       for (const fact of facts) {
@@ -866,6 +904,9 @@ export class IngestionService {
         for (const drop of validationDrops) {
           diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef, factId: id }));
         }
+        // NOTE: door receipts fire ONLY in upsertGraphCore (:646), which is
+        // both the person door (host upsertGraph) and this model door — the
+        // pinned duality in the plan. A second emitter here would double-report.
 
         hostNodes.push({
           id,
@@ -986,6 +1027,28 @@ export class IngestionService {
       : await this.entryRepo.findByIds(liveIds, undefined, tx);
     const liveTitles = new Set(liveFacts.map((f) => normalizeTitleKey(f.title)));
 
+    // Spec §6 (Task 8): partial rows are typed and edge-resolved against the
+    // manifest AS IT STANDS — same resolvers and door receipts as the full
+    // path, but no emergent merge and no supersession. The title index is
+    // seeded below from the entity's live facts across ALL sourceRefs
+    // (partial never retires them), plus each inserted fact as it lands,
+    // so intra-response and cross-source targets resolve like the full path.
+    const ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+      ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+    const { mode, manifest } = ontologyState;
+    // Spec §6 + CodeRabbit #441: partial ingest does NOT supersede this
+    // sourceRef's rows, so — unlike the full path — the index must INCLUDE
+    // the current sourceRef and reach the entity's live facts across ALL
+    // sourceRefs, or edges targeting facts stored under another sourceRef
+    // drop as target_not_found. Same lookup the full path uses (the
+    // 500-row cap applies), without the sourceRef exclusion.
+    const titleIndex = new Map<string, TitleIndexEntry>();
+    const indexedFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+    for (const f of indexedFacts) {
+      titleIndex.set(normalizeTitleKey(f.title), { id: f.id, okf_type: f.okf_type ?? null });
+    }
+    const pendingEdges: Array<{ sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }> = [];
+
     let inserted = 0;
     let skippedDuplicate = 0;
     const now = Date.now();
@@ -1015,6 +1078,31 @@ export class IngestionService {
           detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
         });
       }
+      // Spec §6: partial-path typing — same model-door rules as the full path
+      // (strict:false, never throws). Receipts fire through the pinned
+      // upsertGraphCore duality... this path does NOT go through core, so it
+      // emits its own door receipts here, gated on the effective mode.
+      const ontologyFact = fact as ExtractedFactWithOntology;
+      const validationDrops: EdgeDrop[] = [];
+      const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
+        ?? { okf_type: null, edges: [] };
+      for (const drop of validationDrops) {
+        diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef, factId: id }));
+      }
+      if (shouldEmitOntologyReceipt(mode)) {
+        for (const receipt of nodeTypeReceipts(
+          { entityId, operation: 'ingest', trigger: 'call' },
+          id,
+          ontologyFact.okf_type ?? '',
+          normalized.okf_type,
+          normalized.match,
+        )) {
+          diagBuffer.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
+        }
+      }
+      if (normalized.edges.length > 0) {
+        pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+      }
       const wikiFact: WikiFact = {
         id,
         entity_id: entityId,
@@ -1033,10 +1121,11 @@ export class IngestionService {
         last_accessed_at: null,
         access_count: 0,
         deleted_at: null,
-        okf_type: null,
+        okf_type: normalized.okf_type,
         ...outcome?.trust,
       };
       await this.entryRepo.upsert(wikiFact, tx);
+      titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
       // Mirror the shape `runFullUpsertGraph` returns so the caller's
       // post-commit `embedFact` loop is path-agnostic.
       insertedDescriptors.push({
@@ -1047,6 +1136,23 @@ export class IngestionService {
         tags: JSON.stringify(fact.tags),
       });
       inserted++;
+    }
+    // Two-phase edge resolution over the finalized title index — same shape
+    // as the full path's pass 2. Partial rows are hash-less appends; a later
+    // full re-ingest supersedes them and their edges together (spec §6).
+    if (pendingEdges.length > 0) {
+      for (const req of pendingEdges) {
+        const resolveDrops: EdgeDrop[] = [];
+        const resolved = this.ontologyService?.resolveEdges(
+          entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now, resolveDrops,
+        ) ?? [];
+        for (const drop of resolveDrops) {
+          diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef }));
+        }
+        for (const edge of resolved) {
+          await this.edgeRepo.addIgnoreDuplicate(edge, tx);
+        }
+      }
     }
     return { inserted, skippedDuplicate, insertedDescriptors };
   }

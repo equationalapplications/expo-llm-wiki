@@ -913,7 +913,12 @@ export type WikiDiagnosticCode =
   | 'source_store_budget_exceeded'
   | 'source_store_hash_mismatch'
   | 'source_store_duplicate_hash'
-  | 'source_store_text_not_storable';
+  | 'source_store_text_not_storable'
+  | 'node_type_dropped'
+  | 'node_type_folded'
+  | 'node_type_assigned'
+  | 'ontology_update_rejected'
+  | 'ingest_zero_facts';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
@@ -970,6 +975,22 @@ export interface WikiDiagnosticDetail {
   guidanceSource?: 'per_entity' | 'default';
   /** `erase_retired_remaining` only: retired FTS table names still present after reclamation. */
   tables?: string[];
+  /** `node_type_dropped` / `node_type_folded` only: the manifest slug involved (slug only, ≤ 64 chars). */
+  nodeType?: string;
+  /** `node_type_folded` only: the slug as supplied, before normalization (≤ 64 chars). */
+  from?: string;
+  /** `node_type_folded` only: the manifest's canonical slug (≤ 64 chars). */
+  to?: string;
+  /** `node_type_folded` only: always `'normalize'`. */
+  via?: 'normalize';
+  /** `node_type_assigned` only: the manifest slug the fact was typed with (≤ 64 chars). */
+  okfType?: string;
+  /** `node_type_assigned` only: which path typed the fact. */
+  writer?: 'classifier' | 'llm' | 'inherited';
+  /** `node_type_assigned` only: classifier confidence, when the path carries one. */
+  confidence?: number;
+  /** `ingest_zero_facts` only: chunk count of the empty re-ingest. */
+  chunks?: number;
 }
 
 export interface WikiDiagnostic {
@@ -1697,12 +1718,14 @@ export interface WikiLintReport {
   manifestViolations: number;
   /** Live facts with `okf_type` NULL. */
   untypedFacts: number;
+  /** Live facts whose stored `okf_type` is not resolvable against the effective manifest (normalized resolver). 0 when ontology is off or the manifest has no node_types. */
+  nodeTypeViolations: number;
   /** Live facts with `lifecycle_status = 'draft'`. */
   drafts: number;
   /** Live `librarian_inferred` facts with an empty `okf_verified`. */
   unverifiedInferred: number;
   /** Up to 20 ids each, ascending. */
-  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[] };
+  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[]; nodeTypeViolationIds: string[] };
 }
 
 /**

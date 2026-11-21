@@ -3,6 +3,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
+  resolveNodeTypeMatch,
   validateManifest,
   mergeOntologyUpdates,
   validateInlineEdges,
@@ -83,7 +84,7 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       node_types: [{ type: 'Person', description: 'ignored duplicate' }],
     });
-    expect(merged.node_types).toHaveLength(2);
+    expect(merged.manifest.node_types).toHaveLength(2);
   });
 
   it('mergeOntologyUpdates is append-only by type slug', () => {
@@ -93,17 +94,17 @@ describe('ontology utils', () => {
         { type: 'vendor', description: 'New.' },
       ],
     });
-    expect(merged.node_types).toHaveLength(3);
-    expect(merged.node_types.find(n => n.type === 'person')?.description).toBe('An individual.');
-    expect(merged.node_types.find(n => n.type === 'vendor')).toBeDefined();
+    expect(merged.manifest.node_types).toHaveLength(3);
+    expect(merged.manifest.node_types.find(n => n.type === 'person')?.description).toBe('An individual.');
+    expect(merged.manifest.node_types.find(n => n.type === 'vendor')).toBeDefined();
   });
 
   it('mergeOntologyUpdates adds a new source/target variant of an existing edge name', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
     });
-    expect(merged.edge_types).toHaveLength(2);
-    expect(merged.edge_types[1]).toEqual({
+    expect(merged.manifest.edge_types).toHaveLength(2);
+    expect(merged.manifest.edge_types[1]).toEqual({
       type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.',
     });
   });
@@ -112,7 +113,7 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'Reports_To', source_type: 'Person', target_type: 'PERSON', description: 'dup' }],
     });
-    expect(merged.edge_types).toHaveLength(1);
+    expect(merged.manifest.edge_types).toHaveLength(1);
   });
 
   it('validateManifest accepts one property name with distinct source/target triples', () => {
@@ -143,9 +144,9 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'Reports_To', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
     });
-    expect(merged.edge_types).toHaveLength(2);
-    expect(merged.edge_types[1].type).toBe('reports_to');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.edge_types).toHaveLength(2);
+    expect(merged.manifest.edge_types[1].type).toBe('reports_to');
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates canonicalizes casing within a single batch of new edges', () => {
@@ -155,8 +156,8 @@ describe('ontology utils', () => {
         { type: 'ownedby', source_type: 'person', target_type: 'project', description: 'b' },
       ],
     });
-    expect(merged.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('emptyManifest returns empty arrays', () => {
@@ -465,8 +466,8 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates preserves parent_type when the parent already exists', () => {
@@ -477,8 +478,8 @@ describe('ontology parent inheritance', () => {
         edge_types: [],
       },
     );
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops an unresolvable parent_type instead of yielding a throwing manifest (D6)', () => {
@@ -486,9 +487,9 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'design_spec', description: 'Child.', parent_type: 'hallucinated' }],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'design_spec'))
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
       .toEqual({ type: 'design_spec', description: 'Child.' });
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops a parent_type whose target is itself a child (D1/D6)', () => {
@@ -505,8 +506,8 @@ describe('ontology parent inheritance', () => {
         edge_types: [],
       },
     );
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops a self-referential parent_type', () => {
@@ -514,7 +515,7 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'design_spec', description: 'x', parent_type: 'Design_Spec' }],
       edge_types: [],
     });
-    expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+    expect(merged.manifest.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
   });
 
   it('mergeOntologyUpdates survives a malformed proposed node with no type field', () => {
@@ -525,7 +526,7 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
+    expect(merged.manifest.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
   });
 
   it('mergeOntologyUpdates drops a blank parent_type without throwing (D6/D10)', () => {
@@ -536,8 +537,8 @@ describe('ontology parent inheritance', () => {
         node_types: [{ type: 'design_spec', description: 'x', parent_type: blank }],
         edge_types: [],
       });
-      expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
-      expect(() => validateManifest(merged)).not.toThrow();
+      expect(merged.manifest.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+      expect(() => validateManifest(merged.manifest)).not.toThrow();
     }
   });
 
@@ -559,9 +560,9 @@ describe('ontology parent inheritance', () => {
           edge_types: [],
         },
       );
-      expect(merged.node_types.find(n => n.type === 'design_spec'))
+      expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
         .toEqual({ type: 'design_spec', description: 'Child.' });
-      expect(() => validateManifest(merged)).not.toThrow();
+      expect(() => validateManifest(merged.manifest)).not.toThrow();
     },
   );
 
@@ -590,9 +591,9 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
-    expect(merged.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(merged.manifest.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
+    expect(merged.manifest.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates leaves parent_type absent for plain nodes (no key churn)', () => {
@@ -600,7 +601,89 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'person', description: 'A person.' }],
       edge_types: [],
     });
-    expect(merged.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
-    expect('parent_type' in merged.node_types[0]).toBe(false);
+    expect(merged.manifest.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
+    expect('parent_type' in merged.manifest.node_types[0]).toBe(false);
+  });
+});
+
+describe('normalized matching (ontology-curation Task 1)', () => {
+  const sepManifest: OntologyManifest = {
+    node_types: [
+      { type: 'foo_bar', description: 'underscore form.' },
+      { type: 'baz qux', description: 'space form.' },
+    ],
+    edge_types: [
+      { type: 'relates-to', source_type: 'foo_bar', target_type: 'baz qux', description: 'Edge.' },
+    ],
+  };
+
+  it('exact case-insensitive hit wins over any normalized candidate', () => {
+    // Both `foo_bar` and `foo-bar` in one manifest: exact spelling resolves
+    // exactly, never through the ambiguous normalized map.
+    const both: OntologyManifest = {
+      node_types: [
+        { type: 'foo_bar', description: 'a' },
+        { type: 'foo-bar', description: 'b' },
+      ],
+      edge_types: [],
+    };
+    expect(resolveNodeType('FOO_BAR', both)).toBe('foo_bar');
+    expect(resolveNodeType('FOO-BAR', both)).toBe('foo-bar');
+  });
+
+  it('unique normalized hit resolves', () => {
+    expect(resolveNodeType('foo-bar', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('foo bar', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('FOO  BAR', sepManifest)).toBe('foo_bar');
+    expect(resolveNodeType('baz_qux', sepManifest)).toBe('baz qux');
+    expect(resolveNodeType('baz-qux', sepManifest)).toBe('baz qux');
+    expect(resolveEdgeDefinitions('relates_to', sepManifest)[0].type).toBe('relates-to');
+    expect(resolveEdgeDefinitions('relates to', sepManifest)[0].type).toBe('relates-to');
+  });
+
+  it('ambiguous normalized query returns null / empty, never throws', () => {
+    expect(resolveNodeType('a-b', {
+      node_types: [{ type: 'a_b', description: '' }, { type: 'a b', description: '' }],
+      edge_types: [],
+    })).toBeNull();
+    expect(resolveEdgeDefinitions('about_x', polyManifest)).toHaveLength(0);
+  });
+
+  it('empty or whitespace input returns null / empty', () => {
+    expect(resolveNodeType('', sepManifest)).toBeNull();
+    expect(resolveNodeType('   ', sepManifest)).toBeNull();
+    expect(resolveEdgeDefinitions('', sepManifest)).toHaveLength(0);
+    expect(resolveEdgeDefinitions('  ', sepManifest)).toHaveLength(0);
+  });
+
+  it('miss returns null / empty', () => {
+    expect(resolveNodeType('nope', sepManifest)).toBeNull();
+    expect(resolveEdgeDefinitions('nope', sepManifest)).toHaveLength(0);
+  });
+
+  it('exact edge-name hit keeps multi-triple behavior and canonical casing', () => {
+    const defs = resolveEdgeDefinitions('ABOUT', polyManifest);
+    expect(defs).toHaveLength(4);
+    expect(defs.every(d => d.type === 'about')).toBe(true);
+  });
+
+  it('property: resolution never throws for arbitrary model-style spellings', () => {
+    const corpus = [manifest, polyManifest, sepManifest, emptyManifest()];
+    const spellings = ['', '  ', 'PERSON', 'person_', '_person', 'a_b_c', 'Reports To',
+      'REPORTS-TO', 'reports   to', 'ünicode', 'about', 'ABOUT__', 'relates_to'];
+    for (const m of corpus) {
+      for (const s of spellings) {
+        expect(() => resolveNodeType(s, m)).not.toThrow();
+        expect(() => resolveEdgeDefinitions(s, m)).not.toThrow();
+      }
+    }
+  });
+
+  it('resolveNodeTypeMatch reports via exact vs normalize', () => {
+    expect(resolveNodeTypeMatch('person', manifest)).toEqual({ slug: 'person', via: 'exact' });
+    expect(resolveNodeTypeMatch('PERSON', manifest)).toEqual({ slug: 'person', via: 'exact' });
+    expect(resolveNodeTypeMatch('foo-bar', sepManifest)).toEqual({ slug: 'foo_bar', via: 'normalize' });
+    expect(resolveNodeTypeMatch('nope', manifest)).toBeNull();
+    expect(resolveNodeTypeMatch('', manifest)).toBeNull();
   });
 });

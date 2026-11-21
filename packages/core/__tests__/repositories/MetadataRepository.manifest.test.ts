@@ -54,10 +54,10 @@ describe('MetadataRepository — entity manifests', () => {
         ],
       }, tx);
 
-      expect(merged.node_types).toHaveLength(3);
-      expect(merged.node_types.find(n => n.type === 'vendor')).toBeDefined();
-      expect(merged.edge_types).toHaveLength(2);
-      expect(merged.edge_types.find(e => e.type === 'supplies')).toBeDefined();
+      expect(merged.manifest.node_types).toHaveLength(3);
+      expect(merged.manifest.node_types.find(n => n.type === 'vendor')).toBeDefined();
+      expect(merged.manifest.edge_types).toHaveLength(2);
+      expect(merged.manifest.edge_types.find(e => e.type === 'supplies')).toBeDefined();
     });
   });
 
