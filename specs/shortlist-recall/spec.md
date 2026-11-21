@@ -1,6 +1,6 @@
 # Spec: PR 2a — Shortlist builder + `shortlist-recall` benchmark subcommand
 
-Status: Reviewed (owner ruling 2026-11-21; all open questions cleared — see Open questions for the owner)
+Status: Implemented 2026-11-21 (PR #439, landed commit `96e82271`; acceptance tests in `packages/core/__tests__/shortlist.test.ts`, `packages/benchmarks/__tests__/shortlistRecall*.test.ts`) — owner ruling 2026-11-21; all open questions cleared; k = 10 and the LEXICAL 2b scorer pick recorded in the Result note (distractor-variants real run, 2026-11-21).
 
 Lane 2, wave 1 (unconditional). Author draft, 2026-11-20. Base: `origin/main` @ `e43095c8` (the only commits after `9790dbbf` are dependency-only; every pin below re-verified live against `e43095c8`). Review history: a T1.5 self-review (2026-11-20, haiku) and one T3 Opus review (2026-11-20) converged on the pool-size defect fixed below.
 
