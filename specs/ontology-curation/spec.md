@@ -1,6 +1,6 @@
 # Spec: Ontology curation — machine typing, choke-point matching, and type-curation receipts
 
-**Status: Draft, 2026-11-20. Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
+**Status: APPROVED (owner ruling 2026-11-21; open question cleared — see Open questions for the owner). Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
 **Revisions:** 2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
 2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved; audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'typing'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
 **Base: `origin/main` @ `e43095c8`. Every pin below was re-verified live against `e43095c8`.**  
@@ -373,6 +373,9 @@ follow-up, derived from R-TRUST + OI-2, not asked for here.
 1. Confirm the extractor `okf_label` follow-up (capture the model's own
    word so extraction-time folds become visible). Deferred here by ruling;
    say if it should move into this cycle.
+   → **Ruled by owner, 2026-11-21: stays deferred.** It is an
+   extraction-prompt change with its own blast radius; this cycle is
+   already the largest spec on the board.
 
 Former questions 1 and 2 are closed: the owner ruled them (R-MAINT-TYPING
 and R-EDGE, handoff ruling ledger 2026-11-20). Section 11 and the PR 4
