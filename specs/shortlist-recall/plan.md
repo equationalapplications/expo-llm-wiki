@@ -136,7 +136,9 @@ module, not cli.ts).
     byte-identical across runs). `okf_type` = `TARGET_TYPES[i % 3]`
     (`run.ts:32`). Body = one sentence containing both hash words.
   - `d50` = seed + first 47 distractors; `d200` = seed + first 197
-    (distractor-200 exercises the live 200-entry cap, `prompts.ts:98`).
+    (distractor-200 exercises the live 200-entry cap —
+    `TITLE_CATALOG_MAX_ENTRIES = 200`, `prompts.ts:75`; the spec's `:98` pin
+    names the CHAR_BUDGET line — the constant lives at `:75`).
 - Ground-truth containment guard: before scoring, assert every fixture
   `expected_target.title` is present in the pool under `normalizeTitleKey`;
   on a mismatch throw with the missing titles listed (fails loudly, spec step 4
@@ -249,7 +251,9 @@ Files: `packages/benchmarks/results/shortlist-recall-<engineVersion>-<stamp>.jso
 - Determinism check: run it a second time; the two result files must carry
   identical recall values, baselines, and per-entry hit/miss (stamp/model
   fields may differ in stamp only). On disagreement: do NOT quote numbers;
-  record the discrepancy in `LEDGER.md` instead.
+  record the discrepancy in `LEDGER.md` AND in the PR body — the ledger is
+  transient (deleted by the cleanup commit, `specs/README.md` lifecycle step 4),
+  so the durable record of any discrepancy is the PR body.
 - Commit ONE result file (the first run's); quote recall@k per pool per scorer
   and the random baselines in the PR body, with the synthetic-pool caveat
   verbatim. The numbers support no gate — say so in the PR body (INTENT Rule
@@ -267,14 +271,19 @@ notes the run cost (tokens: 0; disk: model download).
 Files: `specs/shortlist-recall/plan.md`, `specs/shortlist-recall/LEDGER.md`,
 `specs/shortlist-recall/spec.md` (Status line only).
 
-- `LEDGER.md`: review ladder record (T1.5 rungs, T3 Opus verdict + cost),
-  spend, the real-run record from T5.
+- `LEDGER.md`: one checkbox per task above, evidence link per tick, "what's in
+  flight" line. Transient per the house lifecycle (`specs/README.md` step 4):
+  the cleanup commit deletes it with `plan.md`, so the DURABLE records — the
+  review-ladder verdicts and costs, the real-run recall numbers, and any
+  determinism discrepancy — live in the PR body (and, for anything that must
+  outlive the PR, a dated note in `spec.md`, which is durable).
 - The cleanup commit flips the spec Status `APPROVED` → `IMPLEMENTED`
   (INTENT rule 10) only after all tasks land green. No `docs/ROADMAP.md` edit
   (waits for the L2-0 roadmap amendment PR).
 
-Acceptance: ledger lists every paid rung with model, effort, verdict, cost;
-Status flip is in the same PR as the behavior (house rule).
+Acceptance: ledger boxes ticked only after verification, with evidence links;
+durable copies of the ladder + run records sit in the PR body; Status flip is
+in the same PR as the behavior (house rule).
 
 ---
 
