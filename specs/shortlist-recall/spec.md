@@ -101,7 +101,7 @@ same fact against the same rows: the embedding scorer embeds the fact body
 and each row's `title + ' ' + body` string, so the lexical and embedding
 comparisons see identical inputs.
 
-Candidate pools. The subcommand runs against three deterministic pools and
+Candidate pools. The subcommand runs against four deterministic pools and
 reports each pool separately:
 
 - `seed` — the 3 `SEED_NODES` rows
@@ -115,6 +115,10 @@ reports each pool separately:
 - `distractor-200` — the 3 seed rows plus 197 distractors. This pool
   exercises the cap regime, since the live catalog caps at 200 entries
   (`packages/core/src/prompts.ts:98`).
+- `distractor-variants` — the 3 seed rows plus 50 title-variant hard
+  negatives (reorder / near-synonym swap / truncation of seed titles;
+  added 2026-11-21 per ruling (3)'s saturation trigger — see the Result
+  note).
 
 The distractor generator is pure and seeded: row i gets title
 `Distractor Node <i>` with two trailing hash words derived from a fixed
@@ -132,7 +136,7 @@ The subcommand:
    `loadStatementFixture` (`packages/benchmarks/src/statementKinds/run.ts:69`).
    Each entry carries `expected_target.title` and `expected_target.type`,
    which are the ground truth.
-2. Builds the three pools above.
+2. Builds the four pools above.
 3. Scores each pool two ways:
    - `lexical`: the core default scorer from section 1.
    - `embedding`: `cosineSimilarity`
@@ -301,3 +305,24 @@ distractor pools (all k < 50), and k = 1 only on the seed pool. Also,
 punctuation; the hit rule inherits exactly that. And the committed result
 file must be written via `--out`: the default results dir
 `packages/benchmarks/results/raw/` is gitignored.
+
+**Result note, 2026-11-21 (distractor-variants extension + scorer pick):** ruling (3)'s
+trigger fired — the committed 2026-11-21 real run
+(`packages/benchmarks/results/shortlist-recall-9.5.3-2026-11-21.json`) showed
+lexical recall = 1.0 at every swept k ≥ 3 on both distractor pools (recall@1 =
+0.7857 — the early-saturation signal; k ≥ 3 correction per CodeRabbit #447). The generator gained a
+fourth `distractor-variants` pool (50 deterministic title-variant hard negatives:
+reorder / near-synonym swap / truncation of seed titles, FNV-1a seeded by
+`VARIANT_SEED='shortlist-recall-2026-11-variant'`; an integrity guard forbids any
+`normalizeTitleKey` collision with a seed title); the old pools are untouched, so
+historical numbers stay comparable. Real re-run
+(`shortlist-recall-9.8.0-2026-11-21.json`, engine 9.8.0, fastembed BGESmallENV15
+3.0.0, zero LLM tokens; old pools byte-identical to the prior file; double-run
+determinism verified — the reports are byte-identical): on
+`distractor-variants`, lexical recall@10 = **0.9643** (27/28; sole miss 'Deploy')
+vs embedding **0.8214** (23/28; misses 'Orbit' ×3 and 'Acme Labs' ×2), and
+lexical leads at every k ≥ 3. **Scorer pick per ruling (2): lexical** (the recall
+numbers pick it; k = 10 stands). Caveat (T3 review #447 m6): the variant
+evidence is measured on the 53-row `distractor-variants` pool, not a cap-size
+pool; at the 200-row cap, lexical's lead rests on `distractor-200`
+(1.0 vs 0.9643 at k = 10).

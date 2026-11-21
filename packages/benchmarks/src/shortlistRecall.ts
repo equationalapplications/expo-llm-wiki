@@ -78,25 +78,144 @@ export function buildDistractors(count: number): ShortlistRow[] {
   return rows;
 }
 
-export type PoolName = 'seed' | 'distractor-50' | 'distractor-200';
+/**
+ * Seed for the title-variant distractor generator (extends the
+ * {@link DISTRACTOR_SEED} scheme). Owner-ruled 2026-11-21: lexical recall
+ * saturated at 1.0 on the pure lexical distractor pools, so hard negatives
+ * built by mutating the seed titles land in a separate pool.
+ */
+export const VARIANT_SEED = 'shortlist-recall-2026-11-variant';
 
-/** The three evaluation pools, each self-contained (seed rows always present). */
+/**
+ * Per-word synonyms for title-variant mutations, keyed by base-title word.
+ * None of the synonyms normalize to a seed title, so a variant can never
+ * corrupt ground truth (rankRows dedupes by normalizeTitleKey last-wins).
+ */
+export const VARIANT_SYNONYMS: Record<string, string[]> = {
+  Orbit: ['Orbital', 'Halo', 'Reverie'],
+  Deploy: ['Deployment', 'Release', 'Rollout'],
+  Acme: ['Apex', 'Zenith', 'Vertex'],
+  Labs: ['Laboratories', 'Workshop', 'Studio'],
+};
+
+/** Mutation kinds applied to seed titles when building variant distractors. */
+export const MUTATION_KINDS = ['reorder', 'synonym', 'truncate'] as const;
+
+export type PoolName = 'seed' | 'distractor-50' | 'distractor-200' | 'distractor-variants';
+
+/**
+ * The three seed rows every pool nests (ground-truth targets). Single source
+ * of truth: `buildPools` copies these rows into the seed pool, and
+ * `buildVariantDistractors` derives its seed-key guard from these titles, so
+ * a seed-title rename moves the guard with it (T3 review #447 m4). Frozen:
+ * callers get copies, so no in-place mutation can corrupt later calls or the
+ * guard (T3 delta review #447 m2).
+ */
+export const SEED_ROWS: readonly ShortlistRow[] = Object.freeze(
+  (
+    [
+      { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
+      { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
+      { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
+    ] as ShortlistRow[] // inner annotation keeps literal field checking (T3 r3 nit 3)
+  ).map((r) => Object.freeze(r)),
+);
+
+/** The four evaluation pools, each self-contained (seed rows always present). */
 export function buildPools(): Record<PoolName, ShortlistRow[]> {
-  const seed: ShortlistRow[] = [
-    { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
-    { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
-    { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
-  ];
+  const seed = SEED_ROWS.map((r) => ({ ...r }));
   const d50 = buildDistractors(50);
   const d200 = buildDistractors(200);
   return {
     seed,
     'distractor-50': [...seed, ...d50],
     'distractor-200': [...seed, ...d200],
+    'distractor-variants': [...seed, ...buildVariantDistractors(50)],
   };
 }
 
-export const POOL_NAMES: readonly PoolName[] = ['seed', 'distractor-50', 'distractor-200'];
+export const POOL_NAMES: readonly PoolName[] = ['seed', 'distractor-50', 'distractor-200', 'distractor-variants'];
+
+// ---------------------------------------------------------------------------
+// Title-variant distractors (owner-ruled saturation trigger, 2026-11-21)
+// ---------------------------------------------------------------------------
+
+const VARIANT_BASES = ['Orbit', 'Deploy', 'Acme Labs'] as const;
+
+const VARIANT_BODIES: Record<(typeof VARIANT_BASES)[number], (extra: string) => string> = {
+  Orbit: (extra) => `The ${extra} variant memo: a mobile application the organization builds and ships.`,
+  Deploy: (extra) => `The ${extra} variant memo: releasing builds to production for the application.`,
+  'Acme Labs': (extra) => `The ${extra} variant memo: the software organization behind the application.`,
+};
+
+/** Apply one mutation kind to a base title using hash-derived choices. */
+function mutateTitle(base: string, kind: (typeof MUTATION_KINDS)[number], h: number): string {
+  let words = base.split(' ');
+  if (kind === 'reorder') {
+    if (words.length > 1) return words.reverse().join(' ');
+    kind = 'synonym'; // single word cannot reorder
+  }
+  if (kind === 'synonym') {
+    const replaceable = words.map((w, i) => (VARIANT_SYNONYMS[w] ? i : -1)).filter((i) => i >= 0);
+    if (replaceable.length > 0) {
+      const wordIdx = replaceable[(h >>> 20) % replaceable.length];
+      const syns = VARIANT_SYNONYMS[words[wordIdx]];
+      words[wordIdx] = syns[(h >>> 24) % syns.length];
+      return words.join(' ');
+    }
+    kind = 'truncate'; // nothing replaceable
+  }
+  // 'truncate': drop the last word; single-word titles drop the final char.
+  words = base.split(' ');
+  if (words.length > 1) return words.slice(0, -1).join(' ');
+  return words[0].slice(0, -1);
+}
+
+/**
+ * Deterministic title-variant distractors: hard negatives built by
+ * reordering, synonym-swapping or truncating a seed title (FNV-1a hashed
+ * from {@link VARIANT_SEED}-`i`), suffixed with a {@link WORD_LIST_B} word
+ * for uniqueness headroom. The skip-and-advance loop silently skips any
+ * duplicate key (one is never emitted), and the seed keys are pre-seeded into
+ * the seen-set, so a variant title colliding with a seed title is skipped too
+ * — never emitted — which is what protects ground truth, since rankRows
+ * dedupes by normalizeTitleKey last-wins and such a row would corrupt it.
+ * The candidate keyspace is finite (unique titles across bases × kinds ×
+ * WORD_LIST_B), so `count` above the keyspace size can never terminate:
+ * the iteration cap throws instead of hanging (pre-PR review finding,
+ * 2026-11-21; keyspace is 288 with the current lists).
+ */
+const MAX_VARIANT_ITERATIONS = 50_000;
+
+export function buildVariantDistractors(count = 50): ShortlistRow[] {
+  const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
+  const seen = new Set<string>(seedKeys);
+  const rows: ShortlistRow[] = [];
+  let i = 0;
+  while (rows.length < count) {
+    if (i >= MAX_VARIANT_ITERATIONS) {
+      throw new Error(
+        `buildVariantDistractors: candidate keyspace exhausted after ${i} iterations (requested ${count} unique rows)`,
+      );
+    }
+    const h = fnv1a(`${VARIANT_SEED}-${i}`);
+    const base = VARIANT_BASES[h % 3];
+    const kind = MUTATION_KINDS[(h >>> 8) % 3];
+    const extra = WORD_LIST_B[(h >>> 16) % WORD_LIST_B.length];
+    const title = `${mutateTitle(base, kind, h)} ${extra}`;
+    const key = normalizeTitleKey(title);
+    const typeIndex = i; // pre-increment index, matching buildDistractors (T3 review #447 m7)
+    i++;
+    if (seen.has(key)) continue; // skip-and-advance
+    seen.add(key);
+    rows.push({
+      title,
+      okf_type: TARGET_TYPES[typeIndex % TARGET_TYPES.length],
+      body: VARIANT_BODIES[base](extra.toLowerCase()),
+    });
+  }
+  return rows;
+}
 
 // ---------------------------------------------------------------------------
 // Guard + metrics
@@ -197,6 +316,9 @@ export interface ShortlistRecallReport {
     distractorSeed: string;
     hash: 'fnv1a-32';
     wordLists: { a: string[]; b: string[] };
+    variantSeed: string;
+    mutationKinds: string[];
+    variantSynonyms: Record<string, string[]>;
     embedModel: string;
     engineVersion: string;
     fastembedVersion: string;
@@ -247,11 +369,9 @@ export async function runShortlistRecall(deps: {
   };
 
   const perEntry: PerEntryRecord[] = [];
-  const agg: Record<PoolName, Record<number, { lexHits: number; embHits: number; typeLex: number; typeEmb: number }>> = {
-    seed: {},
-    'distractor-50': {},
-    'distractor-200': {},
-  };
+  const agg = Object.fromEntries(
+    POOL_NAMES.map((pool) => [pool, {}]),
+  ) as Record<PoolName, Record<number, { lexHits: number; embHits: number; typeLex: number; typeEmb: number }>>;
 
   for (const pool of POOL_NAMES) {
     const rows = pools[pool];
@@ -306,19 +426,18 @@ export async function runShortlistRecall(deps: {
 
   return {
     fixtureEntries: n,
-    pools: { seed: { size: pools.seed.length }, 'distractor-50': { size: pools['distractor-50'].length }, 'distractor-200': { size: pools['distractor-200'].length } },
-    lexical: { seed: recallOf('seed', 'lexHits'), 'distractor-50': recallOf('distractor-50', 'lexHits'), 'distractor-200': recallOf('distractor-200', 'lexHits') },
-    embedding: { seed: recallOf('seed', 'embHits'), 'distractor-50': recallOf('distractor-50', 'embHits'), 'distractor-200': recallOf('distractor-200', 'embHits') },
-    randomBaseline: {
-      seed: baselineFor('seed'),
-      'distractor-50': baselineFor('distractor-50'),
-      'distractor-200': baselineFor('distractor-200'),
-    },
+    pools: Object.fromEntries(POOL_NAMES.map((pool) => [pool, { size: pools[pool].length }])) as ShortlistRecallReport['pools'],
+    lexical: Object.fromEntries(POOL_NAMES.map((pool) => [pool, recallOf(pool, 'lexHits')])) as ShortlistRecallReport['lexical'],
+    embedding: Object.fromEntries(POOL_NAMES.map((pool) => [pool, recallOf(pool, 'embHits')])) as ShortlistRecallReport['embedding'],
+    randomBaseline: Object.fromEntries(POOL_NAMES.map((pool) => [pool, baselineFor(pool, pools)])) as ShortlistRecallReport['randomBaseline'],
     typeAccuracyAtK5: { lexical: typeOf('typeLex'), embedding: typeOf('typeEmb') },
     determinism: {
       distractorSeed: DISTRACTOR_SEED,
       hash: 'fnv1a-32',
       wordLists: { a: [...WORD_LIST_A], b: [...WORD_LIST_B] },
+      variantSeed: VARIANT_SEED,
+      mutationKinds: [...MUTATION_KINDS],
+      variantSynonyms: Object.fromEntries(Object.entries(VARIANT_SYNONYMS).map(([k, v]) => [k, [...v]])),
       embedModel: deps.meta.embedModel,
       engineVersion: deps.meta.engineVersion,
       fastembedVersion: deps.meta.fastembedVersion,
@@ -340,8 +459,8 @@ function rankRows(rows: ShortlistRow[], score: (row: ShortlistRow) => number): S
     .map((s) => s.row);
 }
 
-function baselineFor(pool: PoolName): Record<number, number> {
-  const n = pool === 'seed' ? 3 : pool === 'distractor-50' ? 53 : 203;
+function baselineFor(pool: PoolName, pools: Record<PoolName, ShortlistRow[]>): Record<number, number> {
+  const n = pools[pool].length;
   const out: Record<number, number> = {};
   for (const k of ksFor(pool)) out[k] = round4(randomBaseline(k, n));
   return out;
