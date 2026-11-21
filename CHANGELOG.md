@@ -1,3 +1,16 @@
+## [9.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.8.0...v9.9.0) (2026-11-21)
+
+### Features
+
+* **benchmarks:** add title-variant distractor pool to shortlist-recall benchmark ([7258f90](https://github.com/equationalapplications/expo-llm-wiki/commit/7258f9001388dfbeff0c6759687b5a7d577c4ea9))
+
+### Bug Fixes
+
+* **benchmarks:** bound buildVariantDistractors' skip loop (pre-PR review finding) ([597448f](https://github.com/equationalapplications/expo-llm-wiki/commit/597448f9b94bf3e1275fd707d061a5920ce21f80))
+* **benchmarks:** fold T3 delta round 2 findings (m2, m3) ([141512b](https://github.com/equationalapplications/expo-llm-wiki/commit/141512b54d26368ed16473274ffce3be9f691547))
+* **benchmarks:** fold T3 review round 1 findings (M1, m1-m7) ([44b086d](https://github.com/equationalapplications/expo-llm-wiki/commit/44b086dc8810fe4bb4b6d8d91fa915c00f85217c)), closes [#448](https://github.com/equationalapplications/expo-llm-wiki/issues/448)
+* **specs:** catch-up repairs from [#448](https://github.com/equationalapplications/expo-llm-wiki/issues/448) T3 review (B1 via stack, M1, M2, m1) + honesty correction ([4f5c6a4](https://github.com/equationalapplications/expo-llm-wiki/commit/4f5c6a4b1e4265fa79ccb83ef763f86a8de93f83)), closes [#447](https://github.com/equationalapplications/expo-llm-wiki/issues/447) [#449](https://github.com/equationalapplications/expo-llm-wiki/issues/449)
+
 ## [9.8.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.7.0...v9.8.0) (2026-11-21)
 
 ### Features
