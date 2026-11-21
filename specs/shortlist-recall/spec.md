@@ -305,7 +305,8 @@ file must be written via `--out`: the default results dir
 **Result note, 2026-11-21 (distractor-variants extension + scorer pick):** ruling (3)'s
 trigger fired — the committed 2026-11-21 real run
 (`packages/benchmarks/results/shortlist-recall-9.5.3-2026-11-21.json`) showed
-lexical recall = 1.0 at every k on both distractor pools. The generator gained a
+lexical recall = 1.0 at every swept k ≥ 3 on both distractor pools (recall@1 =
+0.7857 — the early-saturation signal; k ≥ 3 correction per CodeRabbit #447). The generator gained a
 fourth `distractor-variants` pool (50 deterministic title-variant hard negatives:
 reorder / near-synonym swap / truncation of seed titles, FNV-1a seeded by
 `VARIANT_SEED='shortlist-recall-2026-11-variant'`; an integrity guard forbids any
