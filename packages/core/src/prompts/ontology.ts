@@ -19,7 +19,7 @@ export function buildOntologyPromptAppendix(
   manifestJson: string,
 ): { ontologyManifest: string; ontologyModeInstructions: string } {
   const strictRules = mode === 'strict'
-    ? 'STRICT MODE: Use ONLY types defined in the manifest. If a fact does not fit any node_type, omit okf_type and edges entirely.'
+    ? 'STRICT MODE: Use ONLY types defined in the manifest. If a fact does not fit any node_type, omit okf_type and edges entirely. A near-miss slug is still a miss: an unknown okf_type or edge throws.'
     : 'EMERGENT MODE: Prefer manifest types. You may propose new types via ontology_updates when necessary.';
 
   const fallback = 'If okf_type or an edge is invalid, omit them rather than inventing unlisted types.';

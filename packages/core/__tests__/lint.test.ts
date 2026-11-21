@@ -62,12 +62,14 @@ describe('lint', () => {
     expect(await wiki.lint('e1')).toEqual({
       danglingEdges: 3,
       manifestViolations: 3,
+      nodeTypeViolations: 0,
       untypedFacts: 1,
       drafts: 1,
       unverifiedInferred: 2,
       sample: {
         danglingEdgeIds: ['e_foreign', 'e_ghost', 'e_gone'],
         manifestViolationEdgeIds: ['e_badtarget', 'e_badtype', 'e_untyped'],
+        nodeTypeViolationIds: [],
       },
     });
   });
@@ -140,11 +142,27 @@ describe('lint', () => {
     await expect(lint.call(wiki, '')).rejects.toThrow(/^Invalid entityId/);
   });
 
+  it('counts node-type violations via the normalized resolver; folds and drafts are not violations (Task 11)', async () => {
+    const { wiki, db } = await makeDiagnosticWiki();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'emergent' });
+    await fact(db, 'f_ok', { type: 'person' });
+    await fact(db, 'f_fold', { type: 'per-son' }); // folds into 'person' — not a violation
+    await fact(db, 'f_bad', { type: 'robot' }); // unresolvable — violation
+    await fact(db, 'f_ghost', { type: 'ghost' }); // violation
+    await fact(db, 'f_draft', { type: 'robot', status: 'draft' }); // draft — not counted
+    await fact(db, 'f_gone', { type: 'robot', deleted: true }); // deleted — not counted
+    const report = await wiki.lint('e1');
+    expect(report.nodeTypeViolations).toBe(2);
+    expect(report.sample.nodeTypeViolationIds).toEqual(['f_bad', 'f_ghost']);
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'off' });
+    expect((await wiki.lint('e1')).nodeTypeViolations).toBe(0);
+  });
+
   it('returns zeros for an empty entity', async () => {
     const { wiki } = await makeDiagnosticWiki();
     expect(await wiki.lint('empty')).toEqual({
-      danglingEdges: 0, manifestViolations: 0, untypedFacts: 0, drafts: 0, unverifiedInferred: 0,
-      sample: { danglingEdgeIds: [], manifestViolationEdgeIds: [] },
+      danglingEdges: 0, manifestViolations: 0, nodeTypeViolations: 0, untypedFacts: 0, drafts: 0, unverifiedInferred: 0,
+      sample: { danglingEdgeIds: [], manifestViolationEdgeIds: [], nodeTypeViolationIds: [] },
     });
   });
 });

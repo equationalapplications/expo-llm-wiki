@@ -1718,12 +1718,14 @@ export interface WikiLintReport {
   manifestViolations: number;
   /** Live facts with `okf_type` NULL. */
   untypedFacts: number;
+  /** Live facts whose stored `okf_type` is not resolvable against the effective manifest (normalized resolver). 0 when ontology is off or the manifest has no node_types. */
+  nodeTypeViolations: number;
   /** Live facts with `lifecycle_status = 'draft'`. */
   drafts: number;
   /** Live `librarian_inferred` facts with an empty `okf_verified`. */
   unverifiedInferred: number;
   /** Up to 20 ids each, ascending. */
-  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[] };
+  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[]; nodeTypeViolationIds: string[] };
 }
 
 /**
