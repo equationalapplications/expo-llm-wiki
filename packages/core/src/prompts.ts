@@ -62,7 +62,7 @@ Return ONLY a valid JSON object matching this schema:
     { "id": "string (input fact id, copied verbatim)", "okf_type": "string (manifest node type slug)", "edges": [{ "edge_type": "string", "target_title": "string" }] }
   ]
 }
-If no manifest type fits a fact, omit that fact from "classifications" entirely — do not guess. Use the manifest slug EXACTLY as spelled (spelling variants are folded to the manifest form, but a near-miss is still a miss).
+If no manifest type fits a fact, assign the closest type the fact is an example of; omit that fact from "classifications" only when no type applies even broadly. Use the manifest slug EXACTLY as spelled (spelling variants are folded to the manifest form).
 When echoing an existing fact's title verbatim into "target_title", preserve every JSON escape sequence (\\", \\n, \\\\, \\/) exactly as it appeared in the input body — do not strip backslashes, do not add unescaped quotes. Do not return markdown, just raw JSON.`;
 
 /**

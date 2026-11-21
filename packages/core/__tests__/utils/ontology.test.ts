@@ -146,7 +146,7 @@ describe('ontology utils', () => {
     });
     expect(merged.manifest.edge_types).toHaveLength(2);
     expect(merged.manifest.edge_types[1].type).toBe('reports_to');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates canonicalizes casing within a single batch of new edges', () => {
@@ -157,7 +157,7 @@ describe('ontology utils', () => {
       ],
     });
     expect(merged.manifest.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('emptyManifest returns empty arrays', () => {
@@ -467,7 +467,7 @@ describe('ontology parent inheritance', () => {
       edge_types: [],
     });
     expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates preserves parent_type when the parent already exists', () => {
@@ -479,7 +479,7 @@ describe('ontology parent inheritance', () => {
       },
     );
     expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops an unresolvable parent_type instead of yielding a throwing manifest (D6)', () => {
@@ -489,7 +489,7 @@ describe('ontology parent inheritance', () => {
     });
     expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
       .toEqual({ type: 'design_spec', description: 'Child.' });
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops a parent_type whose target is itself a child (D1/D6)', () => {
@@ -507,7 +507,7 @@ describe('ontology parent inheritance', () => {
       },
     );
     expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates drops a self-referential parent_type', () => {
@@ -538,7 +538,7 @@ describe('ontology parent inheritance', () => {
         edge_types: [],
       });
       expect(merged.manifest.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
-      expect(() => validateManifest(merged)).not.toThrow();
+      expect(() => validateManifest(merged.manifest)).not.toThrow();
     }
   });
 
@@ -562,7 +562,7 @@ describe('ontology parent inheritance', () => {
       );
       expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
         .toEqual({ type: 'design_spec', description: 'Child.' });
-      expect(() => validateManifest(merged)).not.toThrow();
+      expect(() => validateManifest(merged.manifest)).not.toThrow();
     },
   );
 
@@ -593,7 +593,7 @@ describe('ontology parent inheritance', () => {
     });
     expect(merged.manifest.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
     expect(merged.manifest.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
-    expect(() => validateManifest(merged)).not.toThrow();
+    expect(() => validateManifest(merged.manifest)).not.toThrow();
   });
 
   it('mergeOntologyUpdates leaves parent_type absent for plain nodes (no key churn)', () => {

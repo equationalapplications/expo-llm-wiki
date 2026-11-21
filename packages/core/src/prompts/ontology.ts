@@ -4,7 +4,8 @@ const FACT_ONTOLOGY_FIELDS = `
 Each fact may optionally include:
 - "okf_type": string — must be one of the node_types in the manifest
 - "edges": [{ "edge_type": string, "target_title": string }] — target_title must match another fact's title in this response or existing memory
-- An edge_type may appear in the manifest multiple times with different source_type/target_type; use the row whose types match your fact and target.`;
+- An edge_type may appear in the manifest multiple times with different source_type/target_type; use the row whose types match your fact and target.
+Each node is a fact. To link two things with an edge, each must exist as its own fact, titled by the same name you use in \`target_title\`.`;
 
 const EMERGENT_EXTRA = `
 You may also return "ontology_updates" to propose new types:
@@ -19,7 +20,7 @@ export function buildOntologyPromptAppendix(
   manifestJson: string,
 ): { ontologyManifest: string; ontologyModeInstructions: string } {
   const strictRules = mode === 'strict'
-    ? 'STRICT MODE: Use ONLY types defined in the manifest. If a fact does not fit any node_type, omit okf_type and edges entirely. A near-miss slug is still a miss: an unknown okf_type or edge throws.'
+    ? 'STRICT MODE: Use ONLY types defined in the manifest. If a fact does not fit a node_type, choose the closest type the fact is an example of; omit only when none applies even broadly.'
     : 'EMERGENT MODE: Prefer manifest types. You may propose new types via ontology_updates when necessary.';
 
   const fallback = 'If okf_type or an edge is invalid, omit them rather than inventing unlisted types.';

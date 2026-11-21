@@ -95,7 +95,8 @@ export async function applyOps(
         input.diagnostics.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
       }
     } else if (mode === 'strict' && input.ontologyUpdates) {
-      const proposalCount = (input.ontologyUpdates.node_types?.length ?? 0) + (input.ontologyUpdates.edge_types?.length ?? 0);
+      const proposalCount = (Array.isArray(input.ontologyUpdates.node_types) ? input.ontologyUpdates.node_types.length : 0)
+        + (Array.isArray(input.ontologyUpdates.edge_types) ? input.ontologyUpdates.edge_types.length : 0);
       for (let i = 0; i < proposalCount; i++) {
         input.diagnostics.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
       }

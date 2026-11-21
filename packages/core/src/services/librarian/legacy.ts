@@ -115,7 +115,8 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
           diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
         }
       } else if (mode === 'strict' && ontologyUpdates) {
-        const proposalCount = (ontologyUpdates.node_types?.length ?? 0) + (ontologyUpdates.edge_types?.length ?? 0);
+        const proposalCount = (Array.isArray(ontologyUpdates.node_types) ? ontologyUpdates.node_types.length : 0)
+          + (Array.isArray(ontologyUpdates.edge_types) ? ontologyUpdates.edge_types.length : 0);
         for (let i = 0; i < proposalCount; i++) {
           diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
         }

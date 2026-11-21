@@ -5,7 +5,7 @@ import {
   SEVERITY,
   MESSAGE,
 } from '../src/utils/diagnostics';
-import type { WikiDiagnosticCode } from '../../src/types';
+import type { WikiDiagnosticCode } from '../src/types';
 
 describe('ontology receipt vocabulary (ontology-curation Task 3)', () => {
   it('severity is fixed per code', () => {

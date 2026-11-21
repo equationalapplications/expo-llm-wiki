@@ -885,7 +885,11 @@ export class IngestionService {
         ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
         mode = ontologyState.mode;
       } else if (mode === 'strict' && ontology_updates) {
-        const proposalCount = (ontology_updates.node_types?.length ?? 0) + (ontology_updates.edge_types?.length ?? 0);
+        // ontology_updates is parsed model JSON: guard the proposal counts so a
+        // malformed `{"node_types":{"length":1e9}}` cannot buffer unbounded
+        // diagnostics inside an open transaction (CodeRabbit #441).
+        const proposalCount = (Array.isArray(ontology_updates.node_types) ? ontology_updates.node_types.length : 0)
+          + (Array.isArray(ontology_updates.edge_types) ? ontology_updates.edge_types.length : 0);
         for (let i = 0; i < proposalCount; i++) {
           diagBuffer.push({ entityId, operation: 'ingest', trigger: 'call', code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
         }
@@ -1026,14 +1030,21 @@ export class IngestionService {
     // Spec §6 (Task 8): partial rows are typed and edge-resolved against the
     // manifest AS IT STANDS — same resolvers and door receipts as the full
     // path, but no emergent merge and no supersession. The title index is
-    // built from the live rows (this sourceRef's live facts stay live on the
-    // partial path), plus each inserted fact as it lands, so intra-response
-    // targets resolve exactly like the full path.
+    // seeded below from the entity's live facts across ALL sourceRefs
+    // (partial never retires them), plus each inserted fact as it lands,
+    // so intra-response and cross-source targets resolve like the full path.
     const ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
       ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
     const { mode, manifest } = ontologyState;
+    // Spec §6 + CodeRabbit #441: partial ingest does NOT supersede this
+    // sourceRef's rows, so — unlike the full path — the index must INCLUDE
+    // the current sourceRef and reach the entity's live facts across ALL
+    // sourceRefs, or edges targeting facts stored under another sourceRef
+    // drop as target_not_found. Same lookup the full path uses (the
+    // 500-row cap applies), without the sourceRef exclusion.
     const titleIndex = new Map<string, TitleIndexEntry>();
-    for (const f of liveFacts) {
+    const indexedFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+    for (const f of indexedFacts) {
       titleIndex.set(normalizeTitleKey(f.title), { id: f.id, okf_type: f.okf_type ?? null });
     }
     const pendingEdges: Array<{ sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }> = [];

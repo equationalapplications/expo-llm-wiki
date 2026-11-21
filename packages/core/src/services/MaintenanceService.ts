@@ -2066,6 +2066,11 @@ export class MaintenanceService {
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error('Invalid batchSize: must be an integer >= 1');
     }
+    // Spec §7: same validation contract as batchSize — zero stays valid.
+    if (options?.recheckCheckedBefore !== undefined
+      && (!Number.isInteger(options.recheckCheckedBefore) || options.recheckCheckedBefore < 0)) {
+      throw new Error('Invalid recheckCheckedBefore: must be an integer >= 0');
+    }
 
     const now = Date.now();
     // Spec §7 (Task 9): a pass may pin the cooldown cutoff explicitly —
@@ -2416,7 +2421,8 @@ export class MaintenanceService {
           diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
         }
       } else if (txMode === 'strict' && ontologyUpdates) {
-        const proposalCount = (ontologyUpdates.node_types?.length ?? 0) + (ontologyUpdates.edge_types?.length ?? 0);
+        const proposalCount = (Array.isArray(ontologyUpdates.node_types) ? ontologyUpdates.node_types.length : 0)
+          + (Array.isArray(ontologyUpdates.edge_types) ? ontologyUpdates.edge_types.length : 0);
         for (let i = 0; i < proposalCount; i++) {
           diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
         }

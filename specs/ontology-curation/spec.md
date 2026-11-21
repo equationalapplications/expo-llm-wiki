@@ -1,8 +1,9 @@
 # Spec: Ontology curation — machine typing, choke-point matching, and type-curation receipts
 
 **Status: APPROVED (owner ruling 2026-11-21; open question cleared — see Open questions for the owner). Lane 2 E+ (lands alone or first; shares `IngestionService` regions with 7b-ingest).**
-**Revisions:** 2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
-2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved; audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'typing'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
+**Revisions:** 2026-11-21 T4 CodeRabbit fold (round 2, head `43710715`): edge resolver fallback pinned to the edge NAME (all triples of the unique slug, caller filters by types); remember door pinned to store the caller's slug verbatim at mode `'off'`; strict person-door miss pinned to throw-only (no receipt); recheck cutoff predicate pinned (`ontology_checked_at <= cutoff` — a cutoff at-or-after the stamp re-queues); lint node-type scan pinned to the deletion-only edge-scan definition; strict merge-rejection proposal counts must be array-guarded.
+2026-11-20 T1.5 self-review fold: stale open questions closed by R-MAINT-TYPING and R-EDGE rulings (new section 11, PR 4 boundary entry); appendix prompt wording aligned to the ruled quote; non-strict person-door miss behavior stated; release-surface claim corrected.
+2026-11-20 T3 gate fold (Opus, $0.45, REQUEST CHANGES → folded): receipt mechanism pinned (`validateAndNormalizeFact` widened return, per-emitter mode gates); all four merge callers emit rejections; person-door `node_type_dropped` contradiction resolved (final rule re-pinned by the T4 fold below: strict person-door miss = throw-only); audit-join claim limited; lint matching pinned to the normalized resolver; section 11 build decisions pinned (`'typing'` job, default list, locking, pending check, budget unit, report fields); files-touched and test plan extended to match.
 **Base: `origin/main` @ `e43095c8`. Every pin below was re-verified live against `e43095c8`.**  
 **Intent check:** implements the owner-approved D1 block of the Lane 2 ontology consult (rulings session 2026-11-20; approved text in
 `records/investigations/2026-11-20-lane2-ontology-strict-consult/memo-r3.md` §D1, as amended by ADJUDICATION-r3a.md and ADJUDICATION-r3b.md).
@@ -66,8 +67,12 @@ Extend both resolvers in `packages/core/src/utils/ontology.ts`:
   a separator-and-case-normalized match (`_`, `-`, and whitespace collapse
   to one canonical form). Accept the normalized match only when exactly one
   manifest entry matches.
-- `resolveEdgeDefinitions` (`:24`): the same two-step order, returning the
-  unique normalized match when the exact pass misses.
+- `resolveEdgeDefinitions` (`:24`): the same two-step order. Uniqueness is
+  judged on distinct edge NAMES (normalized slugs), not on definition rows:
+  when the exact pass misses and exactly one distinct normalized name
+  matches, ALL definition triples carrying that name are returned, and the
+  caller filters by source/target type. An ambiguous name (two or more
+  distinct normalized slugs) resolves to nothing, never an error.
 
 Constraints, both hard:
 
@@ -104,7 +109,11 @@ The rule from the ruling block, unchanged by this PR:
 The engine never replaces a type a person stated. Backfill already never
 overwrites (`EntryRepository.ts:1836` guards `okf_type IS NULL`). In the
 non-strict modes, a person-door miss stores the fact untyped and emits
-`node_type_dropped`; it never throws.
+`node_type_dropped`; it never throws. At mode `'off'` the remember door
+performs no ontology behavior at all: the caller's slug is stored
+verbatim — no fold, no drop, no throw, no receipt — so an off host sees
+no change (CodeRabbit #441 round 2; the release-surface guarantee below
+is enforced here, not just claimed).
 
 ### 4. Receipts at every type door
 
@@ -119,7 +128,14 @@ all are emitted only when the entity's ontology mode is not `'off'`
 New codes on `WikiDiagnosticCode` (`packages/core/src/types.ts:872`):
 
 - `node_type_dropped {factId, nodeType, reason}` — at every type door,
-  model- or person-supplied, when the type misses the manifest.
+  model- or person-supplied, when the type misses the manifest. Exception
+  (pinned): a STRICT person-door miss throws inside
+  `validateAndNormalizeFact` before any commit lands, so no receipt can
+  be delivered — the throw is the only signal, and no receipt is owed
+  (CodeRabbit #441 round 2; a receipt emitted pre-commit would also fire
+  on a rolled-back write). The same commit-before-deliver rule holds on
+  the remember door in every mode: receipts buffer until the transaction
+  commits, then flush.
 - `node_type_folded {factId, from, to, via: 'normalize'}` — when step 1
   changed the slug. Extraction-time folds are self-contained rows (`from`,
   `to` on the receipt). The `factId` join to `node_type_assigned`
@@ -178,11 +194,15 @@ never merges emergent updates; it types against the manifest as it stands.
 Add a `runOntologyBackfill({ recheckCheckedBefore })` call option.
 `doRunOntologyBackfill` computes its cutoff from the fixed constant today
 (`packages/core/src/services/MaintenanceService.ts:2062`,
-`ONTOLOGY_BACKFILL_RECHECK_MS` at `MaintenanceService.ts:50`). A host that
-edits a manifest passes an old cutoff to re-queue already-checked facts.
-Default stays the constant, so no host sees new spend. Validate like
+`ONTOLOGY_BACKFILL_RECHECK_MS` at `MaintenanceService.ts:50`). The queue
+predicate is `ontology_checked_at <= recheckCutoff` (the stamp is
+eligible when it is at-or-before the cutoff), so a host that edits a
+manifest passes a cutoff AT-OR-AFTER the facts' check stamps to re-queue
+them — e.g. `Date.now()`, not `0` (CodeRabbit #441 round 2; `0` would
+defer every stamped fact). Default stays the constant, so no host sees
+new spend. Validate like
 `batchSize` does: a non-integer or negative value throws
-(`MaintenanceService.ts:2056-2059` is the precedent).
+(`MaintenanceService.ts:2056-2059` is the precedent; zero stays valid).
 
 ### 8. Typing queue sees current facts only
 
@@ -196,9 +216,12 @@ Soft-deleted facts stay out through the existing `deleted_at IS NULL` guard
 ### 9. Lint counts node-type violations
 
 `LintService.lint` (`packages/core/src/services/LintService.ts:19-50`) now
-also counts live facts whose stored `okf_type` is not in the effective
+also counts typed facts whose stored `okf_type` is not in the effective
 manifest, plus up to 20 sample ids, mirroring the edge-violation scan
-(`LintService.ts:29-42`). Add `nodeTypeViolations` and
+(`LintService.ts:29-42`). "Typed facts here" is the SAME deletion-only
+definition the edge scan uses (CodeRabbit #441 round 2): soft-deleted and
+draft rows are excluded; validity windows are NOT consulted — both scans
+agree row-for-row. Add `nodeTypeViolations` and
 `nodeTypeViolationIds` to `WikiLintReport`
 (`packages/core/src/types.ts:1693-1708`). Untyped facts stay in the existing
 `untypedFacts` count; the new count is wrong-type facts only. A stored
@@ -333,8 +356,12 @@ Build decisions (this spec pins them so an implementer invents nothing):
    nothing; prior facts tombstone, receipt fires with chunk count.
 6. Partial-ingest test: chunk-failure path now stores typed facts with
    resolved edges; a following full run retires and hard-deletes them.
-7. Recheck test: `recheckCheckedBefore: 0` re-queues a checked fact; the
-   default call does not; invalid values throw.
+7. Recheck test: a `recheckCheckedBefore` cutoff at-or-after the check
+   stamp (e.g. `Date.now()`, pinned ahead of the clock in the test so the
+   backfill's own stamp cannot land after the cutoff) re-queues a checked
+   fact; the default call does not; negative and non-integer values
+   throw (`0` is a valid, maximally strict cutoff that defers every
+   stamped fact).
 8. Queue test: an expired fact leaves the typing queue; a live fact stays.
 9. Lint test: a fact typed with a slug later removed from the manifest is
    counted and sampled; untyped facts stay out of the new count.

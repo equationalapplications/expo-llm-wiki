@@ -1804,13 +1804,17 @@ export class EntryRepository extends BaseRepository {
    */
   async findUntypedByEntityId(entityId: string, limit: number, recheckCutoff: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    // Validity is evaluated at the current sample time, NOT at recheckCutoff:
+    // a fact that became live after the cutoff must still queue, and one that
+    // expired since must not (CodeRabbit #441, EntryRepository:1813).
+    const now = Date.now();
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries
        WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
          AND (ontology_checked_at IS NULL OR ontology_checked_at <= ?)
          AND ${liveAtSql('current')}
        ORDER BY updated_at ASC LIMIT ?`,
-      [entityId, recheckCutoff, recheckCutoff, recheckCutoff, limit],
+      [entityId, recheckCutoff, now, now, limit],
     );
     return rows.map(mapRowToFact);
   }
@@ -1818,6 +1822,8 @@ export class EntryRepository extends BaseRepository {
   /** Counts live untyped facts: eligible (past cooldown) vs deferred (in cooldown). Current facts only, as {@link findUntypedByEntityId}. */
   async countUntypedByEntityId(entityId: string, recheckCutoff: number, tx?: SQLiteAdapter): Promise<{ eligible: number; deferred: number }> {
     const executor = this.getExecutor(tx);
+    // Same current-time validity sampling as {@link findUntypedByEntityId}.
+    const now = Date.now();
     const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
       `SELECT
          SUM(CASE WHEN ontology_checked_at IS NULL OR ontology_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
@@ -1825,7 +1831,7 @@ export class EntryRepository extends BaseRepository {
        FROM ${this.prefix}entries
        WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
          AND ${liveAtSql('current')}`,
-      [recheckCutoff, recheckCutoff, entityId, recheckCutoff, recheckCutoff],
+      [recheckCutoff, recheckCutoff, entityId, now, now],
     );
     return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
   }

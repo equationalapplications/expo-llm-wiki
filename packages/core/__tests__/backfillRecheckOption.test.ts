@@ -30,8 +30,12 @@ describe('runOntologyBackfill recheckCheckedBefore (Task 9)', () => {
     expect(second.deferred).toBe(1);
     expect(generateText.mock.calls.length).toBe(callsAfterFirst);
 
-    // Explicit cutoff in the past re-opens it.
-    const third = await wiki.runOntologyBackfill('e1', { recheckCheckedBefore: Date.now() });
+    // Explicit cutoff at-or-after any possible check stamp re-opens it. The
+    // cutoff is pinned ahead of the clock (not `Date.now()` at call time) so
+    // the stamp the backfill writes cannot land after the cutoff and flake
+    // the deferred assertion (CodeRabbit #441).
+    const recheckCutoff = Date.now() + 60_000;
+    const third = await wiki.runOntologyBackfill('e1', { recheckCheckedBefore: recheckCutoff });
     expect(third.remaining).toBe(1);
     expect(third.deferred).toBe(0);
     expect(generateText.mock.calls.length).toBe(callsAfterFirst + 1);
