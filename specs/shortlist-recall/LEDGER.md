@@ -26,12 +26,16 @@ T3 Opus round 2 — delta on `48842848..44b086dc` (2026-11-21, $0.39,
 "Approve with changes"; reviewer was TREE-BLIND — parked-branch seat, `git show`
 approval-gated — so every finding was adjudicated against the working tree):
 - M1 (pool changed after the run): DISPROVEN. Empirical: post-fold real run
-  fully identical to the committed `shortlist-recall-9.8.0-2026-11-21.json`
-  (every key) and the post-fold double run is byte-identical (2026-11-21,
-  `/tmp/shortlist-r2-run-{a,b}.json`). Citation: variant `okf_type` reaches the
-  report only via `perEntry.actualTypes` / `typeAccuracyAtK`, which read the
-  TITLE-MATCHING hit row (`shortlistRecall.ts:403-404`, `:271`) — always a seed
-  row, since variant titles can never match a seed key (seen-key guard).
+  (working tree at `141512b5`) fully identical to the committed
+  `shortlist-recall-9.8.0-2026-11-21.json` (every key), and the post-fold double
+  run is byte-identical — both outputs sha256
+  `9fd33da5acb53c2a87075ec0a59f4684a6d357dc3ff9c7ccf97ad569b07591db` (2026-11-21;
+  /tmp copies are ephemeral, this hash + the committed file are the record).
+  Citation: variant `okf_type` reaches the report only via
+  `perEntry.actualTypes` / `typeAccuracyAtK`, which read the TITLE-MATCHING hit
+  row (`shortlistRecall.ts:409`, `:277` at `141512b5`+nits-fold) — always a seed
+  row, since variant titles can never match a seed key (seen-key guard,
+  `shortlistRecall.ts:209`).
 - m1 (byte-identity wording): verified true as written — no `createdAt` or any
   timestamp field exists in either committed result (`grep -c createdAt` = 0);
   the writer serializes the report as-is.
@@ -42,6 +46,13 @@ approval-gated — so every finding was adjudicated against the working tree):
 - m4 (unverified caveat figures): verified against the committed file —
   `distractor-200` k=10 is lexical 1 vs embedding 0.9643. Correct as written.
 - m5 (vague provenance): FIXED — this ledger now cites explicit SHAs.
+T3 Opus round 3 — delta on `44b086dc..f280b952`, worktree clone seat (2026-11-21,
+$0.39, **Approve with nits** — converged; no MAJOR/BLOCKER): nit 1 stale line
+citations → this ledger's citations now pinned to HEAD lines + SHAs; nit 2 M1
+run provenance → run SHA + output sha256 recorded above; nit 3 `as` cast hiding
+literal checks → inner `as ShortlistRow[]` annotation restores field checking;
+nit 4 test comment overstatement → comment now states the reverse-direction
+value and defers type coverage to `groundTruthCheck`.
 
 ## Evidence
 

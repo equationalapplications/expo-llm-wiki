@@ -112,12 +112,14 @@ export type PoolName = 'seed' | 'distractor-50' | 'distractor-200' | 'distractor
  * guard (T3 delta review #447 m2).
  */
 export const SEED_ROWS: readonly ShortlistRow[] = Object.freeze(
-  [
-    { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
-    { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
-    { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
-  ].map((r) => Object.freeze(r)),
-) as readonly ShortlistRow[];
+  (
+    [
+      { title: 'Orbit', okf_type: 'software_application', body: 'Orbit is a mobile application the organization builds and ships.' },
+      { title: 'Deploy', okf_type: 'area', body: 'The deploy area of Orbit: releasing builds to production.' },
+      { title: 'Acme Labs', okf_type: 'organization', body: 'Acme Labs is the software organization that builds Orbit.' },
+    ] as ShortlistRow[] // inner annotation keeps literal field checking (T3 r3 nit 3)
+  ).map((r) => Object.freeze(r)),
+);
 
 /** The four evaluation pools, each self-contained (seed rows always present). */
 export function buildPools(): Record<PoolName, ShortlistRow[]> {

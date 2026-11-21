@@ -88,11 +88,12 @@ describe('buildVariantDistractors', () => {
     expect(() => buildVariantDistractors(289)).toThrow(/keyspace exhausted/);
   });
 
-  it('covers every fixture expected target in SEED_ROWS (ground truth integrity, T3 delta review #447 m3)', () => {
-    // The variant guard protects against colliding with SEED_ROWS titles; this
-    // cross-checks the OTHER side of that invariant — the fixture's ground
-    // truth must resolve against SEED_ROWS, so a fixture/SEED_ROWS drift can
-    // never silently bypass the guard.
+  it('covers every fixture expected target in SEED_ROWS (T3 r3 nit 4: reverse-direction check)', () => {
+    // Forward direction (fixture target ∈ seed pool, incl. okf_type) is already
+    // enforced at runtime by groundTruthCheck on every runShortlistRecall call.
+    // This test adds the REVERSE direction: every SEED_ROWS title is a fixture
+    // target (set equality), so a SEED_ROWS/fixture drift fails here too.
+    // Titles only — type coverage lives in groundTruthCheck.
     const fixtureKeys = new Set(entries.map((e) => normalizeTitleKey(e.expected_target.title)));
     const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
     expect([...fixtureKeys].sort()).toEqual([...seedKeys].sort());
