@@ -65,7 +65,6 @@ export const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   source_store_text_not_storable: 'warn',
   node_type_dropped: 'warn',
   node_type_folded: 'info',
-  node_type_assigned: 'info',
   ontology_update_rejected: 'warn',
   ingest_zero_facts: 'warn',
 };
@@ -121,7 +120,6 @@ export const MESSAGE: Record<WikiDiagnosticCode, string> = {
   source_store_text_not_storable: 'A source document text could not be stored as given.',
   node_type_dropped: 'A supplied node type missed the ontology manifest and the fact was stored untyped.',
   node_type_folded: 'A supplied node type was normalized into the manifest canonical slug.',
-  node_type_assigned: 'A fact was assigned an ontology node type by a typing path.',
   ontology_update_rejected: 'An emergent ontology proposal was rejected during the merge.',
   ingest_zero_facts: 'A re-ingest tombstoned prior facts and edges and then wrote zero facts.',
 };

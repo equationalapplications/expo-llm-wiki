@@ -960,7 +960,6 @@ export type WikiDiagnosticCode =
   | 'source_store_text_not_storable'
   | 'node_type_dropped'
   | 'node_type_folded'
-  | 'node_type_assigned'
   | 'ontology_update_rejected'
   | 'ingest_zero_facts';
 
@@ -987,10 +986,6 @@ export interface WikiDiagnosticDetail {
   itemIndex?: number;
   /** Machine-readable sub-reason, e.g. `'target_not_found'`. */
   reason?: string;
-  /** `node_type_assigned` only: the manifest slug applied to the fact. */
-  okfType?: string;
-  /** Typing receipts only: which path produced the outcome. */
-  writer?: 'classifier' | 'llm';
   /** Aggregated `ingest_chunk_failed` only; the first 20 failed chunk indexes. */
   chunkIndexes?: number[];
   /** Aggregated emissions only. */
