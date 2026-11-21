@@ -26,8 +26,10 @@ captures RED before the source change goes green.
   40000: `ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS` (line 50).
 - Config home: `OntologyConfig` — `packages/core/src/types.ts` (section
   starts near line 91; `backfillClassifier` at line 109). Resolver
-  precedent: `resolveSystemOneTyping` —
-  `packages/core/src/utils/engineDefaults.ts:122`.
+  throw precedent: `resolveContextBudgetOrThrow` —
+  `packages/core/src/utils/engineDefaults.ts:27` (takes
+  `WikiConfig | undefined`). NOT `resolveSystemOneTyping` (line 122):
+  it warns-and-falls-back on invalid config and never throws.
 - Tests that reference the catalog today:
   `packages/core/__tests__/services/PromptService.test.ts` (8 hits),
   `packages/core/__tests__/ontologyBackfill.test.ts` (1 hit).
@@ -38,12 +40,16 @@ captures RED before the source change goes green.
 
 - `OntologyConfig` gains `shortlistK?: number` with a doc comment:
   default 10.
-- `resolveShortlistK(config: OntologyConfig | undefined): number` lands
+- `resolveShortlistK(config: WikiConfig | undefined): number` lands
   beside `resolveSystemOneTyping` in
-  `packages/core/src/utils/engineDefaults.ts`. Contract: `undefined`
-  config or missing key returns 10. A present value must be a finite
+  `packages/core/src/utils/engineDefaults.ts`, reading
+  `config?.ontology?.shortlistK` (T5 calls it with
+  `this.options.config`, a `WikiConfig` — the type
+  `resolveContextBudgetOrThrow` takes). Contract: `undefined` config
+  or missing key returns 10. A present value must be a finite
   integer >= 1; any other value throws with the
-  `[core-llm-wiki]`-prefixed message pattern the file already uses.
+  `[core-llm-wiki]`-prefixed message pattern, per the
+  `resolveContextBudgetOrThrow` precedent (never fall back).
 - Tests first (RED): default, valid passthrough, `0`, `-1`, `1.5`,
   `NaN`, `Infinity`, `'10'` throw.
 - Commit: `feat(core): shortlistK config knob for the backfill shortlist (spec §3)`
@@ -59,15 +65,23 @@ captures RED before the source change goes green.
   fact id. Footer keeps the catalog's non-exclusive instruction: an
   unlisted valid target stays valid; omit `edges` rather than invent a
   target.
-- Zero-pool behavior: when the typed pool is empty, the section carries
-  the catalog's "no typed nodes yet" wording (adapted per fact).
+- Zero-pool behavior (spec §4): when the typed pool is empty, the
+  renderer emits NO per-fact sections; the caller appends one shared
+  footer line with the non-exclusive no-nodes wording so the
+  omit-edges instruction never disappears.
+- The sections block carries its own 8000-char budget, mirroring the
+  catalog's `CHAR_BUDGET` (`packages/core/src/prompts.ts:99`) with the
+  same skip-don't-break semantics: an oversized lone fact is still sent
+  by `runBatched` alone, so the block bounds itself and never relies on
+  the 40000-char cap alone.
 - Extract a shared line formatter if that avoids duplicating the catalog
   line shape; `buildTitleCatalogBlock` stays exported (its tests and the
   placeholder-branch comment reference it; no caller removal in this PR
   — see T5).
 - Tests first (RED): format parity with the catalog line, header names
   the fact id, order follows the given rows (shortlist order, score
-  descending — the caller owns ranking), fewer-than-k pool, zero pool.
+  descending — the caller owns ranking), fewer-than-k pool, zero pool
+  (no sections, shared footer), budget truncation (skip-don't-break).
 - Commit: `feat(core): per-fact candidate section renderer (spec §1)`
 
 ### T3 — the scoring query reads `body`
@@ -79,7 +93,11 @@ captures RED before the source change goes green.
   `findTitleIndexByEntityId` (live, typed rows only). Do NOT change
   `findTitleIndexByEntityId` — edge resolution
   (`MaintenanceService.ts:2673`) and the catalog share it and must stay
-  unchanged.
+  unchanged. The method's declared return type narrows
+  `okf_type: string` (the SQL filters live typed rows only, so the
+  column is never NULL in results): `ShortlistRow` requires non-null
+  (`packages/core/src/utils/shortlist.ts:11`) — narrow in the query's
+  type, never cast at the call site.
 - Tests first (RED): bodies present, deleted/untyped rows excluded,
   same filters as the title index.
 - Commit: `feat(core): shortlist scoring rows query (spec §2, OQ2)`
@@ -94,7 +112,13 @@ captures RED before the source change goes green.
   before any splice.
 - Update the 8 `TITLE CATALOG` references (count verified: 8 hits) in
   `packages/core/__tests__/services/PromptService.test.ts` to the new
-  shape; keep the #381 history comments where they still hold.
+  shape; keep the #381 history comments where they still hold. Also
+  update the catalog-splice comments in
+  `packages/core/src/services/PromptService.ts` that this PR makes
+  stale: the `NOTE (#381, review M5)` placeholder-branch note
+  (lines 356–360) and the `#381`/E1 splice-history comment
+  (lines 367–370) — reword both for candidate sections, keeping their
+  history meaning.
 - Tests first (RED): sections appear in `userPrompt` after the facts
   JSON; `systemPrompt` carries no catalog; placeholder branch unchanged;
   `candidateSections === undefined` keeps the current prompt minus the
@@ -116,14 +140,19 @@ captures RED before the source change goes green.
   never used the catalog.
 - Update the `ontologyBackfill` doc comment in
   `packages/core/src/types.ts` (lines 1785–1791, verified) that
-  references the data-scope note, citing this spec's errata.
+  references the data-scope note, citing this spec's errata. Also
+  update the catalog rationale comment block in
+  `_runGenerativeBackfill` (`packages/core/src/services/MaintenanceService.ts:2262-2282`):
+  reword the timing/dedup honesty notes for the shortlist read and
+  drop the parts that only describe the catalog.
 - Update the `TITLE CATALOG` reference in
   `packages/core/__tests__/ontologyBackfill.test.ts`; add the integration
   pins: user prompt carries one section per batch fact, no `TITLE
   CATALOG` text anywhere in the prompt, prompt overrides keep the
   placeholder branch, the payload cap still bounds the prompt, fewer
   than k typed nodes renders the whole pool, zero typed nodes renders
-  the no-nodes wording, `shortlistK` invalid config throws.
+  no sections and the shared no-nodes footer, `shortlistK` invalid
+  config throws.
 - Tests first (RED) for every new pin.
 - Commit: `feat(core): shortlist wiring in the ontology backfill pass (spec §1)`
 
@@ -137,15 +166,21 @@ captures RED before the source change goes green.
   scorer and no pool; the committed 9.8.0 result stays the evidence.
 - Cleanup commit: flip the spec's Status to `Implemented` (cite PR,
   landed commit, test paths), delete `plan.md` and `LEDGER.md`,
+  write the Step 8 `Done —` line in `docs/ROADMAP.md` (AGENTS.md:39
+  requires the done mark in the completing PR; step 7's omission
+  needed catch-up PR #448 and issue #449 — do not repeat it),
   `gh pr ready`.
 - This repo has NO prettier/eslint gate — match single-quote style by
   hand; never run default prettier; never hand-edit `CHANGELOG.md`.
 
 ## Risks
 
-- **Payload growth.** 25 facts × ~10 candidate lines adds prompt length;
-  the 40000-char cap still bounds the whole prompt and oversized lone
-  facts still send alone. Pin with a test (T5).
+- **Payload growth.** 25 facts × ~10 candidate lines adds prompt length.
+  The 40000-char cap bounds the shared prompt shape, but `runBatched`
+  still sends an oversized lone fact alone
+  (`MaintenanceService.ts:2286-2291`), so the sections block carries its
+  own 8000-char budget (T2, mirroring the catalog). Pin both with tests
+  (T2, T5).
 - **Prompt-shape change moves model behavior.** Mitigation is design,
   not tests: validity is not narrowed (unlisted targets stay valid), so
   a shortlist miss degrades the hint, not correctness (owner ruling OQ4).

@@ -64,8 +64,8 @@ In `_runGenerativeBackfill`, score the typed rows against each fact in
 the batch and render one candidate block per fact:
 
 - Call `buildShortlist(fact, typedRows, k)` with the default lexical
-  scorer. `typedRows` comes from the same title-index pass the catalog
-  uses today.
+  scorer. `typedRows` comes from the scoring query of §2, which mirrors
+  the title-index query's filters and adds `body`.
 - Render a per-fact section after the facts JSON in the user prompt:
   for each fact id, its top-k lines in the catalog line format
   (`- "title" (okf_type)`).
@@ -78,6 +78,10 @@ Validity is not narrowed. Edge resolution resolves against the full
 title index, so the model may still name a node outside the shortlist.
 The prompt keeps the non-exclusive wording: an unlisted valid target
 remains valid. A shortlist miss degrades the hint, not the validity.
+The shortlist read happens once per pass outside the batch transaction
+while edge resolution reads inside it; the last-wins/row-order
+divergence the catalog already carried (`packages/core/src/prompts.ts:81-85`)
+applies unchanged.
 
 Prompt shape: the user prompt gains a per-fact keyed section. Hosts
 override the backfill system prompt with `promptOverride`; the
@@ -88,7 +92,9 @@ change. Documented, unchanged.
 ### 2. Row bodies in the scoring query (OQ2)
 
 The scoring query must read `body` in addition to `id, title,
-okf_type`, so the live lexical scores match the measured evidence. The
+okf_type`, so the live scorer is the same ranker the measured evidence
+was produced with (INTENT rule 11: alignment with the measured ranker,
+not a new performance claim). The
 pass already reads every typed row once; the query gains one column.
 The candidate renderer keeps showing title and type only.
 
@@ -98,15 +104,23 @@ The candidate renderer keeps showing title and type only.
 (`packages/core/src/types.ts`, beside `backfillClassifier`).
 Validation contract: a finite integer >= 1; an invalid value throws at
 use, never falls back silently (same boundary precedent as the
-`classifier` option in `doRunOntologyBackfill`). Default 10, the
+`classifier` option in `doRunOntologyBackfill`). The throw precedent in
+code is `resolveContextBudgetOrThrow`
+(`packages/core/src/utils/engineDefaults.ts:27`); the OQ3 ruling's
+comparison to the system-one-config validation patterns covers key
+placement and message style only — those patterns warn-and-fall-back,
+which this throw contract overrides. Default 10, the
 owner-pinned value from `specs/shortlist-recall/spec.md`.
 
 ### 4. Fewer than k typed nodes
 
 `buildShortlist` already returns the whole deduped pool when the pool is
-smaller than k. Zero typed nodes keep the empty-catalog wording: no
-candidate section renders. The prompt still tells the model to omit
-edges rather than invent a target. A fact classified in the same
+smaller than k. Zero typed nodes render no per-fact candidate sections;
+the user prompt carries one shared footer line with the non-exclusive
+wording ("this memory contains no typed nodes yet" — omit `edges`
+rather than invent a target), so the omit-edges instruction never
+disappears with the catalog block that used to carry it
+(`packages/core/src/prompts.ts:116-120`). A fact classified in the same
 response stays a valid target.
 
 ### 5. Scorer
@@ -127,7 +141,7 @@ the per-fact shortlist of roadmap step 7, measured by
 
 - New pure renderer unit tests: per-fact block format, dedupe and
   validity filters (shared with `buildShortlist`), fewer-than-k pool,
-  zero-pool empty wording.
+  zero-pool shared no-nodes footer (no per-fact sections).
 - Config knob tests: default 10, integer >= 1, invalid values throw.
 - `MaintenanceService` tests: the backfill user prompt carries one
   candidate section per fact and no shared catalog block; prompt
@@ -147,8 +161,9 @@ Out of scope:
   step 9 owns it behind its own gate ("steps 6 and 8 merged, and a
   spec"); `specs/context-budget/spec.md` records the same exclusion.
   This PR does not touch the cap constant's wiring.
-- Receipts and telemetry for shortlist misses (OQ4 asks; the default is
-  none).
+- Receipts and telemetry for shortlist misses (OQ4 ruled none,
+  2026-11-21: a miss is a successful edge resolution; the existing
+  `classification_abstained` and edge-drop diagnostics suffice).
 - Any roadmap step 9-14 work. Each needs its own spec cycle and owner
   gate.
 
@@ -175,7 +190,9 @@ Rejected alternatives:
   Owner rationale: the measured recall came from Jaccard over full row
   text; title-only scoring degrades to keyword overlap and recall
   "plummet[s]". Reading the body keeps production at the measured
-  performance.
+  performance. [Scope note: the measured evidence is shortlist recall@10
+  on the committed fixture, not end-to-end classification (INTENT rule
+  11); this PR ships the measured ranker, no new performance claim.]
 - **OQ3 — k knob: approved.** `OntologyConfig.shortlistK`, default 10
   (the benchmark-proven point), strict boundary validation — finite
   integer >= 1, throws on invalid — matching the system-one-config
