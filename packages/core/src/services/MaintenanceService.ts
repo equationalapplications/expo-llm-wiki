@@ -1032,7 +1032,14 @@ export class MaintenanceService {
 
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      classifier?: 'auto' | 'llm';
+      tokenBudget?: number;
+      /** Overrides the default recheck cooldown: facts stamped after this epoch ms stay deferred. */
+      recheckCheckedBefore?: number;
+    },
   ): Promise<OntologyBackfillResult> {
     this.jobManager.acquireLock('ontologyBackfill', entityId);
     try {
@@ -2050,6 +2057,8 @@ export class MaintenanceService {
       batchSize?: number;
       classifier?: 'auto' | 'llm';
       tokenBudget?: number;
+      /** Overrides the default recheck cooldown: facts stamped after this epoch ms stay deferred. */
+      recheckCheckedBefore?: number;
       meter?: UsageMeter;
     },
   ): Promise<OntologyBackfillResult> {
@@ -2059,7 +2068,10 @@ export class MaintenanceService {
     }
 
     const now = Date.now();
-    const recheckCutoff = now - ONTOLOGY_BACKFILL_RECHECK_MS;
+    // Spec §7 (Task 9): a pass may pin the cooldown cutoff explicitly —
+    // useful for tests and for callers that batch sweeps under one clock.
+    // The default remains the rolling ONTOLOGY_BACKFILL_RECHECK_MS window.
+    const recheckCutoff = options?.recheckCheckedBefore ?? now - ONTOLOGY_BACKFILL_RECHECK_MS;
     const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0 };
 
     const ontologyService = this.ontologyService;

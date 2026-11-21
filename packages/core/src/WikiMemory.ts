@@ -933,7 +933,14 @@ export class WikiMemory {
    */
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm'; tokenBudget?: number },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      classifier?: 'auto' | 'llm';
+      tokenBudget?: number;
+      /** Overrides the default recheck cooldown: facts stamped after this epoch ms stay deferred. */
+      recheckCheckedBefore?: number;
+    },
   ): Promise<OntologyBackfillResult> {
     return this.maintenanceService.runOntologyBackfill(entityId, options);
   }
