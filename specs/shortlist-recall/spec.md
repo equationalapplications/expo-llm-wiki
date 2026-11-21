@@ -301,3 +301,20 @@ distractor pools (all k < 50), and k = 1 only on the seed pool. Also,
 punctuation; the hit rule inherits exactly that. And the committed result
 file must be written via `--out`: the default results dir
 `packages/benchmarks/results/raw/` is gitignored.
+
+**Result note, 2026-11-21 (distractor-variants extension + scorer pick):** ruling (3)'s
+trigger fired — the committed 2026-11-21 real run
+(`packages/benchmarks/results/shortlist-recall-9.5.3-2026-11-21.json`) showed
+lexical recall = 1.0 at every k on both distractor pools. The generator gained a
+fourth `distractor-variants` pool (50 deterministic title-variant hard negatives:
+reorder / near-synonym swap / truncation of seed titles, FNV-1a seeded by
+`VARIANT_SEED='shortlist-recall-2026-11-variant'`; an integrity guard forbids any
+`normalizeTitleKey` collision with a seed title); the old pools are untouched, so
+historical numbers stay comparable. Real re-run
+(`shortlist-recall-9.8.0-2026-11-21.json`, engine 9.8.0, fastembed BGESmallENV15
+3.0.0, zero LLM tokens; old pools byte-identical to the prior file; double-run
+determinism verified — reports identical except `createdAt`): on
+`distractor-variants`, lexical recall@10 = **0.9643** (27/28; sole miss 'Deploy')
+vs embedding **0.8214** (23/28; misses 'Orbit' ×3 and 'Acme Labs' ×2), and
+lexical leads at every k ≥ 3. **Scorer pick per ruling (2): lexical** (the recall
+numbers pick it; k = 10 stands).
