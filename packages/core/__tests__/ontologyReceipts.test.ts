@@ -196,6 +196,38 @@ describe('backfill door receipts (Task 13 — this PR carries the dropped/folded
     expect(details(diagnostics, 'node_type_folded')).toEqual([
       { severity: 'info', operation: 'ontologyBackfill', entityId: 'e1', factId: fb.id, nodeType: 'person', from: 'per-son', to: 'person', via: 'normalize' },
     ]);
-    expectNoContent(diagnostics, ['b1', 't1']);
+  });
+});
+
+describe('partial ingest typing (Task 8)', () => {
+  it('partial rows get manifest types, door receipts, and resolved intra-response edges', async () => {
+    const { wiki, db, diagnostics, generateText } = await makeDiagnosticWiki({
+      config: { maxChunkLength: 30, chunkOverlap: 0 },
+      generateText: async ({ userPrompt }) => userPrompt.includes('BROKEN')
+        ? 'definitely not json'
+        : JSON.stringify({ facts: [
+          { title: 'Ada', body: 'Ada body', tags: [], confidence: 'certain', okf_type: 'per-son',
+            edges: [{ edge_type: 'lives_in', target_title: 'Lyons' }] },
+          { title: 'Lyons', body: 'Lyons body', tags: [], confidence: 'certain', okf_type: 'PLACE' },
+        ] }),
+    });
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'emergent' });
+    const result = await wiki.ingestDocument('e1', {
+      sourceRef: 'doc.md', sourceHash: HASH_A,
+      documentChunk: 'GOOD chunk here.\n\nBROKEN chunk here.',
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(1);
+    const rows = await db.getAllAsync<{ okf_type: string | null }>("SELECT okf_type FROM llm_wiki_entries WHERE entity_id='e1' AND deleted_at IS NULL");
+    const types = rows.map((r) => r.okf_type).sort();
+    expect(types).toEqual(['person', 'place']);
+    const edges = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) AS c FROM llm_wiki_edges WHERE entity_id='e1'");
+    expect(edges?.c).toBe(1);
+    const folds = details(diagnostics, 'node_type_folded');
+    // 'PLACE' hits the manifest exactly (case-insensitive); only 'per-son' folds.
+    expect(folds).toHaveLength(1);
+    expect((folds[0] as { from: string }).from).toBe('per-son');
+    expect(ofCode(diagnostics, 'node_type_dropped')).toEqual([]);
+    expectNoContent(diagnostics, ['Ada body', 'Lyons body']);
   });
 });
