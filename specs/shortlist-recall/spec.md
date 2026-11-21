@@ -1,6 +1,6 @@
 # Spec: PR 2a — Shortlist builder + `shortlist-recall` benchmark subcommand
 
-Status: APPROVED (owner ruling 2026-11-21; all open questions cleared — see Open questions for the owner)
+Status: Reviewed (owner ruling 2026-11-21; all open questions cleared — see Open questions for the owner)
 
 Lane 2, wave 1 (unconditional). Author draft, 2026-11-20. Base: `origin/main` @ `e43095c8` (the only commits after `9790dbbf` are dependency-only; every pin below re-verified live against `e43095c8`). Review history: a T1.5 self-review (2026-11-20, haiku) and one T3 Opus review (2026-11-20) converged on the pool-size defect fixed below.
 
@@ -63,13 +63,21 @@ Add `packages/core/src/utils/shortlist.ts`. Export:
   (tokens of `factTitle` plus tokens of `factBody`, each through
   `titleTokens` at `packages/core/src/utils/pure.ts:918`) and the row
   token set (tokens of `row.title` plus tokens of `row.body`, same
-  token rule). Lexical only: core has no embedding provider of its own,
+  token rule). An absent `row.body` tokenizes as the empty string
+  (`row.body ?? ''`), so tokenization never receives an absent value;
+  the fact's `title` and `body` are both required strings. Lexical only:
+  core has no embedding provider of its own,
   and the module must stay pure.
 - `buildShortlist(fact, rows, k, score?)` — returns the top k rows,
   highest score first. `fact` is `{ title: string; body: string }`.
-  The builder dedupes `rows` by `normalizeTitleKey`
+  The builder applies the catalog's validity filters before
+  deduplicating: rows with an empty `title` or an empty (or absent)
+  `okf_type` are dropped first, exactly like `buildTitleCatalogBlock`
+  (`packages/core/src/prompts.ts:85-90`), so an invalid row can never
+  replace a valid row under the same key. The builder then dedupes `rows`
+  by `normalizeTitleKey`
   (`packages/core/src/utils/ontology.ts:13`) before sorting, keeping
-  the last row per key; this matches the catalog's dedupe
+  the last surviving row per key; this matches the catalog's dedupe
   (`packages/core/src/prompts.ts:85-90`). Ties break by title in the
   same UTF-16 order the catalog uses. The optional `score` function has
   the signature `score(fact, row) => number`; it lets a caller inject
@@ -96,8 +104,12 @@ comparisons see identical inputs.
 Candidate pools. The subcommand runs against three deterministic pools and
 reports each pool separately:
 
-- `seed` — the 3 `SEED_NODES` rows. Reported for continuity with E1, not
-  as evidence; every k at or above 3 is vacuous here.
+- `seed` — the 3 `SEED_NODES` rows
+  (`packages/benchmarks/src/statementKinds/run.ts:42`). Each seed row
+  carries `type`; before scoring, `type` is mapped to the shortlist
+  row's `okf_type` (with `title` and `body` carried over), matching the
+  row shape the distractor rows use. Reported for continuity with E1,
+  not as evidence; every k at or above 3 is vacuous here.
 - `distractor-50` — the 3 seed rows plus 47 deterministic synthetic
   distractor rows.
 - `distractor-200` — the 3 seed rows plus 197 distractors. This pool
@@ -206,8 +218,10 @@ native-engine gate is untouched.
 1. Core unit tests for `shortlistScore`: empty token sets on both sides
    return 0 (the 0/0 case at `pure.ts:923`), tokens shorter than 3
    characters are dropped, and the fact set is the union of title and
-   body tokens. Unit tests for `buildShortlist`: top-k order, dedupe by
-   `normalizeTitleKey` keeping the last row, tie-break determinism on
+   body tokens. Unit tests for `buildShortlist`: top-k order, the
+   validity filters (empty title, empty `okf_type`) run before
+   dedupe, dedupe by
+   `normalizeTitleKey` keeping the last surviving row, tie-break determinism on
    distinct titles, k larger than the pool returns the whole pool,
    injected scorer is used.
 2. Runner unit tests with a deterministic stub embed function (no model
