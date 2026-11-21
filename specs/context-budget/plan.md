@@ -36,8 +36,9 @@ green through every later task.
 
 Files: `packages/core/__tests__/contextBudgetByteIdentity.test.ts` (new).
 
-Write the pins BEFORE any production change, against pre-change output. Each test drives the
-real prompt builders / chunker with a fixed fixture and asserts exact output:
+Write the pins BEFORE any production change, against pre-change output. The pins cover BOTH
+layers — exact output strings AND batch-splitting decisions (the caps act on batching, not on
+builder internals, so string pins alone cannot catch a wrong cap):
 
 - `buildOpsResolvePrompt` (via `runResolve`'s buildPrompt path or `PromptService` directly)
   with a fixture candidate → exact-string assert on system+user prompt.
@@ -45,9 +46,16 @@ real prompt builders / chunker with a fixed fixture and asserts exact output:
 - `buildOpsExtractPrompt` with fixture events → exact-string assert.
 - `chunkText` as reached from `ingestDocument` at the default cap → exact chunk-boundary
   assert (fixtures stay in the test file, per spec).
+- **Batch-splitting pins (r2):** fixtures sized just under and just over 40_000 chars driven
+  through `runBatched` (resolve and heal) → assert provider-call count and which items land
+  in each batch; `selectBatch` with event summaries summing to just under and just over
+  24_000 chars → assert `batch.length` on both sides of the boundary. Each pin runs with a
+  config with no `context` section AND with `context.budget: 'legacy'` (spec test 1's two
+  shapes).
 
-Fixtures are small, self-contained objects (one candidate/fact/event set each); expected
-strings are captured from the pre-change tree and pasted literally into the test.
+Fixtures are small, self-contained objects (one candidate/fact/event set each; the boundary
+fixtures pad with generated filler); expected strings are captured from the pre-change tree
+and pasted literally into the test.
 
 - Run: `pnpm vitest run packages/core/__tests__/contextBudgetByteIdentity.test.ts`
   Expected: PASS (nothing has changed yet — this proves the pins match today's behavior).
@@ -79,19 +87,35 @@ export function estimateTokensWith(budget: ContextBudget, text: string): number 
   `estimateTokens` for every input — trivially, since both are `ceil(len/4)`. The meter keeps
   plain `estimateTokens` this PR (spec Out of scope); the wrapper ships unused by metering.
 - Test (`contextBudget.test.ts`): `estimateTokensWith(budget, 'x'.repeat(9))` → 3 at
-  charsPerToken 4; with `charsPerToken: 2` → 5 (doubles the chars/4 estimate — spec test 5).
+  charsPerToken 4; with `charsPerToken: 2` → 5 (above the chars/4 estimate of 3 — spec test 5).
 - Commit: `feat(context-budget): add ContextBudget type and estimateTokensWith wrapper`
 
 ### T3 — Resolver module (spec Proposed change 1, 4; rulings R1–R3)
 
 Files: `packages/core/src/config/context.ts` (new; this commit also creates the
-`config/` directory).
+`config/` directory) and `packages/core/src/utils/contextCaps.ts` (new leaf — see below).
 
-Exports (imports the constants from their current modules — never duplicates them):
-`OPS_RESOLVE_MAX_PROMPT_CHARS` from `services/librarian/ops/resolve.ts`,
-`HEAL_MAX_PROMPT_CHARS` from `services/MaintenanceService.ts`,
-`OPS_MAX_EXTRACT_CHARS` from `services/librarian/ops/extract.ts`,
-`DEFAULT_MAX_CHUNK_LENGTH` from `utils/chunkingDefaults.ts`.
+**Constant sourcing (r2, M1+M2):** importing the caps from `resolve.ts` /
+`MaintenanceService.ts` is impossible twice over — `OPS_RESOLVE_MAX_PROMPT_CHARS`
+(`resolve.ts:8`) is not `export`ed, and importing from those service modules would create a
+load-order cycle (`MaintenanceService` → `librarian` → `ops/*` → `config/context` →
+`MaintenanceService`; the repo already hit this exact shape once — see the comment at
+`utils/healConstants.ts:12-15`). Resolution: the four cap values move into a new leaf module
+`utils/contextCaps.ts` (names and values unchanged); each current site re-exports or
+aliases from the leaf so **the existing names and values are preserved exactly** —
+`resolve.ts:8` becomes `export { OPS_RESOLVE_MAX_PROMPT_CHARS } from '../../../utils/contextCaps'`,
+`extract.ts:12` and `MaintenanceService.ts:49/65` likewise, `DEFAULT_MAX_CHUNK_LENGTH` stays
+where it is (`utils/chunkingDefaults.ts` is already a leaf — the leaf re-exports it).
+`config/context.ts` imports only from `utils/contextCaps.ts` and `utils/chunkingDefaults.ts`.
+The T1 pins are the guard that the move changed no value. `config/context.ts` computes its
+floors by reading the leaf constants inside function bodies (top-level object literals from
+imports are fine for true leaf imports, but reading inside the resolver function keeps the
+load-order requirement structural, not conventional).
+
+Exports:
+`OPS_RESOLVE_MAX_PROMPT_CHARS`, `HEAL_MAX_PROMPT_CHARS`, `OPS_MAX_EXTRACT_CHARS`,
+`DEFAULT_MAX_CHUNK_LENGTH` — all via `utils/contextCaps.ts` / `utils/chunkingDefaults.ts`,
+never duplicated as literals in `config/context.ts`.
 
 ```ts
 export function resolveContextBudget(config: WikiConfig | undefined): ContextBudget
@@ -110,21 +134,37 @@ Behavior:
   `contextWindowTokens` missing, non-finite, or ≤ 0 → throw;
   `charsPerToken` (when supplied) ≤ 0 or non-finite → throw;
   `safetyFraction` (when supplied) outside (0, 1] → throw;
-  `outputReserveTokens` (when supplied) < 0, non-finite, or ≥ `contextWindowTokens` → throw.
-  Throws use the existing invalid-config error style (plain `Error` with a
-  `[core-llm-wiki]`-prefixed message, like `engineDefaults` warnings / `ingestDocument`'s
-  `Invalid sourceHash` throw — never a silent fallback to `'legacy'`, per R3).
+  the **effective** output reserve (supplied value, else default 4000) < 0, non-finite, or
+  ≥ `contextWindowTokens` → throw (r2: validating only a supplied reserve let
+  `contextWindowTokens: 3000` with no reserve derive negative behind the floor);
+  `budget` present but not `'legacy'`/`'declared'` → throw (r2: a plain-JS host typo like
+  `'declard'` must not silently degrade to legacy — R3).
+  Throws are plain `Error`s whose message is prefixed `[core-llm-wiki] ` and names the bad
+  key and value — same style as the existing `[core-llm-wiki]` diagnostics; never a silent
+  fallback to `'legacy'` (per R3). (The plan's earlier examples were inexact —
+  `engineDefaults` only warns and `ingestDocument`'s throw has no prefix; the format is
+  stated here directly.)
   Defaults per R1: `charsPerToken 4`, `safetyFraction 0.9`, `outputReserveTokens 4000`.
-  Derived prompt cap for op:
+  Derived prompt cap for resolve and heal:
   `max(OP_FLOOR[op], floor((contextWindowTokens - outputReserveTokens) * safetyFraction * charsPerToken))`
   where `OP_FLOOR = { resolve: 40_000, heal: 40_000, extract: 24_000 }` — the floor is today's
   cap as a one-batch minimum, so a derived value never lands at zero or negative (spec
-  Proposed change 4; test 3 clamp case). `resolveDefaultChunkLength` still returns 12000 (R2).
+  Proposed change 4; test 3 clamp case).
+  **Extract scales by today's ratio (r2, M4 — controller-flagged):** the extract cap bounds
+  only the event-summary chars while the extract prompt also carries the system prompt,
+  ontology context and guidance; a uniform formula (e.g. window 32_000 → 100_800 event
+  chars) can spend the whole window on summaries and force overflow probes/halving on every
+  pass. So `extractDerived = floor(resolveDerived * OPS_MAX_EXTRACT_CHARS / OPS_RESOLVE_MAX_PROMPT_CHARS)`
+  (i.e. ×24/40 = ×0.6), then `max(OP_FLOOR.extract, …)`. This preserves today's 60% invariant
+  under declared budgets; it is an interpretation of the approved formula shape and is
+  flagged for the controller to confirm or overrule.
+  `resolveDefaultChunkLength` still returns 12000 (R2).
 
 Config type addition rides T4 (same interface `WikiConfig` — one commit per compile-green
 unit would split the type from its only consumer; they go together).
 
-- Test (`config/context.test.ts`, modeled on `engineDefaults.test.ts`): constant pin
+- Test (`packages/core/__tests__/configContext.test.ts` — tests live in `__tests__/`,
+  flat, like `engineDefaults.test.ts`): constant pin
   (spec test 2 — legacy returns 40_000/40_000/24_000/12000 literally, so a silent constant
   edit fails CI); declared formula outputs for representative windows; every validation throw
   from the list above; the floor clamp (`contextWindowTokens: 8000` → resolve/heal 40_000,
@@ -135,10 +175,11 @@ unit would split the type from its only consumer; they go together).
 
 Files: `packages/core/src/types.ts`, `services/librarian/ops/resolve.ts`,
 `services/MaintenanceService.ts`, `services/librarian/ops/extract.ts`,
-`services/librarian/ops/index.ts`, `services/IngestionService.ts`, plus the 14
+`services/librarian/ops/index.ts`, `services/IngestionService.ts`,
+`utils/contextCaps.ts` (from T3; its re-export wiring may land in T3 or here), plus the 14
 `selectBatch(...)` test call sites in three existing test files (see Extract below).
 
-- `types.ts`: add to `WikiConfig` (line ~296):
+- `types.ts`: add to `WikiConfig` (line 298):
 
   ```ts
   context?: {
@@ -157,26 +198,37 @@ Files: `packages/core/src/types.ts`, `services/librarian/ops/resolve.ts`,
     at entry; line 104 becomes `maxPromptChars: resolveMaxPromptChars(budget, 'resolve')`.
   - `doRunHeal` (`MaintenanceService.ts:1653`): resolve once from `this.options.config`;
     line 1815 becomes `maxPromptChars: resolveMaxPromptChars(budget, 'heal')`.
-- **Extract:** `selectBatch` (`extract.ts:52`) gains a REQUIRED `budget: ContextBudget`
-  parameter as its **LAST** parameter, after `guidance?` — no existing positional argument
-  moves, and no default exists (an absent budget is a caller bug, per the no-fallback rule).
+- **Extract:** `selectBatch` (`extract.ts:52`) currently ends in two optional params
+  (`meter?: UsageMeter, guidance?: string`), so a REQUIRED trailing `budget` is a TS1016
+  compile error (r2 blocker). Resolution: widen the trailing params to
+  `meter: UsageMeter | undefined, guidance: string | undefined, budget: ContextBudget` —
+  required-with-`|undefined` types, all after `wm`. No fallback exists: an absent budget is
+  a caller bug. The one production caller (`ops/index.ts:33`) passes
+  `meter, ctx.guidance, budget` positionally (unchanged positions for meter/guidance when
+  both are supplied); the 14 test call sites (5 in `opsExtract.test.ts`, 4 in
+  `extract-merge.test.ts`, 5 in `extract-overflow.test.ts`) gain explicit trailing
+  arguments (`undefined` gaps filled literally, budget =
+  `resolveContextBudget(undefined)` for legacy behavior). Existing suites are unchanged
+  behaviorally but not source-identical.
   Line 65's cap compare uses `resolveMaxPromptChars(budget, 'extract')`; **line 74 (the
   `RESOLVE_RESERVE_FACTOR` reserve check) is untouched** — it derives from the prompt
   estimate, not from the swapped constant. The caller at `ops/index.ts:33` resolves the
-  budget once at librarian-pass entry and passes it. **Test call-site updates are in
-  scope:** the 14 existing `selectBatch(...)` call sites across
-  `__tests__/opsExtract.test.ts`, `__tests__/services/librarian/ops/extract-merge.test.ts`,
-  and `extract-overflow.test.ts` gain the trailing budget argument
-  (`resolveContextBudget(undefined)` for legacy behavior); existing suites are unchanged
-  behaviorally but not source-identical.
-  - `ingestDocument` (`IngestionService.ts:129`): keep the override chain verbatim, swap
+  budget once at librarian-pass entry and passes it.
+  - `ingestDocument` (`IngestionService.ts:129`): resolve `const budget =
+    resolveContextBudget(this.options.config)` at method entry (that local is the `budget`
+    used below); keep the override chain verbatim, swap
     only the final fallback:
     `params.maxChunkLength ?? this.options.config?.maxChunkLength ?? resolveDefaultChunkLength(budget)`
     — explicit host/config `maxChunkLength` always wins; the existing contract at that line
     is preserved.
-- No existing export changes value or name; the four constants stay exported where they are.
-- Run: T1's byte-identity suite again — Expected: PASS unchanged (the swaps resolve to the
-  identical numbers under legacy). Then `pnpm -r typecheck`.
+- Fail-fast (r2): resolve once in the `WikiMemory`/service construction path, alongside the
+  `changedDefaultWarnings` call (`engineDefaults.ts:61`), so a misconfigured declared budget
+  throws at construction instead of at first maintenance/ingest call. The constructor
+  discards the value; entries still resolve per call (cheap, and keeps behavior identical).
+- No existing export changes value or name; the four constants keep their names and values,
+  now sourced from `utils/contextCaps.ts` (T3) and re-exported from their current modules.
+- Run: T1's byte-identity suite again — Expected: PASS unchanged (the swaps and the leaf move
+  resolve to the identical numbers under legacy). Then `pnpm -r typecheck`.
 - Commit: `feat(context-budget): resolve prompt/chunk caps through config/context resolver`
 
 ### T5 — Export surface (spec Proposed change 5)
@@ -195,8 +247,8 @@ No existing export changes value or name; the backfill export at line 27 stays a
 (exclusion per header). Doc comments naming the constants are the only other references —
 untouched.
 
-- Run: `pnpm -r typecheck`; spot-import check (`node -e` via built package or a test import)
-  that the five names resolve.
+- Run: `pnpm -r typecheck`; a typecheck-time import verifies `ContextBudget` resolves, plus
+  a runtime spot-import (built package or test import) that the four value exports resolve.
 - Commit: `feat(context-budget): export context-budget resolver surface from core index`
 
 ### T6 — Remaining tests (spec test plan 3–7; test 1–2 landed with T1/T3)
@@ -209,8 +261,14 @@ Files: `packages/core/__tests__/contextBudget.test.ts` (extend),
   config that would derive differently); config-level `maxChunkLength` beats the resolver
   fallback; resolver fallback under legacy equals 12000.
 - Estimate wrapper (spec test 5) — landed T2; only cross-check here that a declared budget
-  does NOT change meter accounting (meter still calls `estimateTokens`): one test asserting
-  a `UsageMeter` fed the same text under a declared budget still accrues chars/4 tokens.
+  does NOT change meter accounting (metering still estimates chars/4 in `llmCall.ts`;
+  `UsageMeter` records token counts, it never sees text): drive `callLlm` with a stub
+  provider under a declared config and assert the `UsageMeter` accrues the same chars/4
+  token count.
+- Declared-mode extract fit (r2, M4): a full extract prompt (batch at the derived cap plus
+  system prompt, ontology context, guidance) fits inside the declared window — e.g.
+  `contextWindowTokens: 32000` keeps batch summaries at ~57_600 derived chars (floor 24_000
+  does not apply) while resolve/heal derive 100_800.
 - Backfill exclusion (spec test 6): assert `ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS === 40_000`;
   the reviewer-facing guarantee is also structural — grep-confirm in the final diff that
   `MaintenanceService.ts:2144` is absent from every hunk.
@@ -219,16 +277,18 @@ Files: `packages/core/__tests__/contextBudget.test.ts` (extend),
   shortcut is needed (the spec's conditional in test 3 is moot under R3).
 - Run: full vitest suite (`pnpm -r --filter=!@equationalapplications/integration-llm-wiki
   test` or the repo's standard unit gate) — all existing suites pass (the T4 signature
-  updates are call-site-only; behavior unchanged — the T1 pins make this a real guard).
+  updates are call-site-only; behavior unchanged — the T1 string AND batch-splitting pins
+  make this a real guard).
 - Commit: `test(context-budget): override precedence, meter independence, backfill exclusion`
 
 ### T7 — Gates + PR wrap
 
 - Full gates: typecheck + unit suite green; `git diff origin/main..HEAD` grep-swept to
-  confirm: only the spec's Files-touched set — eight original entries plus
-  `ops/index.ts` (spec amendment 2026-11-21) and the three existing test files carrying
-  signature-only call-site updates — no `LLMProvider` change, no line-74
-  edit, no line-2144 edit, no `estimateTokens` call-site change.
+  confirm: only the spec's Files-touched set — eight original entries plus `ops/index.ts`,
+  `utils/contextCaps.ts` and the four new test files (spec amendments 2026-11-21, r1+r2),
+  with the three existing test files carrying signature-only call-site updates — no
+  `LLMProvider` change, no line-74 edit, no line-2144 edit, no `estimateTokens` call-site
+  change.
 - Update `specs/context-budget/LEDGER.md` (one checkbox per T-task with evidence links) in
   the implementation phase — ledger is transient, deleted by the cleanup commit.
 - No merge, no `gh pr ready` from this lane step; controller reviews the converged plan
@@ -241,7 +301,7 @@ Files: `packages/core/__tests__/contextBudget.test.ts` (extend),
 T1 (pins, pre-change) → T2 (type+wrapper) → T3 (resolver) → T4 (type+swaps; depends on T2+T3)
 → T5 (exports) → T6 (remaining tests) → T7 (gates). T2/T3 are independent of T1 but land
 after it so the pins exist before any behavior-adjacent code. No task touches files outside
-the spec's Files-touched list plus the two test files.
+the spec's Files-touched list (as amended) plus the new test files.
 
 ## Execution & review protocol (standing)
 
@@ -253,12 +313,12 @@ the spec's Files-touched list plus the two test files.
 
 ## Spec ambiguities hit while planning, and resolutions
 
-1. **`selectBatch` parameter position and optionality.** Spec says "in the pattern of its
-   existing `meter?`/`guidance?` parameters" but those are optional trailing params while
-   the budget is always available at the call sites. Resolution (r1 review): REQUIRED and
-   LAST, after `guidance?` — no positional argument moves; the 14 existing test call sites
-   gain the trailing argument. No default — an absent budget is a caller bug, not a legacy
-   fallback.
+1. **`selectBatch` parameter signature.** Spec says "in the pattern of its existing
+   `meter?`/`guidance?` parameters". r1 ruled REQUIRED-and-LAST; r2's blocker showed a
+   required param after optional ones is a TS1016 compile error. Final resolution: widen the
+   trailing params to `meter: UsageMeter | undefined, guidance: string | undefined,
+   budget: ContextBudget`. The 14 test call sites gain explicit trailing arguments. No
+   default — an absent budget is a caller bug, not a legacy fallback.
 2. **Where `budget` comes from in `doRunHeal`/`runResolve`.** Both hold service options
    (`this.options.config` / `deps.options.config`); the plan resolves at entry and closes
    over it. No new plumbing.
@@ -268,3 +328,13 @@ the spec's Files-touched list plus the two test files.
 4. **`estimateTokensWith` is dead code at ship.** The spec's test 5 explicitly scopes it as a
    unit test of the wrapper; metering keeps `estimateTokens` until the follow-up PR. The
    export is intentional surface, not premature code (T5 exports it).
+5. **Cap sourcing vs the no-duplication rule (r2).** The caps cannot be imported from their
+   current modules (`OPS_RESOLVE_MAX_PROMPT_CHARS` is unexported; importing
+   `MaintenanceService` from a module it transitively imports is a load-order cycle).
+   Resolution: leaf module `utils/contextCaps.ts` holds the values; current sites re-export;
+   names and values unchanged, guarded by the T1 pins.
+6. **Extract scaling in declared mode (r2, CONTROLLER-FLAGGED).** The approved formula shape
+   applied uniformly lets the extract batch (event-summary chars only) consume the whole
+   window, since the extract prompt also carries fixed parts. Resolution folded here:
+   extract derives at ×24/40 of the resolve/heal cap (today's ratio), floor still applied.
+   Controller: confirm or overrule this interpretation before implementation.

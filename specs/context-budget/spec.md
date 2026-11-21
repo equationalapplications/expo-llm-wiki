@@ -46,7 +46,14 @@ All four wiring edits resolve the budget once per public entry and pass it down.
   caller-side threading site omitted from the original list).
 - `packages/core/src/services/IngestionService.ts` — swap the final chunk-length fallback to the resolver (line 129).
 - `packages/core/src/index.ts` — re-export the new public surface.
-- `packages/core/__tests__/` — new tests; see Test plan.
+- `packages/core/src/utils/contextCaps.ts` — new leaf holding the four cap values (moved from
+  `resolve.ts`, `extract.ts`, `MaintenanceService.ts`; `chunkingDefaults` re-exported);
+  current sites re-export, names and values unchanged (amendment 2026-11-21, plan review r2:
+  unexported resolve constant + service-module import cycle made the original sourcing
+  impossible; precedent `utils/healConstants.ts`).
+- `packages/core/__tests__/` — new tests; see Test plan. (Three existing test files
+  (`opsExtract`, `extract-merge`, `extract-overflow`) carry signature-only `selectBatch`
+  call-site updates — amendment 2026-11-21, plan review r1.)
 
 ## Test plan
 
