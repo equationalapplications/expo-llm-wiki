@@ -13,6 +13,7 @@ import {
   typeAccuracyAtK,
   type EmbedFn,
   type ShortlistRecallReport,
+  type PoolName,
 } from '../src/shortlistRecall';
 import { normalizeTitleKey } from '../../core/src/utils/ontology';
 
@@ -147,7 +148,7 @@ describe('runShortlistRecall (stub embed, no model download)', () => {
     expect(Object.keys(report.lexical).sort()).toEqual(['distractor-200', 'distractor-50', 'seed']);
     // k sweep present, rounded to 4 decimals, all in [0,1]
     for (const scorer of [report.lexical, report.embedding]) {
-      for (const pool of ['distractor-50', 'distractor-200']) {
+      for (const pool of ['distractor-50', 'distractor-200'] as PoolName[]) {
         for (const k of [1, 3, 5, 10, 25]) {
           expect(scorer[pool][k]).toBeGreaterThanOrEqual(0);
           expect(scorer[pool][k]).toBeLessThanOrEqual(1);
