@@ -1,3 +1,21 @@
+## [9.8.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.7.0...v9.8.0) (2026-11-21)
+
+### Features
+
+* **diagnostics:** ontology receipt vocabulary (codes, severities, helpers) ([87eef4d](https://github.com/equationalapplications/expo-llm-wiki/commit/87eef4d58d93694187e46094de1095e28ba376f2))
+* **ingest:** partial path types facts and resolves edges against the current manifest ([f5eaba4](https://github.com/equationalapplications/expo-llm-wiki/commit/f5eaba41e12c40cdd08e7b159a993c405f0d6193))
+* **lint:** nodeTypeViolations count + sampled ids; prompts amended for exact slugs ([c42b69a](https://github.com/equationalapplications/expo-llm-wiki/commit/c42b69a56bf7dd0b327b63e71889cbae31291325))
+* **maintenance:** recheckCheckedBefore option; typing queue sees current facts only ([9d76fd2](https://github.com/equationalapplications/expo-llm-wiki/commit/9d76fd2a30ac7b655c3c8022bdbe361bebaab320))
+* **ontology:** carry match evidence on validateAndNormalizeFact ([0376912](https://github.com/equationalapplications/expo-llm-wiki/commit/0376912854d77870e07cd6ff12dfdd210f264289))
+* **ontology:** door receipts at all type doors; merge rejection reporting; ingest_zero_facts ([4fde0f0](https://github.com/equationalapplications/expo-llm-wiki/commit/4fde0f0fd17449b4dbcf3bc8360531075cd7a2e4)), closes [#442](https://github.com/equationalapplications/expo-llm-wiki/issues/442)
+* **ontology:** unique-normalized fallback in node/edge resolvers ([31c0861](https://github.com/equationalapplications/expo-llm-wiki/commit/31c0861097df75a799142b5eb09f4e3dc8804444))
+
+### Bug Fixes
+
+* **core:** adapt S1-0 mergeEmergentUpdates sentinel test to merge-rejection return shape ([14d02ed](https://github.com/equationalapplications/expo-llm-wiki/commit/14d02ed8bb050e7143e38f42501db15db530cfe1))
+* **core:** resolve auto-merge duplicate diagnostics/detail fields — landed node_type_assigned shape wins, writer union gains 'inherited'; amend spec/plan job name to landed 'ontologyBackfill' ([879173c](https://github.com/equationalapplications/expo-llm-wiki/commit/879173c1c3d2effe9ee23477a8057ce33d0b235e))
+* **ontology:** CodeRabbit round-2 fold — queue validity, off-mode remember door, ruled prompt wording, guards ([7138790](https://github.com/equationalapplications/expo-llm-wiki/commit/7138790125adf6917d3d4caf87b088e2aa7445d5))
+
 ## [9.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.6.0...v9.7.0) (2026-11-21)
 
 ### Features
