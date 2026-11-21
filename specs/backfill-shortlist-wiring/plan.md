@@ -92,7 +92,7 @@ captures RED before the source change goes green.
   system prompt stays the base template + ontology appendix — no catalog
   splice. The placeholder branch stays byte-identical and still returns
   before any splice.
-- Update the 8 `TITLE CATALOG` references in
+- Update the 8 `TITLE CATALOG` references (count verified: 8 hits) in
   `packages/core/__tests__/services/PromptService.test.ts` to the new
   shape; keep the #381 history comments where they still hold.
 - Tests first (RED): sections appear in `userPrompt` after the facts
@@ -107,14 +107,16 @@ captures RED before the source change goes green.
   `findShortlistRowsByEntityId`; resolve `k` once per pass via
   `resolveShortlistK(this.options.config)`; inside `buildPrompt`, call
   `buildShortlist(fact, rows, k)` per fact (facts carry `title` and
-  `body` already) and render the sections via T2's renderer. The
+  `body` already — `WikiFact.body`, `packages/core/src/types.ts:566`,
+  verified against `e268b892`) and render the sections via T2's
+  renderer. The
   `buildTitleCatalogBlock` call leaves the backfill path (owner ruling
   OQ1; spec §1).
 - The classifier path (`_runClassifierBackfill`) stays untouched — it
   never used the catalog.
 - Update the `ontologyBackfill` doc comment in
-  `packages/core/src/types.ts` (~line 1789) that references the
-  data-scope note, citing this spec's errata.
+  `packages/core/src/types.ts` (lines 1785–1791, verified) that
+  references the data-scope note, citing this spec's errata.
 - Update the `TITLE CATALOG` reference in
   `packages/core/__tests__/ontologyBackfill.test.ts`; add the integration
   pins: user prompt carries one section per batch fact, no `TITLE

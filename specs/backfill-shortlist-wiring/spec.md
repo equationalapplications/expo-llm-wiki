@@ -135,8 +135,9 @@ the per-fact shortlist of roadmap step 7, measured by
   (`ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS`, 40000) still bounds the prompt.
 - Existing suites pass: benchmarks suite
   (`pnpm --filter @equationalapplications/benchmarks-llm-wiki test`) and
-  the core suite (2939 tests,
-  `@equationalapplications/core-llm-wiki`).
+  the core suite (`@equationalapplications/core-llm-wiki`). No fixed
+  test count is pinned here; the suite passes as a whole (the count
+  drifts with every added test).
 
 ## Out of scope / rejected alternatives
 
