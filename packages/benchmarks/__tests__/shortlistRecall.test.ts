@@ -88,17 +88,6 @@ describe('buildVariantDistractors', () => {
     expect(() => buildVariantDistractors(289)).toThrow(/keyspace exhausted/);
   });
 
-  it('covers every fixture expected target in SEED_ROWS (T3 r3 nit 4: reverse-direction check)', () => {
-    // Forward direction (fixture target ∈ seed pool, incl. okf_type) is already
-    // enforced at runtime by groundTruthCheck on every runShortlistRecall call.
-    // This test adds the REVERSE direction: every SEED_ROWS title is a fixture
-    // target (set equality), so a SEED_ROWS/fixture drift fails here too.
-    // Titles only — type coverage lives in groundTruthCheck.
-    const fixtureKeys = new Set(entries.map((e) => normalizeTitleKey(e.expected_target.title)));
-    const seedKeys = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
-    expect([...fixtureKeys].sort()).toEqual([...seedKeys].sort());
-  });
-
   it('is deterministic across calls (same variant seed → same rows)', () => {
     expect(buildVariantDistractors(50)).toEqual(buildVariantDistractors(50));
     expect(VARIANT_SEED).toBe('shortlist-recall-2026-11-variant');
@@ -135,6 +124,19 @@ describe('buildVariantDistractors', () => {
 });
 
 describe('pools', () => {
+  it('covers every fixture expected target in SEED_ROWS (T3 r3 nit 4: reverse-direction check)', () => {
+    // Forward direction (fixture target ∈ seed pool, incl. okf_type) is already
+    // enforced at runtime by groundTruthCheck on every runShortlistRecall call.
+    // This test adds the REVERSE direction: every SEED_ROWS title is a fixture
+    // target (set equality), so a SEED_ROWS/fixture drift fails here too.
+    // Titles only — type coverage lives in groundTruthCheck.
+    // (T3 #448-r2 nit 4: lives here, not under buildVariantDistractors — it
+    // tests the pool/fixture invariant, not the generator.)
+    const fixtureKeys = new Set(entries.map((e) => normalizeTitleKey(e.expected_target.title)));
+    const seedKeySet = new Set(SEED_ROWS.map((r) => normalizeTitleKey(r.title)));
+    expect([...fixtureKeys].sort()).toEqual([...seedKeySet].sort());
+  });
+
   it('seed pool has exactly the 3 fixture targets; others nest it', () => {
     const pools = buildPools();
     expect(pools.seed).toHaveLength(3);

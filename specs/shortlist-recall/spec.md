@@ -317,7 +317,8 @@ reorder / near-synonym swap / truncation of seed titles, FNV-1a seeded by
 `normalizeTitleKey` collision with a seed title); the old pools are untouched, so
 historical numbers stay comparable. Real re-run
 (`shortlist-recall-9.8.0-2026-11-21.json`, engine 9.8.0, fastembed BGESmallENV15
-3.0.0, zero LLM tokens; old pools byte-identical to the prior file; double-run
+3.0.0, zero LLM tokens; old-pool sections (pools sizes, sweeps, perEntry records,
+determinism base fields) identical to the prior file; double-run
 determinism verified — the reports are byte-identical): on
 `distractor-variants`, lexical recall@10 = **0.9643** (27/28; sole miss 'Deploy')
 vs embedding **0.8214** (23/28; misses 'Orbit' ×3 and 'Acme Labs' ×2), and
