@@ -2,7 +2,7 @@ import type { ExtractedFactEdge, ExtractedTask, OntologyUpdates, WikiFact, WikiS
 import { WikiSupersedeError } from '../../../types';
 import type { TitleIndexEntry } from '../../OntologyService';
 import { normalizeTitleKey, type EdgeDrop } from '../../../utils/ontology';
-import { edgeDropDiagnostic, type DiagnosticBuffer } from '../../../utils/diagnostics';
+import { edgeDropDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts, type DiagnosticBuffer } from '../../../utils/diagnostics';
 import { checkGrounding, groundingOutcome, type GroundingVerdict } from '../../../utils/grounding';
 import { generateId } from '../../../utils/ids';
 import { TemporalService } from '../../TemporalService';
@@ -89,7 +89,16 @@ export async function applyOps(
     let { mode, manifest } = await deps.ontologyService?.getEffectiveState(entityId, tx)
       ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
     if (mode === 'emergent' && input.ontologyUpdates && deps.ontologyService) {
-      manifest = await deps.ontologyService.mergeEmergentUpdates(entityId, input.ontologyUpdates, tx);
+      const { manifest: merged, rejected } = await deps.ontologyService.mergeEmergentUpdates(entityId, input.ontologyUpdates, tx);
+      manifest = merged;
+      for (const reason of rejected) {
+        input.diagnostics.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
+      }
+    } else if (mode === 'strict' && input.ontologyUpdates) {
+      const proposalCount = (input.ontologyUpdates.node_types?.length ?? 0) + (input.ontologyUpdates.edge_types?.length ?? 0);
+      for (let i = 0; i < proposalCount; i++) {
+        input.diagnostics.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
+      }
     }
     const titleIndex = new Map<string, TitleIndexEntry>();
     for (const f of await deps.entryRepo.findRecentByEntityId(entityId, 100, tx)) {
@@ -105,6 +114,18 @@ export async function applyOps(
       const drops: EdgeDrop[] = [];
       const normalized = deps.ontologyService?.validateAndNormalizeFact(fact, manifest, { strict: false, drops })
         ?? { okf_type: null, edges: [] };
+      // Model-door receipts (spec §4): never throws in any mode; suppressed at 'off'.
+      if (shouldEmitOntologyReceipt(mode)) {
+        for (const receipt of nodeTypeReceipts(
+          { entityId, operation: 'librarian', trigger },
+          id,
+          typeof fact.okf_type === 'string' ? fact.okf_type : '',
+          normalized.okf_type,
+          normalized.match,
+        )) {
+          input.diagnostics.push(receipt);
+        }
+      }
       for (const d of drops) input.diagnostics.push(edgeDropDiagnostic(d, { ...diagBase, factId: id }));
       const gVerdict: GroundingVerdict | null = grounding
         ? checkGrounding(fact.evidence, input.groundingCorpus ?? [], grounding)

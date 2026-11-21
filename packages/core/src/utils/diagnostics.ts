@@ -130,6 +130,49 @@ export function capReceiptSlug(slug: string): string {
   return typeof slug === 'string' ? slug.slice(0, 64) : '';
 }
 
+/**
+ * Node-type door receipts for one fact: `node_type_folded` when the resolver
+ * normalized the supplied slug into the canonical one, `node_type_dropped`
+ * when a non-empty supplied slug missed the manifest entirely. Callers gate
+ * on the effective ontology mode before pushing these.
+ */
+export function nodeTypeReceipts(
+  base: { entityId: string; operation: WikiDiagnosticOperation; trigger: WikiDiagnosticTrigger },
+  factId: string,
+  rawType: string,
+  okfType: string | null,
+  match?: { raw: string; canonical: string; via: 'exact' | 'normalize' },
+): WikiDiagnosticInput[] {
+  const out: WikiDiagnosticInput[] = [];
+  const supplied = typeof rawType === 'string' ? rawType.trim() : '';
+  if (match && match.via === 'normalize') {
+    const to = capReceiptSlug(match.canonical);
+    out.push({
+      ...base,
+      code: 'node_type_folded',
+      detail: {
+        factId,
+        nodeType: to,
+        from: capReceiptSlug(match.raw),
+        to,
+        via: 'normalize',
+      },
+    });
+  }
+  if (!okfType && supplied) {
+    out.push({
+      ...base,
+      code: 'node_type_dropped',
+      detail: {
+        factId,
+        nodeType: capReceiptSlug(supplied),
+        reason: 'not_in_manifest',
+      },
+    });
+  }
+  return out;
+}
+
 const warnedNonFunction = new WeakSet<object>();
 
 function copyDetail(detail: WikiDiagnosticDetail): WikiDiagnosticDetail {

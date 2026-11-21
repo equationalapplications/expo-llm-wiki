@@ -84,7 +84,7 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       node_types: [{ type: 'Person', description: 'ignored duplicate' }],
     });
-    expect(merged.node_types).toHaveLength(2);
+    expect(merged.manifest.node_types).toHaveLength(2);
   });
 
   it('mergeOntologyUpdates is append-only by type slug', () => {
@@ -94,17 +94,17 @@ describe('ontology utils', () => {
         { type: 'vendor', description: 'New.' },
       ],
     });
-    expect(merged.node_types).toHaveLength(3);
-    expect(merged.node_types.find(n => n.type === 'person')?.description).toBe('An individual.');
-    expect(merged.node_types.find(n => n.type === 'vendor')).toBeDefined();
+    expect(merged.manifest.node_types).toHaveLength(3);
+    expect(merged.manifest.node_types.find(n => n.type === 'person')?.description).toBe('An individual.');
+    expect(merged.manifest.node_types.find(n => n.type === 'vendor')).toBeDefined();
   });
 
   it('mergeOntologyUpdates adds a new source/target variant of an existing edge name', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
     });
-    expect(merged.edge_types).toHaveLength(2);
-    expect(merged.edge_types[1]).toEqual({
+    expect(merged.manifest.edge_types).toHaveLength(2);
+    expect(merged.manifest.edge_types[1]).toEqual({
       type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.',
     });
   });
@@ -113,7 +113,7 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'Reports_To', source_type: 'Person', target_type: 'PERSON', description: 'dup' }],
     });
-    expect(merged.edge_types).toHaveLength(1);
+    expect(merged.manifest.edge_types).toHaveLength(1);
   });
 
   it('validateManifest accepts one property name with distinct source/target triples', () => {
@@ -144,8 +144,8 @@ describe('ontology utils', () => {
     const merged = mergeOntologyUpdates(manifest, {
       edge_types: [{ type: 'Reports_To', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
     });
-    expect(merged.edge_types).toHaveLength(2);
-    expect(merged.edge_types[1].type).toBe('reports_to');
+    expect(merged.manifest.edge_types).toHaveLength(2);
+    expect(merged.manifest.edge_types[1].type).toBe('reports_to');
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -156,7 +156,7 @@ describe('ontology utils', () => {
         { type: 'ownedby', source_type: 'person', target_type: 'project', description: 'b' },
       ],
     });
-    expect(merged.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
+    expect(merged.manifest.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -466,7 +466,7 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -478,7 +478,7 @@ describe('ontology parent inheritance', () => {
         edge_types: [],
       },
     );
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -487,7 +487,7 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'design_spec', description: 'Child.', parent_type: 'hallucinated' }],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'design_spec'))
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
       .toEqual({ type: 'design_spec', description: 'Child.' });
     expect(() => validateManifest(merged)).not.toThrow();
   });
@@ -506,7 +506,7 @@ describe('ontology parent inheritance', () => {
         edge_types: [],
       },
     );
-    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
+    expect(merged.manifest.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -515,7 +515,7 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'design_spec', description: 'x', parent_type: 'Design_Spec' }],
       edge_types: [],
     });
-    expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+    expect(merged.manifest.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
   });
 
   it('mergeOntologyUpdates survives a malformed proposed node with no type field', () => {
@@ -526,7 +526,7 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
+    expect(merged.manifest.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
   });
 
   it('mergeOntologyUpdates drops a blank parent_type without throwing (D6/D10)', () => {
@@ -537,7 +537,7 @@ describe('ontology parent inheritance', () => {
         node_types: [{ type: 'design_spec', description: 'x', parent_type: blank }],
         edge_types: [],
       });
-      expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+      expect(merged.manifest.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
       expect(() => validateManifest(merged)).not.toThrow();
     }
   });
@@ -560,7 +560,7 @@ describe('ontology parent inheritance', () => {
           edge_types: [],
         },
       );
-      expect(merged.node_types.find(n => n.type === 'design_spec'))
+      expect(merged.manifest.node_types.find(n => n.type === 'design_spec'))
         .toEqual({ type: 'design_spec', description: 'Child.' });
       expect(() => validateManifest(merged)).not.toThrow();
     },
@@ -591,8 +591,8 @@ describe('ontology parent inheritance', () => {
       ],
       edge_types: [],
     });
-    expect(merged.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
-    expect(merged.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
+    expect(merged.manifest.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
+    expect(merged.manifest.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
     expect(() => validateManifest(merged)).not.toThrow();
   });
 
@@ -601,8 +601,8 @@ describe('ontology parent inheritance', () => {
       node_types: [{ type: 'person', description: 'A person.' }],
       edge_types: [],
     });
-    expect(merged.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
-    expect('parent_type' in merged.node_types[0]).toBe(false);
+    expect(merged.manifest.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
+    expect('parent_type' in merged.manifest.node_types[0]).toBe(false);
   });
 });
 

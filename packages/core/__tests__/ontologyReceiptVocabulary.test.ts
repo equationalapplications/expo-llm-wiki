@@ -4,7 +4,7 @@ import {
   capReceiptSlug,
   SEVERITY,
   MESSAGE,
-} from '../../src/utils/diagnostics';
+} from '../src/utils/diagnostics';
 import type { WikiDiagnosticCode } from '../../src/types';
 
 describe('ontology receipt vocabulary (ontology-curation Task 3)', () => {

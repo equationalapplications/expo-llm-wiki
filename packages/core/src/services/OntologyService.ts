@@ -95,10 +95,10 @@ export class OntologyService {
     entityId: string,
     updates: OntologyUpdates,
     tx: SQLiteAdapter,
-  ): Promise<OntologyManifest> {
-    const merged = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
+  ): Promise<{ manifest: OntologyManifest; rejected: string[] }> {
+    const { manifest: merged, rejected } = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
     this.invalidateCache(entityId);
-    return merged;
+    return { manifest: merged, rejected };
   }
 
   validateAndNormalizeFact(

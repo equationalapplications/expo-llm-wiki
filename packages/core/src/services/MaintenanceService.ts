@@ -2,7 +2,7 @@ import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScor
 import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
 import { normalizeTitleKey } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
-import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import { buildTitleCatalogBlock } from '../prompts';
@@ -2398,7 +2398,16 @@ export class MaintenanceService {
       }
 
       if (txMode === 'emergent' && ontologyUpdates) {
-        manifest = await ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
+        const { manifest: merged, rejected } = await ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
+        manifest = merged;
+        for (const reason of rejected) {
+          diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason } });
+        }
+      } else if (txMode === 'strict' && ontologyUpdates) {
+        const proposalCount = (ontologyUpdates.node_types?.length ?? 0) + (ontologyUpdates.edge_types?.length ?? 0);
+        for (let i = 0; i < proposalCount; i++) {
+          diagBuffer.push({ ...diagBase, code: 'ontology_update_rejected', detail: { reason: 'mode_strict' } });
+        }
       }
 
       // Full breadth, three columns only: an old fact's edge targets are its
@@ -2432,6 +2441,18 @@ export class MaintenanceService {
         );
         for (const drop of validationDrops) {
           diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: fact.id }));
+        }
+        // Backfill door receipts (spec §4): a classification whose slug missed
+        // the manifest (or folded through normalization). We are past the
+        // txMode === 'off' abort above, so the gate is satisfied here.
+        for (const receipt of nodeTypeReceipts(
+          { entityId, operation: 'ontologyBackfill', trigger: 'call' },
+          fact.id,
+          typeof classification.okf_type === 'string' ? classification.okf_type : '',
+          normalized.okf_type,
+          normalized.match,
+        )) {
+          diagBuffer.push(receipt);
         }
         if (!normalized.okf_type) {
           failedValidation++;

@@ -1,9 +1,10 @@
-import type { SQLiteAdapter, WikiFact, RememberInput, ExtractedFactWithOntology } from '../types';
+import type { SQLiteAdapter, WikiFact, RememberInput, ExtractedFactWithOntology, WikiOptions } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { OntologyService } from './OntologyService';
 import type { SearchService } from './SearchService';
 import type { EmbeddingService } from './EmbeddingService';
 import { normalizeRememberInput } from '../utils/rememberInput';
+import { emitDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts } from '../utils/diagnostics';
 
 /** Direct mutable-fact writes (spec `specs/core-remember/spec.md` §3.3–§3.6). */
 export class RememberService {
@@ -13,6 +14,7 @@ export class RememberService {
     private ontologyService: OntologyService,
     private searchService: SearchService,
     private embeddingService: EmbeddingService,
+    private options?: Pick<WikiOptions, 'onDiagnostic'>,
   ) {}
 
   async remember(entityId: string, input: RememberInput): Promise<WikiFact> {
@@ -26,10 +28,24 @@ export class RememberService {
         // canonical slug when the manifest knows it, a throw under strict, null otherwise.
         const { mode, manifest } = await this.ontologyService.getEffectiveState(entityId, tx);
         const factLike = { okf_type: okfType, edges: [] } as unknown as ExtractedFactWithOntology;
-        fact.okf_type = this.ontologyService.validateAndNormalizeFact(factLike, manifest, {
+        const normalized = this.ontologyService.validateAndNormalizeFact(factLike, manifest, {
           strict: mode === 'strict',
           entityId,
-        }).okf_type;
+        });
+        fact.okf_type = normalized.okf_type;
+        // Person-door receipts (spec §4): in strict mode a miss throws inside
+        // validateAndNormalizeFact, so these only fire in the non-strict modes.
+        if (shouldEmitOntologyReceipt(mode)) {
+          for (const receipt of nodeTypeReceipts(
+            { entityId, operation: 'remember', trigger: 'call' },
+            fact.id,
+            okfType,
+            normalized.okf_type,
+            normalized.match,
+          )) {
+            emitDiagnostic(this.options ?? {}, receipt);
+          }
+        }
       }
       await this.entryRepo.upsert(fact, tx);
       if (validFrom !== undefined) {
