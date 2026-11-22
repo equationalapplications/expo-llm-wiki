@@ -3,8 +3,8 @@
 What's in flight: plan-review ladder COMPLETE (T1.5 + Opus T3 r1 +
 delta). No implementation tasks started.
 
-- [ ] T1 — `shortlistK` knob + resolver (commit: `feat(core): shortlistK config knob…`)
-  Evidence: 
+- [x] T1 — `shortlistK` knob + resolver (commit: `feat(core): shortlistK config knob…`)
+  Evidence: commit `56e16692`; controller re-ran gates at head: engineDefaults 19/19, typecheck exit 0, core suite `Tests  2947 passed (2947)` (253 files); RED evidence in `.superpowers/sdd/2b-backfill-shortlist/task-1-report.md`.
 - [ ] T2 — per-fact candidate renderer (commit: `feat(core): per-fact candidate section renderer…`)
   Evidence: 
 - [ ] T3 — scoring rows query reads `body` (commit: `feat(core): shortlist scoring rows query…`)
