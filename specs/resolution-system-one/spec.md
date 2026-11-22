@@ -136,7 +136,7 @@ Add to `SystemOneConfig` (`systemOne.ts:15-44`, beside `typing`/`edges`):
  * floor is set (§3 — missing floor under `'auto'` warns once and the site
  * resolves `'llm'`); confident answers apply (§4), uncertain-band
  * candidates fall through to the generative resolve of the same pass
- * (§5), and an unavailable classifier warns once per pass and falls
+ * (§5), and an unavailable classifier warns once per process and falls
  * through whole (§5). There is no `'off'`: this PR adds no configuration
  * that can silently discard a candidate from resolution.
  */
@@ -286,8 +286,10 @@ The generative prompt builder (`buildOpsResolvePrompt`) is untouched.
   (`systemOne.ts:12`) updates its member count.
 - `engineDefaults.ts` resolver comments mirror the step-10 wording with
   site-specific rationale (data-loss asymmetry).
-- Roadmap step 11 row gets its Done mark at cleanup (post-merge), per the
-  specs/README lifecycle — not in this PR.
+- Roadmap step 11 row gets its Done mark in this PR's cleanup commit
+  (controller adjudication D1, 2026-11-22 — roadmap rule beats the
+  earlier draft wording; step-10 precedent: the Done line rode PR #459's
+  cleanup commit).
 
 ## Explicitly out of scope / rejected alternatives
 
