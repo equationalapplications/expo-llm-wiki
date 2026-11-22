@@ -1,8 +1,8 @@
 # Spec — Step 12: Heal screening from System-One
 
-Status: Approved by owner 2026-11-22 (Discord thread `1570840529388965951`,
-msg `1574148740716175392`); all eight open questions resolved — see Open
-questions (each carries its ruling). Draft 2026-11-22.
+Status: Implemented 2026-11-22 (PR #463). Owner approval 2026-11-22
+(Discord thread `1570840529388965951`, msg `1574148740716175392`); all eight
+open questions ruled as recommended. Draft 2026-11-22.
 Base: branch `tessera/session1-laneA` @ `206936cc`. Every pin below re-verified
 live against this worktree (`.sdd/step12/pins-recon.md` is the pin report;
 line numbers match it except where this spec quotes the live file directly).

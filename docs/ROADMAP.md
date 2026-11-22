@@ -281,6 +281,8 @@ through to the generative path, and the pass warns once.
 
 ### Step 12 — Heal screening from System-One — PLANNED
 
+Done — merged 2026-11-22, PR #463, spec [heal-screening-system-one](../specs/heal-screening-system-one/spec.md)
+
 The heal screen opts in to the configured model. Heal may forget when
 the host runs it (owner ruling, 2026-11-20); this step ships the
 per-fact receipts (`heal_deleted`, `heal_downgraded`) and the
