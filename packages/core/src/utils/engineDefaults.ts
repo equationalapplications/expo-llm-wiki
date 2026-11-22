@@ -151,6 +151,23 @@ export function resolveSystemOneTyping(
     ?? 'llm';
 }
 
+/**
+ * Edge-mode resolution (specs/edge-suggestions-system-one §2): `systemOne.edges`
+ * → `'llm'`. A present non-`'auto'`/non-`'llm'` value warns once and is treated
+ * as unset. No legacy chain and no call option.
+ */
+export function resolveSystemOneEdges(config: WikiConfig | undefined): 'auto' | 'llm' {
+  const edges = config?.systemOne?.edges;
+  if (edges !== undefined && !isTypingMode(edges)) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.edges\` is ${formatConfigValue(edges)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+    return 'llm';
+  }
+  return edges ?? 'llm';
+}
+
 /** Engine default for the backfill shortlist size (`ontology.shortlistK`). */
 export const DEFAULT_SHORTLIST_K = 10 as const;
 
@@ -199,4 +216,28 @@ export function resolveTypingMinConfidence(config: WikiConfig | undefined): numb
   return (systemOneValid ? systemOneFloor : undefined)
     ?? (legacyValid ? legacyFloor : undefined)
     ?? DEFAULT_TYPING_MIN_CONFIDENCE;
+}
+
+const isEdgesFloor = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0.5 && v <= 1;
+
+/**
+ * Edge-screen floor (specs/edge-suggestions-system-one §3): returns the
+ * `systemOne.minConfidence.edges` floor only when the edge mode resolves
+ * `'auto'` and the floor is a finite number in [0.5, 1]. There is no default
+ * floor: a missing or out-of-domain value warns once and returns `undefined`
+ * (the site then resolves `'llm'`). Under `'llm'` or unset it reads nothing.
+ */
+export function resolveEdgesMinConfidence(config: WikiConfig | undefined): number | undefined {
+  if (resolveSystemOneEdges(config) !== 'auto') return undefined;
+  const floor = config?.systemOne?.minConfidence?.edges;
+  if (isEdgesFloor(floor)) return floor;
+  warnOnce(
+    floor === undefined
+      ? '[core-llm-wiki] systemOne: `systemOne.minConfidence.edges` is required when `systemOne.edges` is '
+        + "'auto'. The edge screen is off for this site; edges stay on the generative path."
+      : `[core-llm-wiki] systemOne: \`systemOne.minConfidence.edges\` is ${formatConfigValue(floor)}, which `
+        + 'is not a finite number in [0.5, 1]. The edge screen is off for this site; edges stay on the generative path.',
+  );
+  return undefined;
 }

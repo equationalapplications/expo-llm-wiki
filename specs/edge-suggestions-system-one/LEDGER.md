@@ -2,10 +2,10 @@
 
 In flight: nothing
 
-- [ ] 1. Baseline check — evidence: <test run>
-- [ ] 2. Config surface (§1, §2, §9) — evidence: <commit, test run>
-- [ ] 3. `resolveSystemOneEdges` (test plan 1, first half) — evidence: <commit, test run>
-- [ ] 4. `resolveEdgesMinConfidence` (test plan 1, second half; 18, third clause) — evidence: <commit, test run>
+- [x] 1. Baseline check — evidence: full suite 254 files / 2969 tests passed (70.55s); typecheck (`tsc --noEmit`) clean, no output.
+- [x] 2. Config surface (§1, §2, §9) — evidence: uncommitted (wave 1). Added type-case test in `systemOneConfig.test.ts`; before the change `tsc --noEmit` on the test file reported 4 `edges` errors, after: 0. `pnpm typecheck` clean; `systemOneConfig.test.ts` + `engineDefaults.test.ts` 60/60 pass. Note: `tsconfig` `include` is `src` only, so `pnpm typecheck` cannot see test files; the pre-change failure was shown by running `tsc` directly on the test file.
+- [x] 3. `resolveSystemOneEdges` (test plan 1, first half) — evidence: uncommitted. 3 tests written first (all 8 new resolver tests failed red: not a function); after the change `systemOneConfig.test.ts` passes.
+- [x] 4. `resolveEdgesMinConfidence` (test plan 1, second half; 18, third clause) — evidence: uncommitted. 5 tests written first (red), then green; `systemOneConfig.test.ts` + `engineDefaults.test.ts` 2 files / 60 tests pass, `engineDefaults.test.ts` unchanged. Note: `formatConfigValue` renders NaN and Infinity both as `null`, so their warn messages collide under `warnOnce`; the test expects 1 warn for NaN and 0 further for Infinity (shared message). Resolver still returns `undefined` for both.
 - [ ] 5. Public exports — evidence: <commit, test run>
 - [ ] 6. Mode, floor, and `shortlistK` plumbing — evidence: <commit, test run>
 - [ ] 7. Compatibility pins (test plan 4, 5, 10) — evidence: <commit, test run>
