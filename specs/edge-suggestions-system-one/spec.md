@@ -16,8 +16,8 @@ Roadmap step 10 says the edge-suggestion site "opts in to the configured
 model" (`docs/ROADMAP.md:262-267`), and edge suggestion is additive — a
 wrong edge is a wrong fact, not a lost one — so it runs first among the site
 conversions. The S1-0 spec reserved exactly one new `'edges'` line in
-`SystemOneThresholdSite` for this PR (`specs/system-one-config/spec.md:66-71`)
-and fenced `edges (PR 3)` out of S1-0 (`spec.md:268-274`). No
+`SystemOneThresholdSite` for this PR (`specs/system-one-config/spec.md:67-71`)
+and fenced `edges (PR 3)` out of S1-0 (`spec.md:265-272`). No
 `systemOne.edges`-adjacent key exists today.
 
 ## Root cause with evidence
@@ -64,7 +64,7 @@ export type SystemOneThresholdSite = 'typing' | 'edges';
 ```
 
 Exactly one new member, exactly per the S1-0 merge fence
-(`specs/system-one-config/spec.md:66-71`). This is type-level surface so
+(`specs/system-one-config/spec.md:67-71`). This is type-level surface so
 `minConfidence` stays closed under the site union; the operative gate is §2.
 
 ### 2. Boolean opt-out gate `systemOne.edges`
@@ -104,9 +104,18 @@ unaffected by construction.
 When the gate is off and a classification carried a non-empty `edges` array,
 emit one `edge_suggestion_suppressed` diagnostic per fact — content-free:
 `{ factId }` only — riding the existing diagnostic buffer pattern
-(`MaintenanceService.ts:2746-2755` door-receipt precedent). When the gate is
-on, or the model supplied no edges, no receipt fires. New code added to
-`WikiDiagnosticCode` with a fixed severity (S1-0 §7 pattern).
+(`MaintenanceService.ts:2746-2755` door-receipt precedent). The receipt
+fires on the model's suggestion, independently of the fact's subsequent
+typing outcome: a gated-off fact whose `okf_type` fails validation (the
+`!normalized.okf_type` continue at `:2754-2757`) or that is omitted as
+concurrently typed (`:2763-2766`) still receipts the suppression — the
+receipt region executes before both continue paths. When the gate is on,
+or the model supplied no edges, no receipt fires. New code added to
+`WikiDiagnosticCode` with a fixed severity (S1-0 §7 pattern). Both
+`SEVERITY` and `MESSAGE` in `packages/core/src/utils/diagnostics.ts` are
+exhaustive `Record<WikiDiagnosticCode, …>` maps (`diagnostics.ts:18`,
+`:73`), so the new code requires an entry in **both** (fixed message
+template, no interpolation — REQ-DIAG-03).
 
 ### 5. Compatibility lock
 
@@ -119,7 +128,7 @@ options, no prompt changes, no counter changes, and no scheduler changes.
 ## Explicitly out of scope / rejected alternatives
 
 - Gating ingest fact-edges (`IngestionService.ts:953-963`) or librarian
-  edges (`apply.ts:165`) — the S1-0 §10 fence (`spec.md:268-274`) plus the
+  edges (`apply.ts:165`) — the S1-0 §10 fence (`spec.md:265-272`) plus the
   roadmap's singular "the edge-suggestion site" that "runs first among the
   site conversions" (`ROADMAP.md:262-264`) scope this PR to the backfill
   generative site; ingest/librarian are later site conversions. Carried as
@@ -174,6 +183,14 @@ options, no prompt changes, no counter changes, and no scheduler changes.
 8. Legacy `'auto'` typing with no new keys: edges stay on and unchanged
    (§5). **Recommendation: confirm** — this is the REQ-COMPAT-01.5
    assertion; the test plan pins it.
+9. Dead config footgun: adding `'edges'` to the site union makes
+   `systemOne.minConfidence.edges` valid TypeScript with **no consumer**
+   (`minConfidence` is read only for `'typing'` — `systemOne.ts:21-22`;
+   `engineDefaults.ts:186-196` resolves only the typing floor). A host
+   setting `{edges: 0.9}` gets silently dead config. **Recommendation:**
+   warn once, naming the key, that `minConfidence.edges` has no consumer
+   at this site yet (same warn-once discipline as §2's invalid-value
+   path); alternatively accept the dead key and document it. Owner pick.
 
 ## Files touched
 
@@ -189,6 +206,9 @@ options, no prompt changes, no counter changes, and no scheduler changes.
   (`:2746-2755` region).
 - `packages/core/src/types.ts` — `WikiDiagnosticCode` gains
   `edge_suggestion_suppressed` with a fixed severity (§4).
+- `packages/core/src/utils/diagnostics.ts` — `SEVERITY` and `MESSAGE`
+  entries for `edge_suggestion_suppressed` (both maps are exhaustive
+  `Record<WikiDiagnosticCode, …>` — `diagnostics.ts:18`, `:73`; §4).
 - `packages/core/__tests__/` — test plan below.
 - `packages/core/src/index.ts` — export the new resolver beside the S1-0
   resolvers.
@@ -219,3 +239,14 @@ Vitest, beside the existing backfill tests:
 7. Compat: with no `systemOne` key, a full pass matches the pre-PR baseline
    across typing modes `'llm'` and `'auto'`, including edge counts and the
    step-9 `maxPromptChars` mechanics at the same `runBatched` call.
+8. Gated off, invalid-type fact: a classification whose `okf_type` fails
+   manifest validation still emits `edge_suggestion_suppressed` (§4
+   ordering pin — the receipt precedes the `failedValidation` continue),
+   and the pass's `failedValidation` count is unchanged by the gate.
+9. Gated off, escalation counter: under `onLowConfidence: 'llm'` with the
+   gate off, the merged pass result reports `edgesAdded: 0` (the counter
+   merge sums classifier + generative at `MaintenanceService.ts:2215-2225`;
+   the generative leg must contribute zero).
+10. Vocabulary: `ontologyReceiptVocabulary.test.ts` extends both its code
+   list and its severity assertions with `edge_suggestion_suppressed`
+   (fixed message template present — REQ-DIAG-03).
