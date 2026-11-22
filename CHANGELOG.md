@@ -1,3 +1,18 @@
+## [9.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.9.0...v9.10.0) (2026-11-22)
+
+### Features
+
+* **core:** backfill prompt carries per-fact candidate sections (spec §1, OQ1) ([f19382e](https://github.com/equationalapplications/expo-llm-wiki/commit/f19382e4fb0ae7eeb8dc5684ce88eda2fa1724c1))
+* **core:** per-fact candidate section renderer (spec §1) ([e321b98](https://github.com/equationalapplications/expo-llm-wiki/commit/e321b98a145920b32350baa89f5c08760799e41d))
+* **core:** shortlist scoring rows query (spec §2, OQ2) ([ce1a40a](https://github.com/equationalapplications/expo-llm-wiki/commit/ce1a40a790da941a9b6a83abe327ad4153366a1e))
+* **core:** shortlist wiring in the ontology backfill pass (spec §1) ([d781b49](https://github.com/equationalapplications/expo-llm-wiki/commit/d781b492dcd47ad6eee1beb07c39fe8ab6cc35cd))
+* **core:** shortlistK config knob for the backfill shortlist (spec §3) ([56e1669](https://github.com/equationalapplications/expo-llm-wiki/commit/56e16692408259b7d9662b8a0b9aa0a8f061f4d8))
+
+### Bug Fixes
+
+* **core:** shortlist fold — non-exclusive footer once, zero-pool relabel, per-pass scorer caching (opus M1/M2/m1-m3) ([b6823bb](https://github.com/equationalapplications/expo-llm-wiki/commit/b6823bbc13aac134bbb13c6e6d0215537ebecaf5))
+* **core:** shortlistK validated at backfill entry; neutral candidate header; stale comments (opus delta M1/m3-m5) ([619795a](https://github.com/equationalapplications/expo-llm-wiki/commit/619795a7fa9f9a59640cfedc8c43192f64d99cf3))
+
 ## [9.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.8.0...v9.9.0) (2026-11-21)
 
 ### Features
