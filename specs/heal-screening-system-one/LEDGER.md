@@ -30,11 +30,11 @@ Rules:
 ## Task boxes
 
 Wave 1
-- [ ] T1.1 Baseline stop-gate. Record: files ___ / tests ___ / typecheck ___ / sha ___
-- [ ] T1.2 Bench BEFORE. Prompt chars/tokens ___ ; dry-run estimate ___ ; `--yes` approved? ___ ; measured ___
-- [ ] T1.3 `systemOne.ts` union + key
-- [ ] T1.4 Codes, severity/message maps, `HealResult` fields, vocabulary test
-- [ ] T1.5 Resolvers + exports + resolver tests
+- [x] T1.1 Baseline stop-gate. Record: files 255 / tests 3014 / typecheck clean (all packages) / sha 61c54728 (code-identical to `09f5678b`; spec-only commits) / wall 75.7s (vitest), 2026-11-22
+- [x] T1.2 Bench BEFORE (free measurements only). `HEAL_SYSTEM_PROMPT` = 505 chars (`packages/core/src/prompts.ts`, measured at 61c54728; token count not reported by harness); dry-run `supersession --strategy legacy --dry-run` → 25 scenarios (5 liveSkip skipped), input-token estimate 150,000; `promptVolume.ts` per-call heal-site volume: blocked — an ad-hoc `tsx -e` run of `runPromptVolume` crashed in `new WikiMemory` (`MaintenanceScheduler` options undefined), not pursued without code/bench changes. live run: not run — spend declined by controller 2026-11-22; PR body carries no measured live-run claim
+- [x] T1.3 `systemOne.ts` union + key
+- [x] T1.4 Codes, severity/message maps, `HealResult` fields, vocabulary test (new `heal receipt vocabulary` describe in `ontologyReceiptVocabulary.test.ts`; no existing test pinned heal maps)
+- [x] T1.5 Resolvers + exports + resolver tests
 
 Wave 2
 - [ ] T2.1 `HEAL_SYSTEM_PROMPT` schema
@@ -57,7 +57,7 @@ Wave 4 (gated on PR #461 resolving)
 
 | Metric | Before (sha) | After (sha) | Delta |
 |---|---|---|---|
-| `HEAL_SYSTEM_PROMPT` chars | | | |
+| `HEAL_SYSTEM_PROMPT` chars | 505 (61c54728) | | |
 | `HEAL_SYSTEM_PROMPT` tokens (if reported) | | | |
 | Heal-call input tokens (bench) | | | |
 | Heal-call output tokens (bench) | | | |

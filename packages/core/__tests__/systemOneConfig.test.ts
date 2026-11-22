@@ -540,6 +540,87 @@ describe('resolveEdgesMinConfidence (edge-suggestions-system-one §3)', () => {
   });
 });
 
+describe('healScreen config surface (heal-screening-system-one §1, §2)', () => {
+  it('accepts systemOne.healScreen and minConfidence.healScreen at the type level', () => {
+    const config: WikiConfig = {
+      systemOne: { healScreen: 'auto', minConfidence: { typing: 0.5, healScreen: 0.8 } },
+    };
+    expect(config.systemOne?.healScreen).toBe('auto');
+    expect(config.systemOne?.minConfidence?.healScreen).toBe(0.8);
+  });
+});
+
+describe('resolveSystemOneHealScreen (heal-screening-system-one §2)', () => {
+  it("defaults to 'llm' for unset config, {} and {systemOne:{}}", async () => {
+    const { resolveSystemOneHealScreen } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneHealScreen(undefined)).toBe('llm');
+    expect(resolveSystemOneHealScreen({})).toBe('llm');
+    expect(resolveSystemOneHealScreen({ systemOne: {} })).toBe('llm');
+  });
+
+  it("passes 'auto' and 'llm' through, and typing/edges never change the result", async () => {
+    const { resolveSystemOneHealScreen } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneHealScreen({ systemOne: { healScreen: 'auto' } })).toBe('auto');
+    expect(resolveSystemOneHealScreen({ systemOne: { healScreen: 'llm' } })).toBe('llm');
+    expect(resolveSystemOneHealScreen({ systemOne: { typing: 'auto', edges: 'auto' } })).toBe('llm');
+  });
+
+  it("an invalid value warns exactly once naming systemOne.healScreen and resolves 'llm'", async () => {
+    const { resolveSystemOneHealScreen } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = { systemOne: { healScreen: 'hybrid' as never } } as WikiConfig;
+    expect(resolveSystemOneHealScreen(config)).toBe('llm');
+    expect(resolveSystemOneHealScreen(config)).toBe('llm');
+    const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.healScreen'));
+    expect(hits.length).toBe(1);
+    expect(String(hits[0][0]).startsWith('[core-llm-wiki] systemOne:')).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+describe('resolveHealScreenMinConfidence (heal-screening-system-one §3)', () => {
+  it("under 'auto', a missing floor returns undefined and warns once naming the key", async () => {
+    const { resolveHealScreenMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config: WikiConfig = { systemOne: { healScreen: 'auto' } };
+    expect(resolveHealScreenMinConfidence(config)).toBeUndefined();
+    expect(resolveHealScreenMinConfidence(config)).toBeUndefined();
+    const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.healScreen'));
+    expect(hits.length).toBe(1);
+    warn.mockRestore();
+  });
+
+  it("under 'auto', out-of-domain floors (0, 0.3, 1.01, NaN) return undefined and warn once each", async () => {
+    const { resolveHealScreenMinConfidence } = await import('../src/utils/engineDefaults');
+    for (const bad of [0, 0.3, 1.01, NaN]) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { systemOne: { healScreen: 'auto', minConfidence: { healScreen: bad } } } as WikiConfig;
+      expect(resolveHealScreenMinConfidence(config)).toBeUndefined();
+      expect(resolveHealScreenMinConfidence(config)).toBeUndefined();
+      expect(warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.healScreen')).length).toBe(1);
+      warn.mockRestore();
+    }
+  });
+
+  it("under 'auto', floors 0.5 and 1 pass through", async () => {
+    const { resolveHealScreenMinConfidence } = await import('../src/utils/engineDefaults');
+    for (const ok of [0.5, 0.7, 1]) {
+      expect(resolveHealScreenMinConfidence({ systemOne: { healScreen: 'auto', minConfidence: { healScreen: ok } } })).toBe(ok);
+    }
+  });
+
+  it("with mode 'llm' or unset, returns undefined without reading the floor or warning", async () => {
+    const { resolveHealScreenMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveHealScreenMinConfidence(undefined)).toBeUndefined();
+    expect(resolveHealScreenMinConfidence({})).toBeUndefined();
+    expect(resolveHealScreenMinConfidence({ systemOne: { healScreen: 'llm', minConfidence: { healScreen: 0.3 } } })).toBeUndefined();
+    expect(resolveHealScreenMinConfidence({ systemOne: { healScreen: 'llm', minConfidence: { healScreen: 0.8 } } })).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
 describe('public export surface (step 10)', () => {
   it('exports both edge resolvers from the package index', async () => {
     const idx = await import('../src/index');

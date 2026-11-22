@@ -47,3 +47,19 @@ describe('ontology receipt vocabulary (ontology-curation Task 3)', () => {
     expect(capReceiptSlug(undefined as unknown as string)).toBe('');
   });
 });
+
+describe('heal receipt vocabulary (heal-screening-system-one §5)', () => {
+  it('heal_deleted and heal_downgraded are severity info', () => {
+    expect(SEVERITY.heal_deleted).toBe('info');
+    expect(SEVERITY.heal_downgraded).toBe('info');
+  });
+
+  it('heal_deleted and heal_downgraded carry the spec §5 messages', () => {
+    expect(MESSAGE.heal_deleted).toBe(
+      'Heal soft-deleted a fact (or withheld the delete below the confidence floor).',
+    );
+    expect(MESSAGE.heal_downgraded).toBe(
+      'Heal downgraded a fact to tentative (or withheld the downgrade below the confidence floor).',
+    );
+  });
+});

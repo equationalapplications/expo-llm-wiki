@@ -222,6 +222,25 @@ export interface HealResult {
   downgraded: number;
   /** Facts soft-deleted — the orphan-marking SQL pass plus model-directed deletes, deduped. */
   deleted: number;
+  /**
+   * Every fact id this heal run left at reduced confidence (stale-inferred
+   * SQL pass plus model-directed downgrades, deduped) — the ids behind
+   * `downgraded`. Optional so existing `HealResult` literals (host mocks)
+   * keep compiling; `doRunHeal` always populates it today. NOT disjoint
+   * with `deletedIds`: a fact both downgraded and deleted in one pass
+   * appears in BOTH lists (union-not-sum semantics,
+   * `MaintenanceService.ts:2082-2086`) — hosts must not treat the lists
+   * as disjoint.
+   */
+  downgradedIds?: string[];
+  /**
+   * Every fact id this heal run soft-deleted (orphan SQL pass plus
+   * model-directed deletes, deduped) — the ids behind `deleted`. Optional
+   * so existing `HealResult` literals (host mocks) keep compiling;
+   * `doRunHeal` always populates it today. NOT disjoint with
+   * `downgradedIds` (see above).
+   */
+  deletedIds?: string[];
   /** New facts synthesized by heal. */
   newFactsCreated: number;
   /**
@@ -925,6 +944,8 @@ export type WikiDiagnosticCode =
   | 'hook_failed'
   | 'background_job_failed'
   | 'heal_skipped'
+  | 'heal_deleted'
+  | 'heal_downgraded'
   | 'grounding_missing'
   | 'grounding_failed'
   | 'classification_low_confidence'
