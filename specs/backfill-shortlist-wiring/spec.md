@@ -1,8 +1,15 @@
 # Spec — PR 2b: The per-fact shortlist in the ontology-backfill prompt
 
-Status: Reviewed 2026-11-21 — owner approved; rulings OQ1–OQ4 recorded in the
-Owner rulings section below (Kurt, Discord msg `1573841239412052079`).
-Implementation follows this spec.
+Status: Implemented 2026-11-21 (PR #453, implementation head `619795a7`;
+acceptance tests in `packages/core/__tests__/engineDefaults.test.ts`,
+`packages/core/__tests__/shortlist.test.ts`,
+`packages/core/__tests__/services/PromptService.test.ts`,
+`packages/core/__tests__/ontologyBackfill.test.ts`, and the benchmarks
+harness pin in `packages/benchmarks/__tests__/statement-kinds-run.test.ts`)
+— owner approved; rulings OQ1–OQ4 recorded in the Owner rulings section
+below (Kurt, Discord msg `1573841239412052079`). Review trail: T1.5 + Opus
+T3 plan ladder, internal same-model code review, Opus T3 code rung + delta
+(PR #453 comments/carried in the ledger before prune).
 Lane 2, PR 2b. Roadmap step 8 ("The shortlist in the backfill prompt",
 `docs/ROADMAP.md`). Base: `origin/main` @ `e268b892` (v9.9.0 release cut,
 PR #452). Every pin below is re-verified live against `e268b892`.
