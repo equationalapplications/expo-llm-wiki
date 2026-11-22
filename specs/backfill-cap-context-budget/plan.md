@@ -154,9 +154,12 @@ the new test, sees it fail, then writes the code. The leaf moves first.
        fact ids in it, and `systemPrompt.length + userPrompt.length <= cap`.
      - B2. Two untyped facts with bodies of `cap / 2 - 60` chars split at
        the derived cap. The test asserts two calls. Each call carries one
-       fact id. Each call's prompt length is `<= cap` and `> 40_000`. The
-       second bound proves that the derived cap, not the floor, sized the
-       batch.
+       fact id. Each call's prompt length is `<= cap` and `> 40_000`.
+       This brackets the derived cap from above: a wrongly larger cap
+       joins the pair, and a wrongly smaller cap breaks the bounds.
+       State its limit honestly: the same two-call shape also appears
+       under the legacy floor, because an oversized single fact is still
+       sent alone. Only B1 separates the derived cap from the floor.
      - The `generateText` mock answers with the ids found in the prompt,
        like the existing oversized-batch test does.
    - Block "no silent fallback (spec test 5)", one test:
