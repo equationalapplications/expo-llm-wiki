@@ -189,18 +189,36 @@ finds healthy, so absence-of-verdict already means no action.
 The applied/withheld split happens IMMEDIATELY AFTER the guard sets
 `safeDowngraded`/`safeDeleted` are built
 (`MaintenanceService.ts:1910-1911`) and BEFORE `uniqueDeletedFactIds`
-is computed at `:1929` — and it must sit there: three downstream
-consumers read that derived list, not `safeDeleted` — the search sync
-(`:2044`), `deliverHealRemovals` (`:2049`), and the `allDeleted` union
-(`:2086`) — so screening inside the transaction apply would leak
+is computed at `:1929` — and it must sit there. The seam does NOT
+merely filter downstream consumers; it REPLACES the guard outputs
+themselves: the applied sets (`appliedDowngraded`/`appliedDeleted`, or
+the same names rebound) become THE sets every later reader sees. There
+are FIVE readers of the guard outputs downstream of the seam, and a
+withheld id must reach NONE of the five:
+
+1. the apply — `softDeleteByIds`/`downgradeByIds` run at
+   `MaintenanceService.ts:1948-1949` (pins §1, apply seam `:1947-1949`);
+2-4. the derived `uniqueDeletedFactIds` computed at `:1929` and its
+   THREE consumers — the search sync (`:2044`),
+   `deliverHealRemovals` (`:2049`), and the `allDeleted` union
+   (`:2086`);
+5. `healSyncIds` (`:2040-2046`), which ALSO spreads `safeDowngraded`
+   directly (`:2043`) — so the applied-set replacement must cover the
+   downgrade side too, not just the deleted side.
+
+Because the replacement happens before `:1929`, the derived list is
+computed from applied deletes only and its three consumers inherit the
+screen; screening inside the transaction apply instead would leak
 withheld ids into removals delivery, the search sync, and the
-changed-id lists. Every consumer downstream of the seam reads the
+changed-id lists. Every reader downstream of the seam reads the
 APPLIED sets only.
 
 - In: the MODEL-DIRECTED sets only — `safeDowngraded`/`safeDeleted`
   (post-guard, `MaintenanceService.ts:1910-1911`), per-fact, before
   `downgradeByIds`/`softDeleteByIds` run in the tx (pins §1, apply seam
-  `MaintenanceService.ts:1947-1949`).
+  `MaintenanceService.ts:1947-1949`); the applied subsets
+  (`appliedDowngraded`/`appliedDeleted`) then REPLACE them for all five
+  readers above.
   Per-fact granularity: one verdict per (id, action); a fact id in both
   sets is applied/withheld independently per action, exactly as the
   guard admits them independently today.
@@ -225,7 +243,11 @@ APPLIED sets only.
      confidence rides a `Map<string, number>` built alongside the parse
      output, BEFORE the mutable-ids guard collapses verdicts into
      `Set<string>`s (`MaintenanceService.ts:1889-1903`, unchanged by
-     this PR).
+     this PR). The carrier takes ONLY verdicts the guard ADMITTED: the
+     per-batch `mutableIds` check (`MaintenanceService.ts:1901-1902`)
+     runs on the same ids, and a verdict the guard rejected never
+     contributes a confidence — so it can never lower a duplicate id's
+     confidence under the lowest-wins rule below.
   2. The floor comparison itself runs AFTER the guard sets
      `safeDowngraded`/`safeDeleted` exist (`:1910-1911`) and BEFORE
      `uniqueDeletedFactIds` is computed at `:1929` (the seam above).
@@ -258,8 +280,10 @@ APPLIED sets only.
     through TO. The withheld move is receipted
     (`detail.reason: 'below_floor'`, §5) so the host sees what heal chose
     not to do.
-  - Missing confidence (open question 1 migration) → apply as today AND
-    warn once (open question 1 wire-compat; open question 1 migration).
+  - Missing confidence (open question 1 migration) → apply as today,
+    warn once (open question 1 wire-compat), AND receipt each such
+    verdict with `detail.reason: 'applied_unscreened'` (§5) — the
+    outcome must match §5 exactly.
 - Disclosed interaction — withheld delete plus paired restate: a
   WITHHELD delete leaves fact X live, and the model's paired restatement
   (a synthesized replacement fact) then matches X at Jaccard >= threshold
@@ -306,11 +330,14 @@ corresponds to a committed move. Shape mirrors
 `reason`, `factId`, and omits unknown locators rather than sending
 nulls:
 
-- APPLIED (under resolved `'auto'` only) model-directed delete →
+- APPLIED (under resolved `'auto'` only — PENDING open question 8:
+  should receipts fire in EVERY mode?) model-directed delete →
   `heal_deleted`, `detail: { factId, reason: 'applied' }`.
-- APPLIED (under resolved `'auto'` only) model-directed downgrade →
+- APPLIED (under resolved `'auto'` only — PENDING open question 8)
+  model-directed downgrade →
   `heal_downgraded`, `detail: { factId, reason: 'applied' }`.
-- WITHHELD (below floor, under resolved `'auto'` only) → same code as
+- WITHHELD (below floor, under resolved `'auto'` only — PENDING open
+  question 8) → same code as
   the action, `detail: { factId, reason: 'below_floor', confidence }`
   (confidence included when the model declared one; this detail shape
   also assumes open question 1 resolves (a) — adjust if it resolves
@@ -387,7 +414,11 @@ today (pins §7):
   (`types.ts:351`) — the event and soft-delete retention clocks: a
   receipt diagnostic (`heal_deleted`/`heal_downgraded` are diagnostics)
   and a soft-deleted row are both retained only as long as these knobs
-  allow. Retention is host policy (`specs/expire/spec.md:151-152`);
+  allow. Guidance, not a requirement: to keep a `'below_floor'`
+  receipt auditable across the full `HEAL_RECHECK_MS` window (7 days,
+  `MaintenanceService.ts:89`), a host's `pruneEventsAfter` should be
+  at least 7 days — the relationship is disclosed here; retention
+  itself remains host policy (`specs/expire/spec.md:151-152`);
   `event_retention_held` (`types.ts:942`) is the visibility hook when
   retention holds a write.
 - `pruneSupersededAfter` (`types.ts:352-357`, default null = keep
@@ -421,10 +452,22 @@ No edge code is added or changed here.
 
 With no `systemOne` keys (or `healScreen` resolving `'llm'`):
 `resolveSystemOneHealScreen` returns `'llm'`, no floor is read, every
-admitted verdict applies exactly as today, no receipts fire (zero new
-diagnostics on default hosts), and behavior is behaviourally identical;
-the `HealResult` shape gains the additive OPTIONAL §6 fields on every
-host. Test-churn budget: because the new fields are optional, existing
+admitted verdict applies exactly as today, and the parse/apply logic is
+identical. Whether the DEFAULT PATH is byte-identical is conditional on
+open question 6: under OQ6's RECOMMENDATION (the `{id, confidence}`
+schema prompt goes to ALL hosts), a default `'llm'` host gets the same
+parse and apply logic but DIFFERENT PROMPT TEXT — the model is asked
+for confidence, which facts it chooses to act on can change as a
+result, and that prompt's token cost is unmeasured and disclosed here —
+so default hosts are parity-of-logic, not parity-of-prompt; only under
+OQ6's alternative (mode-conditional prompt, `'llm'` hosts keep
+today's text) is the default path byte-identical. The zero-new-
+diagnostics claim is scoped the same way: no receipts fire on default
+hosts under the §5 emission condition (PENDING open question 8 — if
+OQ8 resolves that receipts fire in EVERY mode, default hosts DO gain
+`heal_deleted`/`heal_downgraded` receipts, and this claim narrows to
+"no receipts beyond the OQ8-mandated ones"); the `HealResult` shape
+gains the additive OPTIONAL §6 fields on every host. Test-churn budget: because the new fields are optional, existing
 `HealResult` literals (in-repo and host mocks) keep compiling
 unchanged; the `toEqual` churn on in-repo assertions that compare whole
 result objects REMAINS and must be updated in the same PR. No
@@ -597,6 +640,19 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    `fact_deduplicated` diagnostic), and the roadmap sentence does not
    demand pairing. Grounds: `MaintenanceService.ts:1951-1952`,
    `:1937-1946`, `prompts.ts:44-46`, §7.
+8. Should the `heal_deleted`/`heal_downgraded` receipts (§5) fire in
+   EVERY mode (the default `'llm'` included) or only under resolved
+   `'auto'`? **Recommendation: every mode.** The roadmap's
+   per-fact-receipts deliverable — making heal's moves auditable under
+   the forget-ruling — reads as unconditional
+   (`docs/ROADMAP.md:280-288`), and gating the audit trail behind the
+   `'auto'` opt-in would leave diagnostics-only hosts blind to
+   model-directed deletes on default hosts, exactly the gap open
+   question 2 says the receipts exist to close (both halves together
+   are the audit surface; diagnostics alone lose hosts that only
+   consume diagnostics). The codes are SEVERITY `info`
+   (`diagnostics.ts`), so the noise cost is bounded. Grounds:
+   `docs/ROADMAP.md:280-288`, §5 as amended by earlier folds, OQ2.
 
 ## Files touched
 
@@ -675,7 +731,11 @@ lands second, pins §8), plus a new
    fires, the id is absent from `deletedIds`, and the id is ABSENT from
    the `deliverHealRemovals` payload (`:2049` reads the derived
    `uniqueDeletedFactIds` list, which the seam (§4) excludes withheld
-   ids from); same for a below-floor downgrade.
+   ids from); same for a below-floor downgrade. The test ALSO asserts
+   the arguments passed to `softDeleteByIds`/`downgradeByIds`
+   (`MaintenanceService.ts:1948-1949`) exclude withheld ids — the seam
+   replaces the guard outputs, so none of the five downstream readers
+   (§4) ever sees a withheld id.
 4. Deterministic SQL passes never gated: with the screen `'auto'` and a
    floor of `1` (verdicts with confidence strictly below 1.0 withheld —
    the comparison is inclusive `≥`, so a confidence-1.0 verdict applies;
@@ -686,12 +746,18 @@ lands second, pins §8), plus a new
 5. Wire compat: a provider answering the OLD bare-string schema under
    `'auto'` → verdicts apply as today (no silent discard), one-time
    `warnOnce` names the contract migration (open question 1
-   recommendation) — conditional on open question 1 resolving (a),
+   recommendation), and EACH old-schema verdict produces an
+   `'applied_unscreened'` receipt (§5, per §4's outcome rule) —
+   conditional on open question 1 resolving (a),
    evaporates under (b); under `'llm'` no warning and behaviour
    identical modulo the additive §6 `HealResult` fields.
-6. Default mode: no `systemOne` keys at all — behaviourally identical to
-   pre-PR except the additive §6 `HealResult` fields:
-   no floor read, no new diagnostics, `deletedIds`/`downgradedIds` still
+6. Default mode: no `systemOne` keys at all — parse/apply logic
+   identical to pre-PR except the additive §6 `HealResult` fields
+   (prompt-text parity itself is conditional on open question 6, §8):
+   no floor read, no new diagnostics under the §5 emission condition
+   (PENDING open question 8: under an every-mode OQ8 resolution this
+   test instead asserts exactly the `heal_deleted`/`heal_downgraded`
+   receipts fire), `deletedIds`/`downgradedIds` still
    populated (they exist under `'llm'` too — surfacing is unconditional,
    §6) and match `deleted`/`downgraded` counts.
 7. Floor boundaries: verdict confidence exactly equal to the floor
@@ -727,5 +793,8 @@ lands second, pins §8), plus a new
     absent from `deletedIds` and from the `deliverHealRemovals`
     payload, and no new fact row is inserted.
 14. INTENT rule 11: the plan stage publishes a measured before/after
-    baseline from the bench harness for the heal lane; this spec
-    itself claims no unmeasured numbers.
+    baseline from the bench harness for the heal lane — including the
+    default-path prompt change if open question 6 resolves per its
+    recommendation (schema prompt to ALL hosts changes the prompt a
+    default `'llm'` host sends, §8; token cost must be measured, not
+    claimed); this spec itself claims no unmeasured numbers.
