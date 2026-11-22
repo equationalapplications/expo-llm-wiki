@@ -52,7 +52,24 @@ held tasks are unheld above):**
   union member) and the all-or-nothing fallthrough applies. Task 5
   unheld.
 
-Plan-author questions, preserved verbatim below the rulings.
+- **Opus close-out rung (opus-review, effort medium, cap $2.50): IN
+  FLIGHT** from the canonical clone seat on
+  `206936cc...origin/tessera/session2-laneB`.
+
+## Review ladder (implementation)
+
+- **Flash tier-1.5 rung (glm-5.3-flash, free) 2026-11-22: APPROVE.** 88/88
+  targeted tests verified reviewer-side; typecheck clean; all 8 rulings +
+  D5 pinned reviewer-side; invariants clean; unset-key byte-identity
+  proven by JSON-comparison test. Non-blocking observations recorded, no
+  code churn: (1) mode resolver runs twice per pass (warnOnce dedups,
+  harmless); (2) the `whole()` helper builds two near-identical objects
+  (cosmetic); (3) `ask` is built before the floor check can
+  short-circuit (never fired, harmless).
+- **Opus close-out rung: result recorded below when it lands.**
+
+Plan-author discrepancy questions (D1–D5), preserved verbatim below —
+adjudications above govern; the verbatim text is historical.
 
 - 2026-11-22 — D1 (holds task 12, roadmap line only). Spec §8 says the
   step-11 Done mark lands "at cleanup (post-merge) … not in this PR".
