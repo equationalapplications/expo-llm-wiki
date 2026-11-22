@@ -30,6 +30,8 @@ export {
   resolveTypingMinConfidence,
   resolveSystemOneEdges,
   resolveEdgesMinConfidence,
+  resolveSystemOneResolve,
+  resolveResolveMinConfidence,
   warnOnce,
   DEFAULT_TYPING_MIN_CONFIDENCE,
 } from './utils/engineDefaults';

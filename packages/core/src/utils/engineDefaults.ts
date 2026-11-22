@@ -168,6 +168,23 @@ export function resolveSystemOneEdges(config: WikiConfig | undefined): 'auto' | 
   return edges ?? 'llm';
 }
 
+/**
+ * Resolve-mode resolution (specs/resolution-system-one §2): `systemOne.resolve`
+ * → `'llm'`. A present non-`'auto'`/non-`'llm'` value warns once and is treated
+ * as unset. No legacy chain and no call option.
+ */
+export function resolveSystemOneResolve(config: WikiConfig | undefined): 'auto' | 'llm' {
+  const resolve = config?.systemOne?.resolve;
+  if (resolve !== undefined && !isTypingMode(resolve)) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.resolve\` is ${formatConfigValue(resolve)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+    return 'llm';
+  }
+  return resolve ?? 'llm';
+}
+
 /** Engine default for the backfill shortlist size (`ontology.shortlistK`). */
 export const DEFAULT_SHORTLIST_K = 10 as const;
 
@@ -238,6 +255,30 @@ export function resolveEdgesMinConfidence(config: WikiConfig | undefined): numbe
         + "'auto'. The edge screen is off for this site; edges stay on the generative path."
       : `[core-llm-wiki] systemOne: \`systemOne.minConfidence.edges\` is ${formatConfigValue(floor)}, which `
         + 'is not a finite number in [0.5, 1]. The edge screen is off for this site; edges stay on the generative path.',
+  );
+  return undefined;
+}
+
+/**
+ * Resolution-screen floor (specs/resolution-system-one §3): returns the
+ * `systemOne.minConfidence.resolve` floor only when the resolve mode resolves
+ * `'auto'` and the floor is a finite number in [0.5, 1]. There is no default
+ * floor: a missing or out-of-domain value warns once and returns `undefined`
+ * (the site then resolves `'llm'`). Under `'llm'` or unset it reads nothing.
+ * The floor is mandatory because a wrong NOOP drops a live fact.
+ */
+export function resolveResolveMinConfidence(config: WikiConfig | undefined): number | undefined {
+  if (resolveSystemOneResolve(config) !== 'auto') return undefined;
+  const floor = config?.systemOne?.minConfidence?.resolve;
+  if (isEdgesFloor(floor)) return floor;
+  warnOnce(
+    floor === undefined
+      ? '[core-llm-wiki] systemOne: `systemOne.minConfidence.resolve` is required when `systemOne.resolve` is '
+        + "'auto'. A wrong NOOP drops a live fact, so there is no default floor. The resolution screen is off; "
+        + 'resolution stays on the generative path.'
+      : `[core-llm-wiki] systemOne: \`systemOne.minConfidence.resolve\` is ${formatConfigValue(floor)}, which `
+        + 'is not a finite number in [0.5, 1]. A wrong NOOP drops a live fact, so the resolution screen is off; '
+        + 'resolution stays on the generative path.',
   );
   return undefined;
 }

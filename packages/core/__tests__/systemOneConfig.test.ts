@@ -549,3 +549,127 @@ describe('public export surface (step 10)', () => {
     expect(idx.resolveEdgesMinConfidence({ systemOne: { edges: 'auto', minConfidence: { edges: 0.7 } } })).toBe(0.7);
   });
 });
+
+describe('resolve config surface (resolution-system-one §1, §2)', () => {
+  it('accepts systemOne.resolve and minConfidence.resolve at the type level', () => {
+    const config: WikiConfig = {
+      systemOne: { resolve: 'auto', minConfidence: { resolve: 0.8 } },
+    };
+    expect(config.systemOne?.resolve).toBe('auto');
+    expect(config.systemOne?.minConfidence?.resolve).toBe(0.8);
+  });
+
+  it("rejects 'off' at the type level (no silent-discard mode)", () => {
+    const config: WikiConfig = {
+      // @ts-expect-error 'off' is not a member of 'auto' | 'llm'
+      systemOne: { resolve: 'off' },
+    };
+    expect(config).toBeDefined();
+  });
+});
+
+describe('resolveSystemOneResolve (resolution-system-one §2)', () => {
+  it("defaults to 'llm' for unset config, unset systemOne, and unset key", async () => {
+    const { resolveSystemOneResolve } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneResolve(undefined)).toBe('llm');
+    expect(resolveSystemOneResolve({})).toBe('llm');
+    expect(resolveSystemOneResolve({ systemOne: {} })).toBe('llm');
+  });
+
+  it("passes 'auto' and 'llm' through; other sites never change the result", async () => {
+    const { resolveSystemOneResolve } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneResolve({ systemOne: { resolve: 'auto' } })).toBe('auto');
+    expect(resolveSystemOneResolve({ systemOne: { resolve: 'llm' } })).toBe('llm');
+    expect(resolveSystemOneResolve({ systemOne: { typing: 'auto', edges: 'auto' } })).toBe('llm');
+  });
+
+  it("a provider with classify and no key resolves 'llm'", async () => {
+    const { resolveSystemOneResolve } = await import('../src/utils/engineDefaults');
+    const config = {
+      llmProvider: { generate: async () => '', classify: async () => ({ answers: {} }) },
+    } as unknown as WikiConfig;
+    expect(resolveSystemOneResolve(config)).toBe('llm');
+  });
+
+  it("invalid values return 'llm' and warn exactly once naming systemOne.resolve", async () => {
+    const { resolveSystemOneResolve } = await import('../src/utils/engineDefaults');
+    for (const bad of ['off', 1, null, BigInt(1)]) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { systemOne: { resolve: bad as never } } as WikiConfig;
+      expect(resolveSystemOneResolve(config)).toBe('llm');
+      expect(resolveSystemOneResolve(config)).toBe('llm');
+      const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.resolve'));
+      expect(hits.length).toBe(1);
+      expect(String(hits[0][0]).startsWith('[core-llm-wiki] systemOne:')).toBe(true);
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('resolveResolveMinConfidence (resolution-system-one §3)', () => {
+  it("with mode unset or 'llm', returns undefined without reading the floor or warning", async () => {
+    const { resolveResolveMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveResolveMinConfidence(undefined)).toBeUndefined();
+    expect(resolveResolveMinConfidence({ systemOne: { minConfidence: { resolve: 0.8 } } })).toBeUndefined();
+    expect(resolveResolveMinConfidence({ systemOne: { resolve: 'llm', minConfidence: { resolve: 0.8 } } })).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("under 'auto', a missing floor returns undefined and warns once naming the key", async () => {
+    const { resolveResolveMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config: WikiConfig = { systemOne: { resolve: 'auto' } };
+    expect(resolveResolveMinConfidence(config)).toBeUndefined();
+    expect(resolveResolveMinConfidence(config)).toBeUndefined();
+    const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.resolve'));
+    expect(hits.length).toBe(1);
+    warn.mockRestore();
+  });
+
+  it("under 'auto', out-of-domain floors return undefined and warn once each, naming [0.5, 1]", async () => {
+    const { resolveResolveMinConfidence } = await import('../src/utils/engineDefaults');
+    for (const bad of [NaN, 0.49, 1.01, -1, '0.8']) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { systemOne: { resolve: 'auto', minConfidence: { resolve: bad as never } } } as WikiConfig;
+      expect(resolveResolveMinConfidence(config)).toBeUndefined();
+      expect(resolveResolveMinConfidence(config)).toBeUndefined();
+      const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.resolve'));
+      expect(hits.length).toBe(1);
+      expect(String(hits[0][0])).toContain('[0.5, 1]');
+      warn.mockRestore();
+    }
+  });
+
+  it("under 'auto', endpoints and in-domain floors pass through unchanged without warning", async () => {
+    const { resolveResolveMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const ok of [0.5, 0.8, 1]) {
+      expect(resolveResolveMinConfidence({ systemOne: { resolve: 'auto', minConfidence: { resolve: ok } } })).toBe(ok);
+    }
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('an invalid mode with a valid floor returns undefined; the floor is never read', async () => {
+    const { resolveResolveMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = { systemOne: { resolve: 'bogus' as never, minConfidence: { resolve: 0.8 } } } as WikiConfig;
+    expect(resolveResolveMinConfidence(config)).toBeUndefined();
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('systemOne.resolve')).length).toBeLessThanOrEqual(1);
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.resolve')).length).toBe(0);
+    warn.mockRestore();
+  });
+});
+
+describe('public export surface (step 11)', () => {
+  it('exports both resolve resolvers and keeps the screen internal', async () => {
+    const idx = await import('../src/index');
+    expect(typeof idx.resolveSystemOneResolve).toBe('function');
+    expect(typeof idx.resolveResolveMinConfidence).toBe('function');
+    expect(idx.resolveSystemOneResolve({ systemOne: { resolve: 'auto' } })).toBe('auto');
+    expect(idx.resolveResolveMinConfidence({ systemOne: { resolve: 'auto', minConfidence: { resolve: 0.7 } } })).toBe(0.7);
+    expect('screenResolveCandidates' in idx).toBe(false);
+  });
+});
