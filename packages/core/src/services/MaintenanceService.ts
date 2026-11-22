@@ -1,6 +1,6 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
 import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
-import { normalizeTitleKey, isReservedAbstainSlug, ONTOLOGY_ABSTAIN_SENTINEL } from '../utils/ontology';
+import { normalizeTitleKey, isReservedAbstainSlug, typeSatisfies, ONTOLOGY_ABSTAIN_SENTINEL } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
@@ -12,7 +12,7 @@ import { HISTORY_MAX_DEPTH } from './TemporalService';
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
-import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveShortlistK, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveEdgesMinConfidence, resolveShortlistK, resolveSystemOneEdges, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
 import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
@@ -2163,6 +2163,12 @@ export class MaintenanceService {
     // alone (a classify method on the provider) never switches paths
     // (REQ-COMPAT-01.5).
     const classifierMode = resolveSystemOneTyping(this.options.config, options?.classifier);
+    // Edge screen (specs/edge-suggestions-system-one §2, §3): resolved once per
+    // pass beside the typing chain. The site mode is 'auto' only when the edge
+    // mode is 'auto' AND a valid floor exists (posture A: no default floor).
+    const edgeMode = resolveSystemOneEdges(this.options.config);
+    const edgeMinConfidence = resolveEdgesMinConfidence(this.options.config);
+    const edgeSiteMode: 'auto' | 'llm' = edgeMode === 'auto' && typeof edgeMinConfidence === 'number' ? 'auto' : 'llm';
     const classify = this.options.llmProvider.classify;
     if (classifierMode === 'auto' && typeof classify === 'function') {
       const slugs = effectiveManifest.node_types.map((n) => n.type);
@@ -2175,6 +2181,7 @@ export class MaintenanceService {
       ) {
         const classifierRun = await this._runClassifierBackfill(
           entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter, trigger,
+          shortlistK, edgeSiteMode, edgeMinConfidence,
         );
         if (classifierRun.abortedOntologyOff || classifierRun.result.budgetStop) {
           return classifierRun.result;
@@ -2206,6 +2213,8 @@ export class MaintenanceService {
             recheckCutoff,
             shortlistK,
             maxPromptChars,
+            edgeSiteMode,
+            edgeMinConfidence,
           });
           // Counter-merge: `scanned` is counted once by the classifier step
           // (escalated facts were already attempted there); the generative
@@ -2235,6 +2244,8 @@ export class MaintenanceService {
       recheckCutoff,
       shortlistK,
       maxPromptChars,
+      edgeSiteMode,
+      edgeMinConfidence,
     });
   }
 
@@ -2266,7 +2277,7 @@ export class MaintenanceService {
   private async _runGenerativeBackfill(
     entityId: string,
     candidates: WikiFact[],
-    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number; maxPromptChars: number },
+    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number; maxPromptChars: number; edgeSiteMode: 'auto' | 'llm'; edgeMinConfidence: number | undefined },
   ): Promise<OntologyBackfillResult> {
     const batchSize = runOpts.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
     const shortlistK = runOpts.shortlistK;
@@ -2276,6 +2287,11 @@ export class MaintenanceService {
     const maxPromptChars = runOpts.maxPromptChars;
     if (maxPromptChars === undefined) {
       throw new Error('_runGenerativeBackfill: runOpts.maxPromptChars is required (resolved at doRunOntologyBackfill entry)');
+    }
+    // Plumbed for coherence with the classifier screen; the generative step is
+    // the fallback and is never gated or floored, so it reads neither field.
+    if (runOpts.edgeSiteMode === undefined) {
+      throw new Error('_runGenerativeBackfill: runOpts.edgeSiteMode is required (resolved at doRunOntologyBackfill entry)');
     }
 
     const ontologyService = this.ontologyService!;
@@ -2480,6 +2496,9 @@ export class MaintenanceService {
     recheckCutoff: number,
     meter: UsageMeter | undefined,
     trigger: WikiDiagnosticTrigger,
+    shortlistK: number,
+    edgeSiteMode: 'auto' | 'llm',
+    edgeMinConfidence: number | undefined,
   ): Promise<{ result: OntologyBackfillResult; escalated: WikiFact[]; abortedOntologyOff: boolean }> {
     // Floor chain (§3): `systemOne.minConfidence.typing` →
     // `ontology.classifyMinConfidence` → 0.5. Only the classifier path reads
@@ -2509,6 +2528,62 @@ export class MaintenanceService {
       | { fact: WikiFact; kind: 'overflow_skip' }
       | { fact: WikiFact; kind: 'unattempted' };
 
+    // Edge screen (specs/edge-suggestions-system-one §4): only when the site mode
+    // is 'auto'. One pool read per pass, in-step, before any classify call; no
+    // hoist to pass entry. The key map — never a key parse — is the only lookup
+    // authority for recovering (definitions, candidate) from an `edge:` key.
+    type EdgeCandidate = { id: string; title: string; okf_type: string };
+    const edgeScreen = new Map<string, {
+      questions: Record<string, ClassifierQuestion>;
+      keyMap: Map<string, { definitions: OntologyManifest['edge_types']; candidate: EdgeCandidate }>;
+    }>();
+    if (edgeSiteMode === 'auto' && (manifest.edge_types ?? []).length > 0) {
+      const pool = await this.entryRepo.findShortlistRowsByEntityId(entityId);
+      // Collision set, fully known before any classify call (order-independent):
+      // every normalized title shared by 2+ pool rows, plus every batch fact's
+      // title (the source fact's own included — D3). Such candidates could
+      // resolve to a different fact than the one screened, so they are skipped.
+      const poolTitleCounts = new Map<string, number>();
+      for (const r of pool) {
+        const k = normalizeTitleKey(r.title);
+        poolTitleCounts.set(k, (poolTitleCounts.get(k) ?? 0) + 1);
+      }
+      const batchTitleKeys = new Set(candidates.map((f) => normalizeTitleKey(f.title)));
+      const collides = (title: string): boolean => {
+        const k = normalizeTitleKey(title);
+        return (poolTitleCounts.get(k) ?? 0) > 1 || batchTitleKeys.has(k);
+      };
+      const scorer = createShortlistScorer(pool);
+      const edgeTypeNames = [...new Set(manifest.edge_types.map((e) => e.type))];
+      for (const fact of candidates) {
+        // buildShortlist returns the pool's own row objects, so ids survive.
+        const ranked = (buildShortlist({ title: fact.title, body: fact.body }, pool, shortlistK, scorer) as typeof pool)
+          .filter((row) => !collides(row.title));
+        const questions: Record<string, ClassifierQuestion> = {};
+        const keyMap = new Map<string, { definitions: OntologyManifest['edge_types']; candidate: EdgeCandidate }>();
+        for (const row of ranked) {
+          for (const edgeType of edgeTypeNames) {
+            // The target-side filter is the only pre-call type filter: the
+            // source type is unknown until typing is accepted in this request.
+            const definitions = manifest.edge_types.filter(
+              (e) => e.type === edgeType && typeSatisfies(e.target_type, row.okf_type, manifest),
+            );
+            if (definitions.length === 0) continue;
+            const key = `edge:${edgeType}:${row.id}`;
+            const descriptions = [...new Set(definitions.map((d) => d.description))].join(' / ');
+            questions[key] = {
+              kind: 'binary',
+              instructions:
+                `Does this fact have the "${edgeType}" relationship (${descriptions}) `
+                + `to the existing fact titled "${row.title}"?`,
+            };
+            keyMap.set(key, { definitions, candidate: { id: row.id, title: row.title, okf_type: row.okf_type } });
+          }
+        }
+        if (keyMap.size > 0) edgeScreen.set(fact.id, { questions, keyMap });
+      }
+    }
+
     let stopped: WikiBudgetExhausted | undefined;
     const outcomes = await withConcurrency<Outcome>(
       candidates.map((fact) => async (): Promise<Outcome> => {
@@ -2518,7 +2593,7 @@ export class MaintenanceService {
           response = await callClassify(
             this.options,
             { operation: 'ontologyBackfill', entityId, trigger, meter },
-            { state: classifierStateForFact(fact), questions: { okf_type: question } },
+            { state: classifierStateForFact(fact), questions: { okf_type: question, ...(edgeScreen.get(fact.id)?.questions ?? {}) } },
           );
         } catch (err) {
           if (err instanceof WikiBudgetExhausted) {

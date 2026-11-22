@@ -539,3 +539,13 @@ describe('resolveEdgesMinConfidence (edge-suggestions-system-one §3)', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+describe('public export surface (step 10)', () => {
+  it('exports both edge resolvers from the package index', async () => {
+    const idx = await import('../src/index');
+    expect(typeof idx.resolveSystemOneEdges).toBe('function');
+    expect(typeof idx.resolveEdgesMinConfidence).toBe('function');
+    expect(idx.resolveSystemOneEdges({ systemOne: { edges: 'auto' } })).toBe('auto');
+    expect(idx.resolveEdgesMinConfidence({ systemOne: { edges: 'auto', minConfidence: { edges: 0.7 } } })).toBe(0.7);
+  });
+});
