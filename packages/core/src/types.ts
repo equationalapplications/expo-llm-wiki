@@ -1788,11 +1788,11 @@ export interface WikiInstructions {
   librarian: string;
   heal: string;
   /**
-   * Template only: the run-time prompt additionally carries a TITLE CATALOG
-   * of the entity's typed node titles (appended after this text, before the
-   * ontology block) whenever a catalog is built — see
-   * `buildTitleCatalogBlock` and the data-scope note in the ontology-backfill
-   * spec Errata (PR #425).
+   * Template only: the run-time user prompt additionally carries per-fact
+   * CANDIDATE TARGETS sections (a top-k shortlist of the entity's typed node
+   * titles, after the Facts JSON) — see `buildCandidateSections` and the
+   * Errata in `specs/backfill-shortlist-wiring/spec.md`, which supersede the
+   * earlier title-catalog data-scope note (PR #425).
    */
   ontologyBackfill: string;
 }
