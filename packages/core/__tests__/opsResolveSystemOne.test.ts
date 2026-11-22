@@ -172,6 +172,7 @@ describe('ops pass with the System-One resolve screen', () => {
 
   it('a budget stop in the generative leg discards the classifier receipts', async () => {
     let classified = false;
+    let classifyCalls = 0;
     class GateMeter extends UsageMeter {
       override fits(estimate: number): boolean {
         return classified ? false : super.fits(estimate);
@@ -184,9 +185,10 @@ describe('ops pass with the System-One resolve screen', () => {
         () => ({ ops: [] }),
       ],
       classify: (req) => {
-        // Close the meter only after the LAST classify call, so the screen
+        // Close the meter only after the LAST classify call (counted, not
+        // content-keyed — screening order must not matter), so the screen
         // completes and the generative leg is what hits the budget.
-        if (!req.state.startsWith('User lives')) classified = true;
+        if (++classifyCalls === 2) classified = true;
         return binary(req.state.startsWith('User lives') ? 0.97 : 0.02);
       },
     });
