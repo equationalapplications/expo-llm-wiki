@@ -6,15 +6,15 @@ Baseline: full core suite at lane base `206936cc` — **255 files / 3014
 tests, controller-measured 2026-11-22 14:05 EST, full suite green in the
 lane worktree** (code-identical to `206936cc`; lane commits are docs-only).
 
-- [ ] 1. Baseline and ledger reconcile — evidence: baseline measured
+- [x] 1. Baseline and ledger reconcile — evidence: baseline measured
       controller-side (this line); suite green at lane base
-- [ ] 2. Config surface: `'resolve'` site member and `resolve` key — evidence: <commit, test run, or log link>
-- [ ] 3. Mode resolver `resolveSystemOneResolve` — evidence: <commit, test run, or log link>
-- [ ] 4. Floor resolver `resolveResolveMinConfidence` — evidence: <commit, test run, or log link>
+- [x] 2. Config surface: `'resolve'` site member and `resolve` key — evidence: commit `aa0db68c` (RED not type-observable: tsconfig `include: ["src"]` excludes tests — controller-accepted deviation, noted by implementer)
+- [x] 3. Mode resolver `resolveSystemOneResolve` — evidence: commit `aa0db68c`; RED 4×TypeError → GREEN (systemOneConfig.test.ts 54 passing)
+- [x] 4. Floor resolver `resolveResolveMinConfidence` — evidence: commit `aa0db68c`; RED 5×TypeError → GREEN (engineDefaults.test.ts 19 passing)
 - [ ] 5. The prologue `screenResolveCandidates` (D3, D5 RESOLVED — unheld) — evidence: <commit, test run, or log link>
 - [ ] 6. Wire the prologue into `runResolve` (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
 - [ ] 7. Receipt emission loop in `ops/index.ts` (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
-- [ ] 8. Public exports — evidence: <commit, test run, or log link>
+- [x] 8. Public exports — evidence: commit `aa0db68c`; exactly 2 added lines; `screenResolveCandidates` asserted absent from index
 - [ ] 9. Pass-level tests (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
 - [ ] 10. Invariant audit — evidence: <commit, test run, or log link>
 - [ ] 11. Suite health — evidence: <commit, test run, or log link>
