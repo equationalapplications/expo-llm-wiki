@@ -241,6 +241,8 @@ numbers about the engine's own code and blocks nothing.
 
 ### Step 8 — The shortlist in the backfill prompt — PLANNED
 
+Done — merged 2026-11-21, PR #453, spec [backfill-shortlist-wiring](../specs/backfill-shortlist-wiring/spec.md)
+
 The backfill title catalog narrows from "every typed node, capped" to
 the per-fact shortlist of step 7. The step's spec records the errata
 that supersedes the temporary data-scope ruling of 2026-11-19

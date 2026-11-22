@@ -151,6 +151,25 @@ export function resolveSystemOneTyping(
     ?? 'llm';
 }
 
+/** Engine default for the backfill shortlist size (`ontology.shortlistK`). */
+export const DEFAULT_SHORTLIST_K = 10 as const;
+
+/**
+ * Fail-fast `ontology.shortlistK` resolution (specs/backfill-shortlist-wiring §3):
+ * missing → 10; a present value must be a finite integer >= 1, otherwise this
+ * throws. Never falls back silently on a bad value.
+ */
+export function resolveShortlistK(config: WikiConfig | undefined): number {
+  const k = config?.ontology?.shortlistK;
+  if (k === undefined) return DEFAULT_SHORTLIST_K;
+  if (typeof k !== 'number' || !Number.isInteger(k) || k < 1) {
+    throw new Error(
+      `[core-llm-wiki] \`ontology.shortlistK\` is ${formatConfigValue(k)}, which is not a finite integer >= 1.`,
+    );
+  }
+  return k;
+}
+
 /** Engine default confidence floor for classifier typing. */
 export const DEFAULT_TYPING_MIN_CONFIDENCE = 0.5 as const;
 

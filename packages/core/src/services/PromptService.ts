@@ -349,29 +349,32 @@ export class PromptService {
     facts: unknown[],
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
-    titleCatalog?: string,
+    candidateSections?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT;
     const hasFacts = /\{\{\s*facts\s*\}\}/.test(template);
     // NOTE (#381, review M5): the {{facts}}/ontology-placeholder branch below
-    // returns BEFORE the title catalog is spliced — a host that overrides the
-    // backfill prompt with a placeholder template silently gets no catalog.
-    // Documented here rather than silently diverging; a {{title_catalog}}
-    // placeholder is the future shape if a host needs the catalog there.
+    // returns BEFORE the per-fact candidate sections are appended — a host that
+    // overrides the backfill prompt with a placeholder template silently gets
+    // no candidates. Documented here rather than silently diverging; the
+    // catalog became user-prompt candidate sections in
+    // specs/backfill-shortlist-wiring/spec.md.
     if (hasFacts || this.hasOntologyPlaceholders(template)) {
       return {
         systemPrompt: this.buildSystemPrompt(template, { facts }, ontologyContext),
         userPrompt: hasFacts ? 'Please classify the facts.' : `Facts:\n${JSON.stringify(facts, null, 2)}`,
       };
     }
-    // #381: the title catalog splices in between the base prompt and the
-    // ontology appendix. E1's seed-only variant measured 28/28 — diagnosis
-    // evidence the gap was the blocker; the shipped block is unbenchmarked
-    // (results/statement-kinds-e1-*).
-    const effective = titleCatalog !== undefined ? `${template}\n\n${titleCatalog}` : template;
+    // #381 history: the title catalog used to splice into the system prompt
+    // between the base prompt and the ontology appendix (E1's seed-only
+    // variant measured 28/28 — diagnosis evidence the gap was the blocker;
+    // the shipped block was unbenchmarked, results/statement-kinds-e1-*).
+    // specs/backfill-shortlist-wiring/spec.md moved it: per-fact candidate
+    // sections now ride in the user prompt after the Facts JSON.
+    const factsBlock = `Facts:\n${JSON.stringify(facts, null, 2)}`;
     return {
-      systemPrompt: this.appendOntology(effective, ontologyContext),
-      userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
+      systemPrompt: this.appendOntology(template, ontologyContext),
+      userPrompt: candidateSections !== undefined ? `${factsBlock}\n\n${candidateSections}` : factsBlock,
     };
   }
 

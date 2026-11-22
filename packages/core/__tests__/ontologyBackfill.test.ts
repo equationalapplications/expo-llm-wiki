@@ -144,6 +144,23 @@ describe('EntryRepository — backfill methods', () => {
     ]);
   });
 
+  it('findShortlistRowsByEntityId returns live typed facts with body', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    const repo = makeRepo(db);
+    await seedEntry(db, { id: 's1', title: 'Alpha', body: 'Alpha body text', okfType: 'person' });
+    await seedEntry(db, { id: 's2', title: 'Beta', body: 'untyped body' });
+    await seedEntry(db, { id: 's3', title: 'Gone', body: 'deleted body', okfType: 'person', deletedAt: 5 });
+    const rows = await repo.findShortlistRowsByEntityId('e1');
+    expect(rows).toEqual([
+      { id: 's1', title: 'Alpha', okf_type: 'person', body: 'Alpha body text' },
+    ]);
+    // the title index keeps its original three-column shape
+    expect(await repo.findTitleIndexByEntityId('e1')).toEqual([
+      { id: 's1', title: 'Alpha', okf_type: 'person' },
+    ]);
+  });
+
   it('markOntologyChecked skips soft-deleted facts', async () => {
     const db = openTestDatabase();
     await setupDatabase(db, PREFIX);
@@ -219,7 +236,7 @@ describe('runOntologyBackfill', () => {
   // #381 fix: the classifier must see which typed nodes exist so a proposed
   // `target_title` is verifiable (offline render + E1 run proved its absence
   // made "propose nothing" the compliant answer).
-  it('title catalog: the classifier system prompt lists existing typed nodes', async () => {
+  it('candidate sections: the user prompt lists existing typed nodes per fact; no TITLE CATALOG text', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
     await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
@@ -228,11 +245,116 @@ describe('runOntologyBackfill', () => {
     }));
     const result = await wiki.runOntologyBackfill('e1');
     expect(result.typed).toBe(1);
-    const sys = generateText.mock.calls[0][0].systemPrompt as string;
-    expect(sys).toContain('TITLE CATALOG');
-    expect(sys).toContain('- "Ada" (person)');
-    expect(sys).not.toContain('"Untyped Node"'); // untyped rows stay out of the catalog
-    expect(sys).not.toContain('valid only if');
+    const { systemPrompt: sys, userPrompt: user } = generateText.mock.calls[0][0] as { systemPrompt: string; userPrompt: string };
+    expect(user).toContain('CANDIDATE TARGETS for fact "fact_draft"');
+    expect(user).toContain('- "Ada" (person)');
+    expect(user).not.toContain('"Untyped Node" (');   // untyped rows stay out of the candidates
+    expect(sys).not.toContain('TITLE CATALOG');
+    expect(user).not.toContain('TITLE CATALOG');
+    expect(sys).not.toContain('"Ada" (person)');
+  });
+
+  it('candidate sections: one section per batch fact', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
+    await seedEntry(db, { id: 'fact_u1', title: 'First Draft' });
+    await seedEntry(db, { id: 'fact_u2', title: 'Second Draft' });
+    generateText.mockResolvedValue(llmJson({ classifications: [] }));
+    await wiki.runOntologyBackfill('e1', { batchSize: 2 });
+    const user = generateText.mock.calls[0][0].userPrompt as string;
+    expect(user).toContain('CANDIDATE TARGETS for fact "fact_u1"');
+    expect(user).toContain('CANDIDATE TARGETS for fact "fact_u2"');
+    expect(user.match(/CANDIDATE TARGETS for fact/g)).toHaveLength(2);
+    expect(user).not.toContain('TITLE CATALOG');
+  });
+
+  it('candidate sections: a prompt override with a placeholder keeps the placeholder branch (no sections)', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    generateText.mockResolvedValue(llmJson({ classifications: [] }));
+    await wiki.runOntologyBackfill('e1', { promptOverride: 'Classify: {{facts}}' });
+    const { systemPrompt: sys, userPrompt: user } = generateText.mock.calls[0][0] as { systemPrompt: string; userPrompt: string };
+    expect(user).toBe('Please classify the facts.');
+    expect(sys).not.toContain('CANDIDATE TARGETS');
+    expect(user).not.toContain('CANDIDATE TARGETS');
+  });
+
+  it('candidate sections: fewer than k typed nodes renders the whole pool', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_t1', title: 'Ada', okfType: 'person' });
+    await seedEntry(db, { id: 'fact_t2', title: 'London', okfType: 'place' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    generateText.mockResolvedValue(llmJson({ classifications: [] }));
+    await wiki.runOntologyBackfill('e1'); // default k = 10 > 2 typed nodes
+    const user = generateText.mock.calls[0][0].userPrompt as string;
+    expect(user).toContain('- "Ada" (person)');
+    expect(user).toContain('- "London" (place)');
+  });
+
+  it('candidate sections: zero typed nodes renders no sections and the shared no-nodes footer', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    generateText.mockResolvedValue(llmJson({ classifications: [] }));
+    await wiki.runOntologyBackfill('e1');
+    const user = generateText.mock.calls[0][0].userPrompt as string;
+    expect(user).not.toContain('CANDIDATE TARGETS for fact');
+    expect(user).toContain('CANDIDATE TARGETS: this memory contains no typed nodes yet.');
+    expect(user).not.toContain('TITLE CATALOG');
+  });
+
+  it('candidate sections: an invalid ontology.shortlistK throws', async () => {
+    const db = openTestDatabase();
+    const generateText = vi.fn<any>();
+    const wiki = createWiki(db, { llmProvider: { generateText }, config: { ontology: { shortlistK: 1.5 } } } as any);
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    await expect(wiki.runOntologyBackfill('e1')).rejects.toThrow(/shortlistK/);
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('candidate sections: an invalid shortlistK throws at entry in classifier mode, before any typing is stamped', async () => {
+    const db = openTestDatabase();
+    const generateText = vi.fn<any>();
+    const classify = vi.fn(async () => ({
+      answers: { okf_type: { kind: 'choice', choice: 'person', confidence: 0.9, probabilities: { person: 0.9 } } },
+    }));
+    const wiki = createWiki(db, {
+      llmProvider: { generateText, classify },
+      config: { systemOne: { typing: 'auto', onLowConfidence: 'llm' }, ontology: { shortlistK: 1.5 } },
+    } as any);
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    await expect(wiki.runOntologyBackfill('e1', { classifier: 'auto' })).rejects.toThrow(/shortlistK/);
+    expect(classify).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+    const typed = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries WHERE okf_type IS NOT NULL`);
+    expect(typed).toHaveLength(0);
+    const stamped = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NOT NULL`);
+    expect(stamped).toHaveLength(0);
+  });
+
+  it('candidate sections: runBatched still splits an oversized batch with sections present', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });
+    const half = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS / 2 - 60);
+    await seedEntry(db, { id: 'fact_half1', body: half, updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_half2', body: half, updatedAt: 200 });
+    generateText.mockImplementation(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = ['fact_half1', 'fact_half2'].filter(id => payload.includes(id));
+      return llmJson({ classifications: ids.map(id => ({ id, okf_type: 'person' })) });
+    });
+    const r = await wiki.runOntologyBackfill('e1');
+    expect(r.scanned).toBe(2);
+    expect(generateText.mock.calls.length).toBe(2);
+    for (const [prompts] of generateText.mock.calls) {
+      expect(prompts.userPrompt).toContain('CANDIDATE TARGETS for fact');
+      expect(prompts.systemPrompt.length + prompts.userPrompt.length)
+        .toBeLessThanOrEqual(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    }
   });
 
   // Review M1 (#381): the catalog must not forbid same-batch targets — with
@@ -253,11 +375,11 @@ describe('runOntologyBackfill', () => {
     const result = await wiki.runOntologyBackfill('e1', { batchSize: 2 });
     expect(result.typed).toBe(2);
     expect(result.edgesAdded).toBe(1);
-    const sys = generateText.mock.calls[0][0].systemPrompt as string;
-    // At prompt time neither fact is typed, so neither title can be in the
-    // catalog — the non-exclusive same-response wording is what allows it.
-    expect(sys).not.toContain('"Beta" (place)');
-    expect(sys).toContain('classified in this same response');
+    const user = generateText.mock.calls[0][0].userPrompt as string;
+    // At prompt time neither fact is typed, so neither title can be a
+    // candidate — the non-exclusive same-response wording is what allows it.
+    expect(user).not.toContain('"Beta" (place)');
+    expect(user).toContain('classified in this same response');
   });
 
   // Spec test 1

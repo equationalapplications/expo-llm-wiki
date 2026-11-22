@@ -6,6 +6,7 @@ import {
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
   buildTitleCatalogBlock,
+  buildCandidateSections,
 } from '../../src/prompts';
 import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
 
@@ -210,33 +211,35 @@ describe('PromptService', () => {
     });
   });
 
-  describe('buildOntologyBackfillPrompt title catalog (#381)', () => {
+  describe('buildOntologyBackfillPrompt candidate sections (spec §1, OQ1)', () => {
     const facts = [{ id: 'fact_1', title: 'T', body: 'B', tags: [] }];
 
-    it('splices the catalog between the base prompt and the ontology appendix', () => {
+    it('puts candidate sections in userPrompt after the Facts JSON, never in systemPrompt', () => {
       const svc = new PromptService();
       const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'TITLE CATALOG: x');
-      const base = systemPrompt.indexOf(ONTOLOGY_BACKFILL_SYSTEM_PROMPT);
-      const cat = systemPrompt.indexOf('TITLE CATALOG: x');
-      const appendix = systemPrompt.indexOf(ctx.ontologyModeInstructions);
-      expect(cat).toBeGreaterThan(base);
-      expect(appendix).toBeGreaterThan(cat);
-      expect(userPrompt).toContain('fact_1');
-    });
-
-    it('omits the catalog when none is supplied (baseline prompt unchanged)', () => {
-      const svc = new PromptService();
-      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'CANDIDATES: x');
+      expect(userPrompt).toContain('CANDIDATES: x');
+      expect(userPrompt.indexOf('CANDIDATES: x')).toBeGreaterThan(userPrompt.indexOf('Facts:'));
+      expect(userPrompt.indexOf('CANDIDATES: x')).toBeGreaterThan(userPrompt.indexOf('fact_1'));
+      expect(systemPrompt).not.toContain('CANDIDATES: x');
       expect(systemPrompt).not.toContain('TITLE CATALOG');
+      expect(systemPrompt.startsWith(ONTOLOGY_BACKFILL_SYSTEM_PROMPT)).toBe(true);
+      expect(systemPrompt).toContain(ctx.ontologyModeInstructions);
     });
 
-    it('placeholder templates keep skipping the catalog (documented M5 limitation, locked by test)', () => {
+    it('omits candidate sections when none is supplied (template + appendix, facts JSON in user)', () => {
       const svc = new PromptService();
       const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'TITLE CATALOG: x');
-      expect(systemPrompt).not.toContain('TITLE CATALOG: x');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      expect(systemPrompt).not.toContain('TITLE CATALOG');
+      expect(userPrompt).toBe(`Facts:\n${JSON.stringify(facts, null, 2)}`);
+    });
+
+    it('placeholder templates return before any splice (byte-identical branch)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'CANDIDATES: x');
+      expect(systemPrompt).not.toContain('CANDIDATES: x');
       expect(systemPrompt).toContain('fact_1');
       expect(userPrompt).toBe('Please classify the facts.');
     });
@@ -342,6 +345,73 @@ describe('PromptService', () => {
       expect(block).toContain('TITLE CATALOG: this memory contains no typed nodes yet');
       expect(block).toContain('omit "edges" rather than invent a target_title');
       expect(block).toContain('classified in this same response');
+    });
+  });
+
+  describe('buildCandidateSections (spec §1)', () => {
+    const rowsA = [
+      { title: 'Zeta', okf_type: 'area' },
+      { title: 'Alpha "q"', okf_type: 'organization' },
+      { title: 'Mid', okf_type: 'software_application' },
+    ];
+
+    it('renders each row exactly as the catalog block renders it', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      // Catalog sorts alphabetically; compare per-row line shape via one-row blocks.
+      for (const r of rowsA) {
+        const catalogLine = buildTitleCatalogBlock([r]).split('\n')[1];
+        expect(out).toContain(catalogLine);
+      }
+    });
+
+    it('names the fact id in each section header', () => {
+      const out = buildCandidateSections(
+        [{ id: 'f1' }, { id: 'f2' }],
+        new Map([
+          ['f1', rowsA],
+          ['f2', [{ title: 'Other', okf_type: 'area' }]],
+        ]),
+      );
+      expect(out).toContain('f1');
+      expect(out).toContain('f2');
+      expect(out.indexOf('f1')).toBeLessThan(out.indexOf('f2'));
+    });
+
+    it('emits the non-exclusive footer once, after all sections', () => {
+      const out = buildCandidateSections(
+        [{ id: 'f1' }, { id: 'f2' }],
+        new Map([
+          ['f1', rowsA],
+          ['f2', [{ title: 'Other', okf_type: 'area' }]],
+        ]),
+      );
+      expect(out.match(/omit "edges" rather than invent a target_title/g)?.length).toBe(1);
+      expect(out.match(/classified in this same response/g)?.length).toBe(1);
+      expect(out.match(/Any other existing typed node/g)?.length).toBe(1);
+      expect(out).toContain('is also a valid "target_title", even if not listed here.');
+      expect(out.lastIndexOf('Any other existing typed node')).toBeGreaterThan(out.lastIndexOf('CANDIDATE TARGETS for fact'));
+      expect(out).not.toContain('valid only if');
+    });
+
+    it('zero pool: no per-fact sections, one shared no-typed-nodes footer', () => {
+      const out = buildCandidateSections([{ id: 'f1' }, { id: 'f2' }], new Map());
+      expect(out).toContain('CANDIDATE TARGETS: this memory contains no typed nodes yet.');
+      expect(out).not.toContain('TITLE CATALOG');
+      expect(out).toContain('omit "edges" rather than invent a target_title');
+      expect(out).not.toContain('f1');
+      expect(out).not.toContain('f2');
+      expect(out.match(/no typed nodes yet/g)?.length).toBe(1);
+    });
+
+    it('fewer than k: renders exactly the given rows', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      expect(out.split('\n').filter((l) => l.startsWith('- ')).length).toBe(3);
+    });
+
+    it('keeps the given (score) order, not alphabetical', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      expect(out.indexOf('"Zeta"')).toBeLessThan(out.indexOf('"Alpha'));
+      expect(out.indexOf('"Alpha')).toBeLessThan(out.indexOf('"Mid"'));
     });
   });
 

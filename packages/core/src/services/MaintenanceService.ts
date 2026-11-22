@@ -5,13 +5,14 @@ import { validateClassifierAnswer, classifierStateForFact, type ClassifierReject
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
-import { buildTitleCatalogBlock } from '../prompts';
+import { buildCandidateSections } from '../prompts';
+import { buildShortlist, createShortlistScorer } from '../utils/shortlist';
 import { HISTORY_MAX_DEPTH } from './TemporalService';
 
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
-import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveShortlistK, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
 import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
@@ -2120,6 +2121,10 @@ export class MaintenanceService {
       // a call-option typo is a caller bug, thrown not defaulted.
       throw new TypeError(`Invalid classifier option: ${JSON.stringify(options.classifier)} — must be 'auto' or 'llm'`);
     }
+    // Validated at entry like `classifier` (specs/backfill-shortlist-wiring §3):
+    // a bad `ontology.shortlistK` must throw before any typing or cooldown stamp
+    // is committed, whatever typing path or ontology mode the pass takes.
+    const shortlistK = resolveShortlistK(this.options.config);
     const trigger = options?.trigger ?? 'call';
 
     const now = Date.now();
@@ -2194,6 +2199,7 @@ export class MaintenanceService {
             trigger,
             batchSize: escalated.length,
             recheckCutoff,
+            shortlistK,
           });
           // Counter-merge: `scanned` is counted once by the classifier step
           // (escalated facts were already attempted there); the generative
@@ -2221,6 +2227,7 @@ export class MaintenanceService {
       meter: options?.meter,
       trigger,
       recheckCutoff,
+      shortlistK,
     });
   }
 
@@ -2252,9 +2259,13 @@ export class MaintenanceService {
   private async _runGenerativeBackfill(
     entityId: string,
     candidates: WikiFact[],
-    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number },
+    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number },
   ): Promise<OntologyBackfillResult> {
     const batchSize = runOpts.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
+    const shortlistK = runOpts.shortlistK;
+    if (shortlistK === undefined) {
+      throw new Error('_runGenerativeBackfill: runOpts.shortlistK is required (resolved at doRunOntologyBackfill entry)');
+    }
 
     const ontologyService = this.ontologyService!;
     const now = Date.now();
@@ -2265,23 +2276,19 @@ export class MaintenanceService {
 
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
 
-    // #381 fix: the classifier prompt gains the title catalog — the verifiable
-    // target pool of already-typed nodes (same index and title normalization
-    // edge resolution uses; the block dedupes on the normalized key). Timing
-    // note: the catalog reads the index once per pass outside a transaction,
-    // while resolution re-reads it inside each batch's tx — a node deleted or
-    // retyped in between makes a listed title unresolvable, so entries are
-    // verifiable as of prompt-build time, not write time. NOTE (honesty): the
-    // 0/28 → 28/28 E1 result measured a SEED-ONLY catalog variant via
-    // runner-level promptOverride (results/statement-kinds-e1-title-catalog-
-    // 2026-11-18.json); this shipped block covers all typed nodes and has not
-    // itself been benchmarked yet. The wording is deliberately non-exclusive:
-    // same-batch targets and titles beyond the 200-entry cap remain valid.
-    // The catalog is built once per pass, so facts typed in an earlier batch
-    // of the same run are accepted targets but are not listed yet — another
-    // known divergence from the E1 variant.
-    const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId);
-    const titleCatalog = buildTitleCatalogBlock(titleRows);
+    // Per-fact candidate shortlist (specs/backfill-shortlist-wiring/spec.md §1):
+    // each fact's prompt section lists the top-k typed nodes (same index and
+    // title normalization edge resolution uses) ranked against that fact.
+    // Timing note: the rows are read once per pass outside a transaction,
+    // while resolution re-reads the index inside each batch's tx — a node
+    // deleted or retyped in between makes a listed title unresolvable, so
+    // candidates are verifiable as of prompt-build time, not write time.
+    // Facts typed in an earlier batch of the same pass are accepted targets
+    // but are not listed (the rows are not re-read per batch). The wording
+    // stays non-exclusive: same-batch targets remain valid. k is resolved
+    // once per pass at doRunOntologyBackfill entry (a bad `ontology.shortlistK`
+    // throws there). Shipped unbenchmarked (INTENT.md rule 11): no accuracy claim.
+    const shortlistRows = await this.entryRepo.findShortlistRowsByEntityId(entityId);
 
     // Payload guard: cap the full serialized prompt (system + user — manifest,
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
@@ -2290,12 +2297,32 @@ export class MaintenanceService {
     // starve it (spec Decision 2). Output size is bounded separately, by
     // runBatched — the two bounds are independent and both enforced.
     const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
-    const buildPrompt = (facts: WikiFact[]) => this.promptService.buildOntologyBackfillPrompt(
-      facts.map(toPromptShape),
-      runOpts.promptOverride,
-      ontologyContext,
-      titleCatalog,
-    );
+    // Once per pass: row tokens are precomputed and each fact's shortlist is
+    // cached by id, so runBatched's repeated buildPrompt calls (overflow
+    // halving) do not re-score the whole pool.
+    const shortlistScorer = createShortlistScorer(shortlistRows);
+    const shortlistCache = new Map<string, ReturnType<typeof buildShortlist>>();
+    // Note: when the prompt override carries `{{facts}}`/ontology placeholders,
+    // PromptService discards the candidate sections built here. The scoring is
+    // cheap and cached per pass (scorer + shortlistCache), so no guard is
+    // worth the divergence risk.
+    const buildPrompt = (facts: WikiFact[]) => {
+      const rowsByFact = new Map<string, ReturnType<typeof buildShortlist>>();
+      for (const f of facts) {
+        let rows = shortlistCache.get(f.id);
+        if (!rows) {
+          rows = buildShortlist({ title: f.title, body: f.body }, shortlistRows, shortlistK, shortlistScorer);
+          shortlistCache.set(f.id, rows);
+        }
+        rowsByFact.set(f.id, rows);
+      }
+      return this.promptService.buildOntologyBackfillPrompt(
+        facts.map(toPromptShape),
+        runOpts.promptOverride,
+        ontologyContext,
+        buildCandidateSections(facts, rowsByFact),
+      );
+    };
 
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
       items: candidates,

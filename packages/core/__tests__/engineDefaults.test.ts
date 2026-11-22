@@ -1,9 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { OPS_EXTRACT_SYSTEM_PROMPT } from '../src/prompts';
-import { changedDefaultWarnings, resolveLibrarianStrategy, resolveMaintenanceMode, resolveSystemOneTyping } from '../src/utils/engineDefaults';
+import { changedDefaultWarnings, resolveLibrarianStrategy, resolveMaintenanceMode, resolveShortlistK, resolveSystemOneTyping } from '../src/utils/engineDefaults';
 import type { WikiConfig } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+
+describe('resolveShortlistK', () => {
+  it('returns 10 for an undefined config and for an ontology section without shortlistK', () => {
+    expect(resolveShortlistK(undefined)).toBe(10);
+    expect(resolveShortlistK({ ontology: {} } as WikiConfig)).toBe(10);
+  });
+
+  it('returns the given finite integer >= 1', () => {
+    expect(resolveShortlistK({ ontology: { shortlistK: 1 } } as WikiConfig)).toBe(1);
+    expect(resolveShortlistK({ ontology: { shortlistK: 25 } } as WikiConfig)).toBe(25);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, '10'])('throws for %j', (bad) => {
+    expect(() => resolveShortlistK({ ontology: { shortlistK: bad as never } } as WikiConfig))
+      .toThrow(/^\[core-llm-wiki\]/);
+  });
+});
 
 describe('unserializable invalid config values (PR #442 review)', () => {
   afterEach(() => {

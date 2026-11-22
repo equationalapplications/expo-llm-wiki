@@ -1884,6 +1884,19 @@ export class EntryRepository extends BaseRepository {
     return rows.map(r => ({ id: r.id, title: r.title, okf_type: r.okf_type ?? null }));
   }
 
+  /**
+   * Shortlist scoring rows (id, title, okf_type, body) over all live typed
+   * facts. Same filters as findTitleIndexByEntityId; okf_type is never NULL
+   * in results because the query excludes untyped rows.
+   */
+  async findShortlistRowsByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<Array<{ id: string; title: string; okf_type: string; body: string }>> {
+    const executor = this.getExecutor(tx);
+    return executor.getAllAsync<{ id: string; title: string; okf_type: string; body: string }>(
+      `SELECT id, title, okf_type, body FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND okf_type IS NOT NULL`,
+      [entityId],
+    );
+  }
+
   /** Counts live mutable facts: eligible (past cooldown) vs deferred (in cooldown). */
   async countHealCandidatesByEntityId(
     entityId: string,
