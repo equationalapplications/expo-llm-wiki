@@ -48,7 +48,8 @@ import { FUZZY_THRESHOLD, MIN_TOKENS_TO_QUALIFY } from './librarian/constants';
 import { runLibrarianStrategy, type LibrarianContext, type LibrarianResult } from './librarian';
 
 export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
-export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
+// Moved to `utils/contextCaps` (specs/backfill-cap-context-budget change 1); re-exported to preserve the public surface.
+export { ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -2125,6 +2126,10 @@ export class MaintenanceService {
     // a bad `ontology.shortlistK` must throw before any typing or cooldown stamp
     // is committed, whatever typing path or ontology mode the pass takes.
     const shortlistK = resolveShortlistK(this.options.config);
+    // Same entry-time contract for the prompt cap (specs/backfill-cap-context-budget
+    // change 3): a malformed `context` section throws here, before the classifier
+    // path types or stamps anything. One resolve serves both paths.
+    const maxPromptChars = resolveMaxPromptChars(resolveContextBudget(this.options.config), 'backfill');
     const trigger = options?.trigger ?? 'call';
 
     const now = Date.now();
@@ -2200,6 +2205,7 @@ export class MaintenanceService {
             batchSize: escalated.length,
             recheckCutoff,
             shortlistK,
+            maxPromptChars,
           });
           // Counter-merge: `scanned` is counted once by the classifier step
           // (escalated facts were already attempted there); the generative
@@ -2228,6 +2234,7 @@ export class MaintenanceService {
       trigger,
       recheckCutoff,
       shortlistK,
+      maxPromptChars,
     });
   }
 
@@ -2259,12 +2266,16 @@ export class MaintenanceService {
   private async _runGenerativeBackfill(
     entityId: string,
     candidates: WikiFact[],
-    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number },
+    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number; maxPromptChars: number },
   ): Promise<OntologyBackfillResult> {
     const batchSize = runOpts.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
     const shortlistK = runOpts.shortlistK;
     if (shortlistK === undefined) {
       throw new Error('_runGenerativeBackfill: runOpts.shortlistK is required (resolved at doRunOntologyBackfill entry)');
+    }
+    const maxPromptChars = runOpts.maxPromptChars;
+    if (maxPromptChars === undefined) {
+      throw new Error('_runGenerativeBackfill: runOpts.maxPromptChars is required (resolved at doRunOntologyBackfill entry)');
     }
 
     const ontologyService = this.ontologyService!;
@@ -2340,7 +2351,7 @@ export class MaintenanceService {
         };
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
-      maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
+      maxPromptChars,
       onSkip: (fact, err) => {
         if (isContextOverflowError(err)) {
           emitDiagnostic(this.options, {

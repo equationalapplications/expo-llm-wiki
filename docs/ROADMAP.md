@@ -252,6 +252,8 @@ that supersedes the temporary data-scope ruling of 2026-11-19
 
 ### Step 9 — The backfill cap under the context budget — PLANNED
 
+Done — merged 2026-11-22, PR #455, spec [backfill-cap-context-budget](../specs/backfill-cap-context-budget/spec.md)
+
 The ontology-backfill prompt cap joins the resolver of step 6, the
 last prompt-size constant to do so.
 

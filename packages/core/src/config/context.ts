@@ -4,6 +4,7 @@ import {
   OPS_RESOLVE_MAX_PROMPT_CHARS,
   HEAL_MAX_PROMPT_CHARS,
   OPS_MAX_EXTRACT_CHARS,
+  ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
 } from '../utils/contextCaps';
 import { DEFAULT_MAX_CHUNK_LENGTH } from '../utils/chunkingDefaults';
 
@@ -24,9 +25,10 @@ const OP_FLOOR = {
   resolve: OPS_RESOLVE_MAX_PROMPT_CHARS,
   heal: HEAL_MAX_PROMPT_CHARS,
   extract: OPS_MAX_EXTRACT_CHARS,
+  backfill: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
 } as const;
 
-export type ContextBudgetOp = 'resolve' | 'heal' | 'extract';
+export type ContextBudgetOp = 'resolve' | 'heal' | 'extract' | 'backfill';
 
 function bad(key: string, value: unknown, why: string): Error {
   return new Error(`[core-llm-wiki] config.context.${key} must be ${why}; received ${JSON.stringify(value)}`);
@@ -73,7 +75,7 @@ export function resolveContextBudget(config: WikiConfig | undefined): ContextBud
 }
 
 /**
- * Declared-mode derived prompt cap for resolve and heal:
+ * Declared-mode derived prompt cap for resolve, heal, and backfill:
  * `floor((window - reserve) * safetyFraction * charsPerToken)`, floored at
  * today's cap. Extract scales by today's 24/40 ratio (controller decree,
  * 2026-11-21) so the event-summary batch cannot consume the whole window.
@@ -84,13 +86,12 @@ function declaredPromptCap(budget: ContextBudget, op: Exclude<ContextBudgetOp, '
       budget.safetyFraction *
       budget.charsPerToken,
   );
-  if (op === 'resolve') return Math.max(OP_FLOOR.resolve, derived);
-  return Math.max(OP_FLOOR.heal, derived);
+  return Math.max(OP_FLOOR[op], derived);
 }
 
 export function resolveMaxPromptChars(budget: ContextBudget, op: ContextBudgetOp): number {
   if (budget.mode !== 'declared') {
-    return op === 'resolve' ? OP_FLOOR.resolve : op === 'heal' ? OP_FLOOR.heal : OP_FLOOR.extract;
+    return OP_FLOOR[op];
   }
   if (op === 'extract') {
     const resolveDerived = declaredPromptCap(budget, 'resolve');
