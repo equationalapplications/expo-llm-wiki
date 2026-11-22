@@ -44,11 +44,13 @@ describe('runStatementKinds misalignment guard', () => {
 });
 
 describe('#381 harness: promptOverride ride-through (variant retired)', () => {
-  it('a custom promptOverride rides through next to the production title catalog and appendix', async () => {
+  it('a custom promptOverride rides through next to the appendix; candidate sections ride in the user prompt', async () => {
     const systems: string[] = [];
+    const users: string[] = [];
     const fetchImpl = vi.fn(async (_u: string, init?: { body?: string }) => {
       const body = JSON.parse(init?.body ?? '{}');
       systems.push(typeof body.system === 'string' ? body.system : JSON.stringify(body.system));
+      users.push(JSON.stringify(body.messages));
       const ids = [...JSON.stringify(body.messages).matchAll(/fact_[A-Za-z0-9_-]+|[0-9a-f]{8}-[0-9a-f-]{27}/g)].map((m) => m[0]);
       return ok(JSON.stringify({ classifications: [...new Set(ids)].map((id) => ({ id, okf_type: 'rule', edges: [] })) }));
     });
@@ -63,10 +65,15 @@ describe('#381 harness: promptOverride ride-through (variant retired)', () => {
     expect(systems.length).toBeGreaterThan(0);
     for (const s of systems) {
       expect(s).toContain('CUSTOM-CLASSIFIER-OVERRIDE');
-      // Core appends the production catalog + ontology appendix regardless of
-      // the override (M4: the title-catalog variant was retired because of this).
-      expect(s).toContain('TITLE CATALOG');
+      // Core appends the ontology appendix regardless of the override (M4).
+      // The production title catalog left the system prompt in 2b
+      // (specs/backfill-shortlist-wiring/spec.md §1, owner ruling OQ1):
+      // candidate sections now ride in the user prompt instead.
+      expect(s).not.toContain('TITLE CATALOG');
       expect(s).toContain('Ontology constraints');
+    }
+    for (const u of users) {
+      expect(u).toContain('CANDIDATE TARGETS for fact');
     }
     expect(report.variant).toBe('custom-override');
   });
