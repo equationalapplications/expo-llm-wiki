@@ -1,3 +1,14 @@
+## [9.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.12.0...v9.13.0) (2026-11-22)
+
+### Features
+
+* **core:** step-11 wave 1 — resolve site member, systemOne.resolve key, resolveSystemOneResolve, resolveResolveMinConfidence, public exports (plan tasks 2,3,4,8; red-first; 73/73 targeted, typecheck clean) ([aa0db68](https://github.com/equationalapplications/expo-llm-wiki/commit/aa0db68cd04bc5216dddcf1db828841ef6c39bba))
+* **core:** step-11 wave 2 — classifier resolution screen, runResolve wiring, classifier receipts (plan tasks 5,6,7,9; D2/D3/D5 applied; zero new codes; apply/gate/prompts untouched) ([11a11b4](https://github.com/equationalapplications/expo-llm-wiki/commit/11a11b4ba01f61dfec07e8230bc5057dd4bea15c))
+
+### Bug Fixes
+
+* **core:** step-11 review folds — distinct absent/threw warn-once keys, test-production alignment, overflow case, classifierSettled docstring (opus m2/m3/m4/m6) ([a9cc3e5](https://github.com/equationalapplications/expo-llm-wiki/commit/a9cc3e5e04aa57e69788b64a903511e7ee416013))
+
 ## [9.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.11.0...v9.12.0) (2026-11-22)
 
 ### Features
