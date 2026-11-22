@@ -1,4 +1,8 @@
-import { callLlm } from '../../../utils/llmCall';
+import { callLlm, callClassify } from '../../../utils/llmCall';
+import { validateClassifierAnswer, classifierStateForFact } from '../../../utils/classifier';
+import { WikiBudgetExhausted } from '../../../utils/usage';
+import { resolveSystemOneResolve, resolveResolveMinConfidence, warnOnce } from '../../../utils/engineDefaults';
+import type { ClassifyRequest, ClassifyResponse, ClassifierQuestion } from '../../../types';
 import { clip, parseJsonResponse, safeSlice } from '../../../utils/pure';
 import { runBatched, isContextOverflowError } from '../../BoundedLlmCall';
 import { OPS_RESOLVE_MAX_PROMPT_CHARS } from '../../../utils/contextCaps';
@@ -20,7 +24,74 @@ export interface ResolveOutcome {
   failed: GatedCandidate[];
   /** Merged-extract batch indexes of candidates skipped for context overflow; the pass-level DiagnosticBuffer owns their emission. */
   overflowSkipped: number[];
+  /** Merged-extract batch indexes of candidates the classifier screen settled as NOOP; the pass-level DiagnosticBuffer owns their receipts. */
+  classifierSettled: number[];
   budgetStop?: { requiredEstimate: number };
+}
+
+export interface ScreenResult {
+  settled: Map<GatedCandidate, ResolvedOp>;
+  rest: GatedCandidate[];
+  warnReason?: 'no-classifier' | 'no-floor';
+  budgetStop?: { requiredEstimate: number };
+}
+
+/**
+ * Screening prologue (resolution-system-one §4, §5). Pure apart from the
+ * injected `ask`. For each candidate that has a neighbour, asks ONE binary
+ * duplicate-only question about `neighbours[0]`; a confident YES
+ * (`probability >= floor`) settles a terminal NOOP on that neighbour. Everything
+ * else stays in `rest` for the generative resolve. All-or-nothing: any throw
+ * discards partial results and the whole input falls through, except a
+ * `WikiBudgetExhausted`, which surfaces as `budgetStop`.
+ */
+export async function screenResolveCandidates(
+  ambiguous: GatedCandidate[],
+  mode: 'auto' | 'llm',
+  floor: number | undefined,
+  ask: ((request: ClassifyRequest) => Promise<ClassifyResponse>) | undefined,
+): Promise<ScreenResult> {
+  const whole = (warnReason?: 'no-classifier' | 'no-floor'): ScreenResult =>
+    warnReason ? { settled: new Map(), rest: ambiguous, warnReason } : { settled: new Map(), rest: ambiguous };
+  if (mode !== 'auto') return whole();
+  if (floor === undefined) return whole('no-floor');
+  if (!ask) return whole('no-classifier');
+
+  const settled = new Map<GatedCandidate, ResolvedOp>();
+  const rest: GatedCandidate[] = [];
+  for (const g of ambiguous) {
+    const best = g.neighbours[0];
+    if (!best) {
+      rest.push(g);
+      continue;
+    }
+    const question: ClassifierQuestion = {
+      kind: 'binary',
+      instructions:
+        `Does this candidate add NO information beyond neighbour ${best.ref} (a pure duplicate: same claims, no new content)?\n` +
+        `Neighbour ${best.ref} title: ${best.title}\n` +
+        `Neighbour ${best.ref} body: ${safeSlice(best.body, 0, OPS_NEIGHBOUR_BODY_CHARS)}`,
+    };
+    let response: ClassifyResponse;
+    try {
+      response = await ask({
+        state: classifierStateForFact({ title: g.candidate.fact.title, body: g.candidate.fact.body, tags: [] }),
+        questions: { [best.ref]: question },
+      });
+    } catch (err) {
+      if (err instanceof WikiBudgetExhausted) {
+        return { settled: new Map(), rest: ambiguous, budgetStop: { requiredEstimate: err.requiredEstimate } };
+      }
+      return whole('no-classifier');
+    }
+    const checked = validateClassifierAnswer(response, best.ref, question);
+    if (checked.ok && checked.answer.kind === 'binary' && checked.answer.probability >= floor) {
+      settled.set(g, { op: 'NOOP', targetId: best.id });
+    } else {
+      rest.push(g);
+    }
+  }
+  return { settled, rest };
 }
 
 /**
@@ -73,12 +144,35 @@ export async function runResolve(
   ambiguous: GatedCandidate[],
   budget?: ContextBudget,
 ): Promise<ResolveOutcome> {
-  const out: ResolveOutcome = { ops: new Map(), rejected: [], failed: [], overflowSkipped: [] };
+  const out: ResolveOutcome = { ops: new Map(), rejected: [], failed: [], overflowSkipped: [], classifierSettled: [] };
   if (ambiguous.length === 0) return out;
   const { entityId, trigger } = ctx;
 
+  const mode = resolveSystemOneResolve(deps.options.config);
+  const floor = resolveResolveMinConfidence(deps.options.config);
+  const provider = deps.options.llmProvider;
+  const ask =
+    mode === 'auto' && typeof provider.classify === 'function'
+      ? (request: ClassifyRequest) =>
+          callClassify(deps.options, { operation: 'librarian', entityId, trigger, meter: ctx.meter }, request)
+      : undefined;
+  const screen = await screenResolveCandidates(ambiguous, mode, floor, ask);
+  if (screen.budgetStop) return { ...out, budgetStop: screen.budgetStop };
+  // 'no-floor' was already warned by resolveResolveMinConfidence (once per process).
+  if (screen.warnReason === 'no-classifier') {
+    warnOnce(
+      '[core-llm-wiki] systemOne: `systemOne.resolve` is \'auto\' but the provider has no usable classify() ' +
+        '(absent or it threw); ambiguous candidates fall through to the generative resolve.',
+    );
+  }
+  for (const [g, op] of screen.settled) {
+    out.ops.set(g, op);
+    out.classifierSettled.push(g.candidate.index);
+  }
+  if (screen.rest.length === 0) return out;
+
   const outcome = await runBatched<GatedCandidate, { batch: GatedCandidate[]; ops: unknown[] }>({
-    items: ambiguous,
+    items: screen.rest,
     buildPrompt: (batch) =>
       deps.promptService.buildOpsResolvePrompt(
         batch.map((g, i) => ({

@@ -74,6 +74,14 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
       detail: { itemIndex }, // (index into the merged extract batch)
     });
   }
+  // Classifier-settled NOOPs get one receipt each, buffered here (like the
+  // overflow skips above) so a budget stop discards them with the pass.
+  for (const itemIndex of res.classifierSettled) {
+    diagnostics.push({
+      entityId, operation: 'librarian', trigger, code: 'fact_deduplicated',
+      detail: { itemIndex, reason: 'classifier' }, // (index into the merged extract batch)
+    });
+  }
   if (res.budgetStop) {
     diagnostics.discard();
     return { processedThrough: null, factsWritten: 0, budgetStop: res.budgetStop };
