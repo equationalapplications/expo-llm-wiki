@@ -135,7 +135,13 @@ export function classifyReembedRow(
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
   batch: WikiFact[];
-  classifications: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+  classifications: Array<{
+    id?: unknown;
+    okf_type?: unknown;
+    edges?: unknown;
+    /** Classifier edge screen only: normalized target title → the screened candidate id (retarget-race guard). */
+    edgeCandidateIds?: Record<string, string>;
+  }>;
   ontologyUpdates?: OntologyUpdates;
 }
 
@@ -2167,9 +2173,13 @@ export class MaintenanceService {
     // pass beside the typing chain. The site mode is 'auto' only when the edge
     // mode is 'auto' AND a valid floor exists (posture A: no default floor).
     const edgeMode = resolveSystemOneEdges(this.options.config);
-    const edgeMinConfidence = resolveEdgesMinConfidence(this.options.config);
-    const edgeSiteMode: 'auto' | 'llm' = edgeMode === 'auto' && typeof edgeMinConfidence === 'number' ? 'auto' : 'llm';
     const classify = this.options.llmProvider.classify;
+    // The floor is resolved (and its missing-floor warning can fire) only when
+    // the classifier step can engage: typing 'auto' and a classify method.
+    const edgeMinConfidence = edgeMode === 'auto' && classifierMode === 'auto' && typeof classify === 'function'
+      ? resolveEdgesMinConfidence(this.options.config)
+      : undefined;
+    const edgeSiteMode: 'auto' | 'llm' = edgeMode === 'auto' && typeof edgeMinConfidence === 'number' ? 'auto' : 'llm';
     if (classifierMode === 'auto' && typeof classify === 'function') {
       const slugs = effectiveManifest.node_types.map((n) => n.type);
       // Sentinel-reserved manifests and over-cap manifests fall back to the
@@ -2292,6 +2302,7 @@ export class MaintenanceService {
     }
     // Plumbed for coherence with the classifier screen; the generative step is
     // the fallback and is never gated or floored, so it reads neither field.
+    // Mirrors the required-field assert above (:2269-2279).
     if (runOpts.edgeSiteMode === undefined) {
       throw new Error('_runGenerativeBackfill: runOpts.edgeSiteMode is required (resolved at doRunOntologyBackfill entry)');
     }
@@ -2537,8 +2548,10 @@ export class MaintenanceService {
         // answer was uncertain/invalid (the fact is then handed to the generative
         // step un-stamped). `edgeStats` feeds the once-per-fact diagnostic.
         edges?: Array<{ edge_type: string; target_title: string }>;
+        /** Normalized target title → screened candidate id (retarget-race guard). */
+        edgeCandidateIds?: Record<string, string>;
         fallthrough?: boolean;
-        edgeStats?: { asked: number; uncertain: number; invalid: number; missing: number; allMissing: boolean };
+        edgeStats?: { uncertain: number; invalid: number; missing: number; allMissing: boolean };
       }
       | { fact: WikiFact; kind: 'abstain' }
       | { fact: WikiFact; kind: 'low_confidence' }
@@ -2651,6 +2664,7 @@ export class MaintenanceService {
         // whose source_type does not match the chosen typing are discarded first.
         const floor = edgeMinConfidence;
         const edges: Array<{ edge_type: string; target_title: string }> = [];
+        const edgeCandidateIds: Record<string, string> = {};
         let evaluated = 0;
         let uncertain = 0;
         let invalid = 0;
@@ -2666,16 +2680,18 @@ export class MaintenanceService {
           }
           if (answer.answer.kind !== 'binary') { invalid++; continue; }
           const p = answer.answer.probability;
-          if (p > 0.5 && p >= floor) edges.push({ edge_type: definitions[0].type, target_title: candidate.title });
-          else if (p < 0.5 && 1 - p >= floor) continue; // confident "no": terminal
+          if (p > 0.5 && p >= floor) {
+            edges.push({ edge_type: definitions[0].type, target_title: candidate.title });
+            edgeCandidateIds[normalizeTitleKey(candidate.title)] = candidate.id;
+          } else if (p < 0.5 && 1 - p >= floor) continue; // confident "no": terminal
           else uncertain++;
         }
-        const edgeStats = { asked: edgeEntry.keyMap.size, uncertain, invalid, missing, allMissing: evaluated > 0 && missing === evaluated };
+        const edgeStats = { uncertain, invalid, missing, allMissing: evaluated > 0 && missing === evaluated };
         // All-missing (answers-only-okf_type) takes the typing-continuity path:
         // typing applies, no edges, no generative routing.
         if (edgeStats.allMissing) return { fact, kind: 'accepted', okfType, edgeStats };
         if (uncertain > 0 || invalid > 0 || missing > 0) return { fact, kind: 'accepted', okfType, fallthrough: true, edgeStats };
-        return { fact, kind: 'accepted', okfType, ...(edges.length > 0 ? { edges } : {}) };
+        return { fact, kind: 'accepted', okfType, ...(edges.length > 0 ? { edges, edgeCandidateIds } : {}) };
       }),
       concurrency,
     );
@@ -2710,7 +2726,8 @@ export class MaintenanceService {
       .map((o) => ({
         id: o.fact.id,
         okf_type: o.okfType,
-        ...(edgeSiteMode === 'auto' && o.edges && o.edges.length > 0 ? { edges: o.edges } : {}),
+        // An outcome carries `edges` only when the site is 'auto'.
+        ...(o.edges && o.edges.length > 0 ? { edges: o.edges, edgeCandidateIds: o.edgeCandidateIds } : {}),
       }));
     const invalidCount = outcomes.filter((o) => o.kind === 'invalid').length;
     const abstainCount = outcomes.filter((o) => o.kind === 'abstain' && !isEscalated(o)).length;
@@ -2747,7 +2764,7 @@ export class MaintenanceService {
         // Once per fact, never per answer (§6 volume pin). Malformed answers (or
         // a partial missing set, which counts as invalid) → `classification_invalid`;
         // otherwise `classification_low_confidence`. All-missing keeps typing.
-        // D4: counts (`asked`/`uncertain`/`invalid`/`missing`) are computed in
+        // D4: counts (`uncertain`/`invalid`/`missing`) are computed in
         // `edgeStats` but cannot ride `detail` until the type admits them.
         const { invalid, missing, allMissing } = o.edgeStats;
         const code = allMissing || invalid > 0 || missing > 0 ? 'classification_invalid' : 'classification_low_confidence';
@@ -2887,7 +2904,7 @@ export class MaintenanceService {
 
       const batchById = new Map(batch.map(f => [f.id, f]));
       const applied = new Set<string>();
-      const pendingEdges: Array<{ sourceId: string; sourceType: string; edges: ExtractedFactEdge[] }> = [];
+      const pendingEdges: Array<{ sourceId: string; sourceType: string; edges: ExtractedFactEdge[]; candidateIds?: Record<string, string> }> = [];
 
       for (const classification of classifications) {
         const fact = typeof classification.id === 'string' ? batchById.get(classification.id) : undefined;
@@ -2948,7 +2965,10 @@ export class MaintenanceService {
         });
         titleIndex.set(normalizeTitleKey(fact.title), { id: fact.id, okf_type: normalized.okf_type });
         if (normalized.edges.length > 0) {
-          pendingEdges.push({ sourceId: fact.id, sourceType: normalized.okf_type, edges: normalized.edges });
+          pendingEdges.push({
+            sourceId: fact.id, sourceType: normalized.okf_type, edges: normalized.edges,
+            candidateIds: classification.edgeCandidateIds,
+          });
         }
       }
 
@@ -2956,8 +2976,28 @@ export class MaintenanceService {
       // so intra-batch targets pass the target-type check.
       for (const item of pendingEdges) {
         const resolveDrops: EdgeDrop[] = [];
+        // Retarget-race guard (classifier edge screen only): the edge was screened
+        // against a specific candidate id. If the in-tx title index now binds that
+        // title to a different fact (a concurrent writer), drop rather than retarget.
+        let edgesToResolve = item.edges;
+        const screenedIds = item.candidateIds;
+        if (screenedIds) {
+          edgesToResolve = [];
+          for (const edge of item.edges) {
+            const key = normalizeTitleKey(edge.target_title);
+            const screened = screenedIds[key];
+            if (screened !== undefined && titleIndex.get(key)?.id !== screened) {
+              resolveDrops.push({
+                reason: 'target_not_found', sourceId: item.sourceId, edgeType: edge.edge_type,
+                sourceNodeType: item.sourceType, targetNodeType: null,
+              });
+            } else {
+              edgesToResolve.push(edge);
+            }
+          }
+        }
         const added = await ontologyService.resolveAndPersistEdges(
-          entityId, item.sourceId, item.sourceType, item.edges, manifest, titleIndex, tx, now, resolveDrops,
+          entityId, item.sourceId, item.sourceType, edgesToResolve, manifest, titleIndex, tx, now, resolveDrops,
         );
         edgesAdded += added;
         for (const drop of resolveDrops) {

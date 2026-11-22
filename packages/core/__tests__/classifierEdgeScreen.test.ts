@@ -339,6 +339,41 @@ describe('band evaluation and edge conversion (task 9)', () => {
   });
 });
 
+describe('inert screen does not warn (m2)', () => {
+  it('typing llm + edges auto with no floor never calls the floor resolver (no missing-floor warning)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { wiki } = await makeWiki({ config: { systemOne: { typing: 'llm', edges: 'auto' } } });
+    await wiki.runOntologyBackfill('e1');
+    expect(warn.mock.calls.filter((c) => /edges/.test(String(c[0])) && /systemOne/.test(String(c[0])))).toEqual([]);
+  });
+});
+
+describe('retarget-race guard (m1)', () => {
+  it('a typed fact sharing the candidate title appears during classify: the edge is dropped, not bound to the newcomer', async () => {
+    const holder: { db?: SQLiteAdapter } = {};
+    const classify = vi.fn(async (r: ClassifyRequest): Promise<ClassifyResponse> => {
+      // Concurrent writer lands after the pool snapshot, before the apply tx.
+      await seed(holder.db!, 'f_ldn_new', 'London', 900, 'place');
+      return {
+        answers: Object.fromEntries(Object.keys(r.questions).map((k) => [
+          k,
+          k === 'okf_type' ? choiceAnswer('person', 0.9) : { kind: 'binary' as const, probability: 0.95 },
+        ])),
+      };
+    });
+    const { db, wiki, diagnostics } = await makeWikiWith(classify, AUTO_EDGES);
+    holder.db = db;
+    const result = await wiki.runOntologyBackfill('e1');
+    expect((await typeOf(db, 'f_ada'))!.okf_type).toBe('person');
+    expect(result.edgesAdded).toBe(0);
+    expect(await edgeCount(db)).toBe(0);
+    const drops = diagnostics.filter((d) => d.code === 'edge_dropped');
+    expect(drops).toHaveLength(1);
+    expect(drops[0].detail?.reason).toBe('target_not_found');
+    expect(drops[0].detail?.factId).toBe('f_ada');
+  });
+});
+
 describe('invalid and missing answers, edge-site diagnostics (task 10)', () => {
   it('item 7: an out-of-range probability falls through, never applies, no classifier edge_dropped; generative drops still surface', async () => {
     const { db, wiki, generateText, diagnostics } = await makeWikiWith(classifyWith('bad'), AUTO_EDGES,
