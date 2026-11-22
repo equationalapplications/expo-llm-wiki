@@ -292,10 +292,13 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   retry succeeds, typing proceeds normally and edges are simply not
   screened this pass for that fact — no fallthrough and no edge receipt,
   because the model saw no edge questions (disclosed; one
-  `context_overflow_skipped` diagnostic with `detail.site:
-  'edge_screen'` is emitted so hosts can see the screen was skipped —
+  `context_overflow_skipped` diagnostic is emitted so hosts can see the
+  screen was skipped —
   the EXISTING code (`MaintenanceService.ts:2606`, severity `warn`,
-  `diagnostics.ts:34`), zero new codes kept). Error edges pinned: a
+  `diagnostics.ts:34`), zero new codes kept), with
+  `detail.reason: 'edge_screen_overflow_retry'` (a typed
+  `WikiDiagnosticDetail` reason value — see the §6 Diagnostics note on
+  why `reason` carries the edge-site marker, not a `site` key). Error edges pinned: a
   retry throwing `WikiBudgetExhausted` yields `unattempted` with the
   `stopped` set pinned exactly as today (`:2524-2526`); a non-overflow
   error yields `threw` — transient, no cooldown stamp (`:2529`). A
@@ -489,17 +492,23 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   diagnostic carrying the missing-answer count is emitted (below).
 - Diagnostics: the EXISTING `classification_low_confidence` and
   `classification_invalid` emissions are EXTENDED to cover edge-screen
-  fallthrough (uncertain-band answers) and invalid edge answers, with a
-  `detail` field distinguishing the edge site (e.g.
-  `site: 'edge_screen'`). Disclosed: the reused codes' message texts say
+  fallthrough (uncertain-band answers) and invalid edge answers, with
+  the edge site marked through the typed `detail.reason` values —
+  `edge_uncertain`, `edge_answer_invalid`, `edge_answers_missing`
+  (`classifier.ts:25` shape), and `edge_screen_overflow_retry`.
+  Controller ruling D4 (2026-11-22): `WikiDiagnosticDetail`
+  (`types.ts:979`) is a closed type and I3 freezes `types.ts`, so there
+  is NO `site` key and NO per-answer counts in `detail` — the `reason`
+  marker carries the edge-site signal; the implementer's `edgeStats`
+  remain internal (computed, not emitted). Disclosed: the reused codes' message texts say
   the answer "was not applied" (`diagnostics.ts:85-86`), but an edge-site
   fallthrough RE-ROUTES the fact to the generative step rather than
   dropping it — the message text is UNCHANGED and `diagnostics.ts` stays
-  untouched (§7/Files-touched), with `detail.site: 'edge_screen'`
+  untouched (§7/Files-touched), with the `reason` marker
   disambiguating. Volume pin: the edge-site emissions fire ONCE
-  PER FACT with a `detail` carrying counts (e.g. the fact's
-  uncertain/invalid/asked edge-answer counts, plus the fact's
-  missing-answer count, `classifier.ts:25`), NEVER per answer — a fact
+  PER FACT (one diagnostic per fact: `classification_invalid` if any
+  answer was malformed or partially missing, otherwise
+  `classification_low_confidence`), NEVER per answer — a fact
   with many uncertain edges emits one diagnostic, not a flood. Pinned:
   exactly ONE diagnostic per fact — `classification_invalid` (severity
   `warn`, `diagnostics.ts:31`) if ANY of the fact's edge answers is
@@ -935,7 +944,7 @@ carried forward and re-pointed at the classifier-first design:
     edges are screened this pass for that fact (no fallthrough, no edge
     receipt — the model saw no edge questions), `overflow_skip` is
     NOT the outcome, and ONE `context_overflow_skipped` diagnostic with
-    `detail.site: 'edge_screen'` is emitted (existing code, `:2606`,
+    `detail.reason: 'edge_screen_overflow_retry'` is emitted (existing code, `:2606`,
     severity `warn`, `diagnostics.ts:34` — zero new codes); if the RETRY
     throws `WikiBudgetExhausted`, the outcome is `unattempted` with the
     `stopped` set pinned exactly as today (`:2524-2526`); a non-overflow

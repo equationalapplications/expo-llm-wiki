@@ -2186,10 +2186,12 @@ export class MaintenanceService {
         if (classifierRun.abortedOntologyOff || classifierRun.result.budgetStop) {
           return classifierRun.result;
         }
-        // Low-confidence escalation (§4): `onLowConfidence: 'llm'` re-runs the
-        // un-stamped escalated facts through the generative step of the same
-        // pass. A no-op when typing resolved 'llm' (nothing escalates).
-        if (classifierRun.escalated.length > 0 && this.resolveSystemOneOnLowConfidence() === 'llm') {
+        // Escalation (§4, edge-suggestions §5): the un-stamped escalated facts
+        // re-run through the generative step of the same pass. Typing
+        // escalations join `escalated` only under `onLowConfidence: 'llm'`
+        // (checked at collection); edge-fallthrough facts join always. A no-op
+        // when nothing escalates.
+        if (classifierRun.escalated.length > 0) {
           // Ontology can be disabled while the classifier step was in flight
           // (same mid-flight contract as the batch apply's txMode abort). The
           // live mode is re-checked HERE because when every outcome escalates
@@ -2520,7 +2522,17 @@ export class MaintenanceService {
     };
 
     type Outcome =
-      | { fact: WikiFact; kind: 'accepted'; okfType: string }
+      | {
+        fact: WikiFact;
+        kind: 'accepted';
+        okfType: string;
+        // Edge screen (§5): accepted edge entries, or `fallthrough` when an edge
+        // answer was uncertain/invalid (the fact is then handed to the generative
+        // step un-stamped). `edgeStats` feeds the once-per-fact diagnostic.
+        edges?: Array<{ edge_type: string; target_title: string }>;
+        fallthrough?: boolean;
+        edgeStats?: { asked: number; uncertain: number; invalid: number; missing: number; allMissing: boolean };
+      }
       | { fact: WikiFact; kind: 'abstain' }
       | { fact: WikiFact; kind: 'low_confidence' }
       | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
@@ -2585,16 +2597,30 @@ export class MaintenanceService {
     }
 
     let stopped: WikiBudgetExhausted | undefined;
+    // Facts whose edge-bearing request overflowed and whose typing-only retry
+    // succeeded (§4): they get one edge-site `context_overflow_skipped` receipt.
+    const retriedFacts = new Set<string>();
     const outcomes = await withConcurrency<Outcome>(
       candidates.map((fact) => async (): Promise<Outcome> => {
         if (stopped) return { fact, kind: 'unattempted' as const };
+        const edgeEntry = edgeScreen.get(fact.id);
+        const ask = (questions: Record<string, ClassifierQuestion>) => callClassify(
+          this.options,
+          { operation: 'ontologyBackfill', entityId, trigger, meter },
+          { state: classifierStateForFact(fact), questions },
+        );
         let response: ClassifyResponse;
+        let screened = edgeEntry !== undefined;
         try {
-          response = await callClassify(
-            this.options,
-            { operation: 'ontologyBackfill', entityId, trigger, meter },
-            { state: classifierStateForFact(fact), questions: { okf_type: question, ...(edgeScreen.get(fact.id)?.questions ?? {}) } },
-          );
+          try {
+            response = await ask({ okf_type: question, ...(edgeEntry?.questions ?? {}) });
+          } catch (err) {
+            // Overflow with edge questions present: retry ONCE, typing question only.
+            if (!edgeEntry || err instanceof WikiBudgetExhausted || !isContextOverflowError(err)) throw err;
+            response = await ask({ okf_type: question });
+            screened = false;
+            retriedFacts.add(fact.id);
+          }
         } catch (err) {
           if (err instanceof WikiBudgetExhausted) {
             stopped ??= err;
@@ -2611,19 +2637,53 @@ export class MaintenanceService {
         // near-miss on a manifest slug.
         if (isReservedAbstainSlug(checked.answer.choice)) return { fact, kind: 'abstain' };
         if (checked.answer.confidence < minConfidence) return { fact, kind: 'low_confidence' };
-        return { fact, kind: 'accepted', okfType: checked.answer.choice };
+        const okfType = checked.answer.choice;
+        if (!screened || !edgeEntry || typeof edgeMinConfidence !== 'number') return { fact, kind: 'accepted', okfType };
+
+        // Edge answers are evaluated only for typing-accepted facts (§5). Answers
+        // whose source_type does not match the chosen typing are discarded first.
+        const floor = edgeMinConfidence;
+        const edges: Array<{ edge_type: string; target_title: string }> = [];
+        let evaluated = 0;
+        let uncertain = 0;
+        let invalid = 0;
+        let missing = 0;
+        for (const [key, { definitions, candidate }] of edgeEntry.keyMap) {
+          if (!definitions.some((d) => typeSatisfies(d.source_type, okfType, manifest))) continue;
+          evaluated++;
+          const answer = validateClassifierAnswer(response, key, edgeEntry.questions[key]);
+          if (!answer.ok) {
+            if (answer.reason === 'missing_answer') missing++;
+            else invalid++;
+            continue;
+          }
+          if (answer.answer.kind !== 'binary') { invalid++; continue; }
+          const p = answer.answer.probability;
+          if (p > 0.5 && p >= floor) edges.push({ edge_type: definitions[0].type, target_title: candidate.title });
+          else if (p < 0.5 && 1 - p >= floor) continue; // confident "no": terminal
+          else uncertain++;
+        }
+        const edgeStats = { asked: edgeEntry.keyMap.size, uncertain, invalid, missing, allMissing: evaluated > 0 && missing === evaluated };
+        // All-missing (answers-only-okf_type) takes the typing-continuity path:
+        // typing applies, no edges, no generative routing.
+        if (edgeStats.allMissing) return { fact, kind: 'accepted', okfType, edgeStats };
+        if (uncertain > 0 || invalid > 0 || missing > 0) return { fact, kind: 'accepted', okfType, fallthrough: true, edgeStats };
+        return { fact, kind: 'accepted', okfType, ...(edges.length > 0 ? { edges } : {}) };
       }),
       concurrency,
     );
 
+    // Typing escalations join only under `onLowConfidence: 'llm'`; edge
+    // fallthrough facts join unconditionally (§5). One predicate builds
+    // `escalated`, `attempted`, and `abstainCount`, so a fact joins once and a
+    // fallthrough is neither stamped nor counted as an abstain.
     const escalate = this.resolveSystemOneOnLowConfidence() === 'llm';
     // Escalated facts are NOT cooldown-stamped (§4): they are handed to the
     // generative step of the same pass instead, and stay eligible if it dies.
-    const escalated = escalate
-      ? outcomes.filter((o) => o.kind === 'abstain' || o.kind === 'low_confidence').map((o) => o.fact)
-      : [];
     const isEscalated = (o: Outcome): boolean =>
-      escalate && (o.kind === 'abstain' || o.kind === 'low_confidence');
+      (o.kind === 'accepted' && o.fallthrough === true)
+      || (escalate && (o.kind === 'abstain' || o.kind === 'low_confidence'));
+    const escalated = outcomes.filter(isEscalated).map((o) => o.fact);
 
     // Thrown calls are transient (like `call_error`): no cooldown stamp.
     const attempted = outcomes
@@ -2634,9 +2694,17 @@ export class MaintenanceService {
     // errata E2) to avoid re-paying for the same oversized fact every pass.
     // Mixes unstamped `threw` (pre-existing) with stamped `overflow_skip` (this PR); the result-field doc's "stamped" wording covers the overflow kind only.
     const skipped = outcomes.filter((o) => o.kind === 'threw' || o.kind === 'overflow_skip').length;
+    // Fallthrough outcomes ride the escalation hand-off only: they are absent
+    // from the apply batch, so keeping them here would hit the unmatched-id
+    // continue and inflate `failedValidation`. The all-missing shape is not a
+    // fallthrough and stays. `edges` appears only when the screen produced some.
     const classifications = outcomes
-      .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
-      .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
+      .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted' && o.fallthrough !== true)
+      .map((o) => ({
+        id: o.fact.id,
+        okf_type: o.okfType,
+        ...(edgeSiteMode === 'auto' && o.edges && o.edges.length > 0 ? { edges: o.edges } : {}),
+      }));
     const invalidCount = outcomes.filter((o) => o.kind === 'invalid').length;
     const abstainCount = outcomes.filter((o) => o.kind === 'abstain' && !isEscalated(o)).length;
 
@@ -2663,7 +2731,28 @@ export class MaintenanceService {
     const diagBuffer = new DiagnosticBuffer();
     const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger };
     for (const o of outcomes) {
-      if (o.kind === 'abstain') {
+      if (retriedFacts.has(o.fact.id)) {
+        // D4 (LEDGER): `WikiDiagnosticDetail` has no `site` key and `types.ts` is
+        // frozen (I3), so the edge site is marked through the typed `reason` field.
+        diagBuffer.push({ ...diagBase, code: 'context_overflow_skipped', detail: { factId: o.fact.id, reason: 'edge_screen_overflow_retry' } });
+      }
+      if (o.kind === 'accepted' && o.edgeStats) {
+        // Once per fact, never per answer (§6 volume pin). Malformed answers (or
+        // a partial missing set, which counts as invalid) → `classification_invalid`;
+        // otherwise `classification_low_confidence`. All-missing keeps typing.
+        // D4: counts (`asked`/`uncertain`/`invalid`/`missing`) are computed in
+        // `edgeStats` but cannot ride `detail` until the type admits them.
+        const { invalid, missing, allMissing } = o.edgeStats;
+        const code = allMissing || invalid > 0 || missing > 0 ? 'classification_invalid' : 'classification_low_confidence';
+        diagBuffer.push({
+          ...diagBase,
+          code,
+          detail: {
+            factId: o.fact.id,
+            reason: allMissing ? 'edge_answers_missing' : code === 'classification_invalid' ? 'edge_answer_invalid' : 'edge_uncertain',
+          },
+        });
+      } else if (o.kind === 'abstain') {
         // Escalated abstains get no receipt here: if the generative step
         // omits them, it emits `classification_abstained` with `writer:
         // 'llm'` — the receipt names the step that actually declined.

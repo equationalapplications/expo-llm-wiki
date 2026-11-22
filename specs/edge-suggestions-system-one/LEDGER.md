@@ -10,15 +10,16 @@ In flight: nothing
 - [x] 6. Mode, floor, and `shortlistK` plumbing — evidence: uncommitted. Baseline `ontologyBackfill`/`classifierBackfill`/`contextBudgetBackfill` 3 files / 58 tests green before the change, green after. `MaintenanceService.ts`: edge mode + floor resolved once beside the typing chain; `shortlistK`, `edgeSiteMode`, `edgeMinConfidence` passed to `_runClassifierBackfill`; `edgeSiteMode`/`edgeMinConfidence` in `runOpts` at both generative call sites; `edgeSiteMode` asserted like `shortlistK`. No existing test pins the `shortlistK` assert, so no sibling case added. `pnpm typecheck` clean.
 - [x] 7. Compatibility pins (test plan 4, 5, 10) — evidence: uncommitted. 5 tests in new `classifierEdgeScreen.test.ts`, written before any screen code, all pass: request is exactly `{ okf_type }` with zero pool reads (legacy auto, `systemOne.typing: 'auto'`, explicit `edges: 'llm'`); typing `'llm'` + edges auto prompts equal baseline, classify uncalled; no-classify + edges auto prompts equal baseline; legacy-only pass equals explicit `edges: 'llm'` (counters + diagnostic codes); escalation-leg prompt contains the classifier-typed fact. Narrower than plan: the item-10 comparison covers counters and diagnostic codes, not persisted edges (no edge-bearing fixture before task 9), and the byte-identical `runBatched` args are checked via generative prompts rather than a `runBatched` spy. Re-run after task 8: still 5/5.
 - [x] 8. Edge-question map construction (test plan 8, 16 first half, 17) — evidence: uncommitted. 6 tests written first; 6 red (empty edge keys), then green after the `_runClassifierBackfill` change (pool read once in-step before `withConcurrency`; collision set = pool titles shared by 2+ rows plus every batch fact's title per D3; target-side `typeSatisfies` filter; one question per unique (edge type, candidate) with key map). Targeted run: 10 files / 151 tests pass (`classifierEdgeScreen`, `classifierBackfill`, `ontologyBackfill`, `contextBudgetBackfill`, `classifierDiagnostics`, `systemOneConfig`, `publicExports`, `export`, `graphOwnershipExports`, plus `engineDefaults`-adjacent). `pnpm typecheck` clean. Answers to edge questions are not read yet (task 9).
-- [ ] 9. Band evaluation and edge conversion (test plan 2, 15, 16 second half, 18) — evidence: <commit, test run>
-- [ ] 10. Invalid and missing answers, edge-site diagnostics (test plan 7, 21) — evidence: <commit, test run>
-- [ ] 11. Overflow retry-once (test plan 20) — evidence: <commit, test run>
-- [ ] 12. Escalation gate plumbing (test plan 3, 6, 11, 12, 13, 14, 19) — evidence: <commit, test run>
+- [x] 9. Band evaluation and edge conversion (test plan 2, 15, 16 second half, 18) — evidence: uncommitted (wave 3). 4 tests written first; run red with the rest of the wave (13 of 30 failing in `classifierEdgeScreen.test.ts`), green after the `_runClassifierBackfill` change (per-answer `validateClassifierAnswer`, source-type discard, directional band, `edges` key only when the site mode is `'auto'`). Targeted run (`classifierEdgeScreen`, `classifierBackfill`, `ontologyBackfill`, `classifierDiagnostics`, `contextBudgetBackfill`, `ontologyReceiptVocabulary`): 6 files, 97 passed, 1 todo. `pnpm typecheck` clean.
+- [ ] 10. Invalid and missing answers, edge-site diagnostics (test plan 7, 21) — evidence: behavior implemented and green (item 7, item 21, volume pin: one diagnostic per fact; all-missing keeps typing, no generative leg, `classification_invalid`; partial missing counts as invalid). NOT ticked: blocked on D4 — the spec's `detail.site: 'edge_screen'` and the per-fact counts cannot be emitted because `WikiDiagnosticDetail` is closed and `types.ts` is frozen (I3). Interim: edge site marked by `detail.reason` (`edge_uncertain`, `edge_answer_invalid`, `edge_answers_missing`); `it.todo` holds the count/site assertion.
+- [ ] 11. Overflow retry-once (test plan 20) — evidence: behavior implemented and green (retry succeeds / retry overflows = pre-PR `overflow_skip` with detail `{ factId }` / retry non-overflow error = threw / retry `WikiBudgetExhausted` = unattempted + stopped / no-edge-question overflow never retried; 5 tests). NOT ticked: same D4 block for `detail.site: 'edge_screen'` on the successful-retry `context_overflow_skipped`; interim marker `reason: 'edge_screen_overflow_retry'`.
+- [x] 12. Escalation gate plumbing (test plan 3, 6, 11, 12, 13, 14, 19) — evidence: uncommitted (wave 3). 7 tests; gate is now `classifierRun.escalated.length > 0` (live-mode re-check kept inside), `isEscalated` = accepted-with-fallthrough OR (`onLowConfidence: 'llm'` AND abstain/low_confidence) and drives `escalated`, `attempted` and `abstainCount`; the classifications build excludes fallthrough outcomes. Item 14 re-pointed per D1 ruling. Full suite: 255 files, 3009 passed, 1 todo (baseline 2969). `pnpm typecheck` clean.
 - [ ] 13. Vocabulary and untouched files (test plan 9) — evidence: <test run, diff output>
 - [ ] 14. Docstrings (§9) — evidence: <commit>
 - [ ] 15. Host docs (§9) — evidence: <commit>
 - [ ] 16. Suite health — evidence: <test run with file and test counts>
 - [ ] 17. Cleanup commit — evidence: <commit>
+  → RESOLVED (controller, 2026-11-22): option (b) ACCEPTED — the typed `detail.reason` marker carries the edge-site signal (`edge_uncertain`, `edge_answer_invalid`, `edge_answers_missing`, `edge_screen_overflow_retry`); `types.ts` stays frozen (I3) and `edgeStats` remain internal. Spec §4/§6 amended accordingly; boxes 10/11 may now be ticked; the it.todo is retargeted to assert the reason markers.
 
 ## Discrepancies
 
@@ -39,6 +40,15 @@ Open questions for the controller. Each blocks only the named part of its task.
   diagnostic" for that shape, which suggests `classification_invalid`. The
   controller picks `classification_invalid` (warn) or
   `classification_low_confidence` (info) for the all-missing fact.
+- 2026-11-22 — D4 (blocks tasks 10 and 11, the `detail` shape only). §6 and
+  §4 require edge-site diagnostics to carry `detail.site: 'edge_screen'` plus
+  asked/uncertain/invalid/missing counts. `WikiDiagnosticDetail`
+  (`types.ts:979`) is a closed interface with no `site` or count keys, and
+  I3 freezes `types.ts` (and `diagnostics.ts`). Emitting them needs a cast or
+  a type edit. Interim: the edge site rides the existing typed
+  `detail.reason` (`edge_*` values); counts are computed in `edgeStats` but not
+  emitted. The controller rules: amend `types.ts` (adding optional `site` and
+  count keys, no new code) or accept the `reason`-based marker and amend §6.
 - 2026-11-22 — D3 (blocks task 8's batch-collision set). §4 skips a candidate
   whose normalized title matches "any OTHER fact in this pass's batch". The
   source fact itself can share that title too. The intra-transaction index
