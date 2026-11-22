@@ -1,0 +1,406 @@
+# Spec — Step 11: Resolution from System-One
+
+Status: Proposed — draft 2026-11-22 (Tessera session-2 lane, Discord thread
+`1574117274791706748`). Review ladder: flash fidelity rung (glm-5.3-flash,
+free) folded — 8 findings; Opus spec-review rung (opus-review --doc,
+effort medium, $0.50 of $1.00 cap) REQUEST CHANGES folded — blocker B1
+(silent classifier NOOP → receipts via existing `fact_deduplicated` +
+`reason: 'classifier'` through ops/index.ts's DiagnosticBuffer), majors
+M1 (question reworded duplicate-only; update-shaped-pair test; Q8 added),
+M2 (§4/Q3/Q4 mode-ranking note), M3 (prologue all-or-nothing), minors
+m1–m5. Lane assigned by the step-10 sibling session
+(thread `1570840529388965951`): spec prep only until its PR merged — #459
+merged 18:17:50Z, release v9.12.0 verified live 18:24:48Z, main tip
+`206936cc`. Owner rulings on the numbered Open questions below are required
+before any plan or implementer dispatch.
+Base: origin/main @ `206936cc` (post #459 + #460 release-PR merge). Every pin
+below re-verified live against the lane worktree
+`~/code/github/worktrees/expo-llm-wiki-tessera-laneB`. Repo: expo-llm-wiki.
+Product rule: hosts bring their own models; core stays unopinionated about
+providers.
+
+## Problem
+
+The librarian ops pass resolves ambiguous fact candidates — "is this a
+duplicate, an update, a supersession, or new?" — exclusively on the
+generative path: `runResolve`
+(`packages/core/src/services/librarian/ops/resolve.ts:70`) batches every
+gate-ambiguous candidate into one `callLlm` invocation
+(`resolve.ts:94`, `operation: 'librarian'`). The gate
+(`classifyCandidate`, `packages/core/src/services/librarian/ops/gate.ts:67-83`)
+already settles the extreme scores locally, but everything in the uncertain
+band — and, in keyword mode, EVERY candidate with neighbours
+(`gate.ts:77`) — pays a generative call. The host's non-generative
+classifier (`LLMProvider.classify`, reached as `options.llmProvider.classify`,
+`packages/core/src/types.ts:770-816`) is never consulted at this site — and
+no host knob engages, tunes, or floors a classifier resolution here. Roadmap step 11 says the entity-resolution site "opts
+in to the configured model" and that "when the configured model is
+unavailable or below threshold, the fact falls through to the generative
+path, and the pass warns once" (`docs/ROADMAP.md:272-278`). The S1-0 spec
+reserved exactly one new `'resolve'` line in `SystemOneThresholdSite` for
+this PR (`specs/system-one-config/spec.md:67-71` — "PR 4 adds `'resolve'`")
+and fenced it out of S1-0 (`spec.md:265-272`) — as a *threshold site*, the
+same shape step 10 (`specs/edge-suggestions-system-one`) just implemented
+for edges.
+
+## Root cause with evidence
+
+- `SystemOneThresholdSite` is `'typing' | 'edges'`
+  (`packages/core/src/config/systemOne.ts:13`); its docstring already
+  promises `'resolve'`/`'healScreen'` as one-line sibling additions
+  (`systemOne.ts:5-8`). `minConfidence` is typed
+  `Partial<Record<SystemOneThresholdSite, number>>` (`systemOne.ts:34-35`),
+  so the union member immediately carries a floor with no type churn.
+- The entity-resolution site is `runResolve` — ONE caller:
+  `ops/index.ts:68` passes `gated.filter(g => g.decision.kind ===
+  'ambiguous')` into it with the context budget
+  (`resolveContextBudget(deps.options.config)`). The legacy librarian
+  strategy has no resolve pass (`legacy.ts` has no `runResolve`/ambiguous
+  handling — its apply path only resolves edges), so scope is exactly this
+  site. The backfill path's *node-type* resolution
+  (`resolveNodeTypeMatch`, `OntologyService.ts:125`) is a different
+  operation and is NOT this site; neither is
+  `OntologyService.resolveAndPersistEdges` (edge resolution, called from
+  `apply.ts:239`).
+- Gate routing that produces `ambiguous` (all pins `gate.ts`):
+  normalized-text equal → NOOP (`:74-75`); no neighbours → ADD (`:76`);
+  keyword mode with any neighbours → ambiguous (`:77`); vector mode: best
+  `>=` dupThreshold with title match → NOOP, best `<` novelThreshold → ADD,
+  else ambiguous (`:78-82`). Thresholds calibrated 0.89/0.30
+  (`gate.ts:38-46`).
+- The generative resolve validates ops per candidate against that
+  candidate's OWN alias map (`validateOp`, `resolve.ts:39-55`) and an
+  unparseable single-item batch lands in `failed` (`resolve.ts:139`; the
+  docstring promising it is `resolve.ts:66-68`);
+  apply turns rejected ops into ADD with `librarian_op_rejected`
+  (`apply.ts:187`, second emission at `:231`; `:181` is the
+  `resolve_failed` diagnostic path). Any classifier
+  shortcut must respect the same per-candidate scoping.
+- The classifier machinery is reachable from this site with NO new
+  plumbing: `LibrarianDeps.options` is `WikiOptions`
+  (`packages/core/src/services/librarian/types.ts:50`),
+  `WikiOptions.llmProvider` is the `LLMProvider` whose optional `classify`
+  member is the non-generative classifier that "core never calls … unless
+  the host opts in" (REQ-COMPAT-01.5, `types.ts:809-815`), and
+  `deps.options.config` already reaches the ops layer
+  (`ops/index.ts:30`, `:68`). `ClassifyRequest` is one state evaluated
+  against a map of questions (`types.ts:824-828`); a `binary` question
+  answers `{probability}` (`types.ts:832`, validated untrusted at
+  `packages/core/src/utils/classifier.ts:44-47`) — one number to floor,
+  exactly the shape step 10 floored.
+- The resolver vocabulary is in place from S1-0 + step 10:
+  `resolveSystemOneEdges` (`packages/core/src/utils/engineDefaults.ts:159`)
+  and `resolveEdgesMinConfidence` (`engineDefaults.ts:231`) are the
+  per-site precedents; `warnOnce` (`engineDefaults.ts:89-93`) implements
+  the S1-0 §2 treated-as-unset contract; step 10's posture A (owner ruling
+  2026-11-22, msg `1574101104528986284`) made the explicit floor a
+  REQUIREMENT for `'auto'` because a 0.5 binary confidence is a coin toss.
+  Resolution has strictly higher stakes on one side: a wrong NOOP *drops a
+  live fact* (data loss), where a wrong edge was merely a wrong fact.
+- Step-11 semantic frame (roadmap, `docs/ROADMAP.md:195-199`): step 11 may
+  rewrite a fact in place and the receipts and counters make the moves
+  auditable. The ops path already emits per-candidate diagnostics
+  (`fact_deduplicated`, `apply.ts:157-166` `source_pointer_unresolved`,
+  `apply.ts:181` `resolve_failed`).
+
+## Proposed change
+
+### 1. One new line in `SystemOneThresholdSite`
+
+`systemOne.ts:13` becomes:
+
+```ts
+export type SystemOneThresholdSite = 'typing' | 'edges' | 'resolve';
+```
+
+Exactly one new member, exactly per the S1-0 merge fence
+(`specs/system-one-config/spec.md:67-71`). `minConfidence` stays closed
+under the site union and immediately gains its consumer: the
+`minConfidence.resolve` floor of §3.
+
+### 2. Engagement key `systemOne.resolve: 'auto' | 'llm'`
+
+Add to `SystemOneConfig` (`systemOne.ts:15-44`, beside `typing`/`edges`):
+
+```ts
+/**
+ * Entity-resolution mode for the librarian ops pass. `'llm'` (default)
+ * keeps ambiguous-candidate reconciliation on the generative path exactly
+ * as today. `'auto'` engages the classifier resolution screen (§4) when
+ * the host provides a classifier AND an explicit `minConfidence.resolve`
+ * floor is set (§3 — missing floor under `'auto'` warns once and the site
+ * resolves `'llm'`); confident answers apply (§4), uncertain-band
+ * candidates fall through to the generative resolve of the same pass
+ * (§5), and an unavailable classifier warns once per pass and falls
+ * through whole (§5). There is no `'off'`: this PR adds no configuration
+ * that can silently discard a candidate from resolution.
+ */
+resolve?: 'auto' | 'llm';
+```
+
+Resolution: `resolveSystemOneResolve(config)` in `engineDefaults.ts`,
+returning `config?.systemOne?.resolve ?? 'llm'`; a present
+non-`'auto'`/non-`'llm'` value warns once via the existing `warnOnce`
+helper and is treated as unset — the S1-0 §2 treated-as-unset contract,
+mirroring `resolveSystemOneTyping`/`resolveSystemOneEdges`. Posture A is
+RECOMMENDED as inherited owner policy (step-10 ruling msg
+`1574101104528986284`): resolving `'auto'` alone does NOT engage the
+screen — the site additionally requires the explicit `minConfidence.resolve`
+floor; missing/out-of-domain floor → warnOnce naming the key, site resolves
+`'llm'`. Flagged as Open question Q2 for explicit confirmation because
+resolve's failure mode is data loss, not just a wrong fact. No call option
+— resolution mode is a config-level stance, not per-call tuning. No
+`'off'`.
+
+### 3. Floor `minConfidence.resolve`
+
+Add `resolveResolveMinConfidence(config)` in `engineDefaults.ts` (naming
+follows the step-10 `resolveEdgesMinConfidence` precedent): returns
+`undefined` unless the site resolves `'auto'` with a floor present and
+valid per the domain Q7 rules; an invalid value warns once and is treated
+as unset — the S1-0 treated-as-unset contract. Domain is an owner
+question (Q7): the S1-0 typing chain (`resolveTypingMinConfidence`,
+`engineDefaults.ts:193-219`) accepts finite [0, 1] and its "use `??`,
+never `||`" rule applies; the step-10 edges precedent (`isEdgesFloor`,
+`engineDefaults.ts:221-222`) instead enforces [0.5, 1] on the posture-A
+reasoning that a sub-0.5 binary confidence is a coin toss. Given
+resolution's wrong-NOOP mode is data loss, [0.5, 1] is RECOMMENDED. The
+floor applies to the classifier's per-answer
+probability at the resolve site only; the generative path produces no
+confidence and is never floored.
+
+### 4. The classifier resolution screen (question shape — recommendation)
+
+RECOMMENDED shape (open questions Q1/Q3/Q4/Q8 let the owner move it): for
+each gate-ambiguous candidate, ONE `ClassifyRequest` with one `binary`
+question per screened neighbour (coverage per Q3's ruling) — state =
+candidate title+body, question =
+"does this candidate add NO information beyond neighbour nX (a pure
+duplicate: same claims, no new content)?" — strict duplicate-only wording
+per the Opus review (M1): a generic "is this the same fact?" would let an
+update-shaped pair ("Alice lives in Berlin" vs "Alice lives in Paris")
+answer YES and get dropped as a NOOP, discarding the new value. The
+duplicate-only phrasing, the floor, and the receipts of §6 are the
+mitigations; a red-first test MUST assert an update-shaped pair does not
+settle as NOOP. The question is `binary` (vendor-neutral per
+`types.ts:819-822`), presented against the candidate's own alias map
+neighbours so per-candidate scoping (`validateOp`, `resolve.ts:39-55`)
+is preserved by construction.
+
+- Confident YES (`probability >= floor`) on a neighbour → terminal
+  **NOOP** on that neighbour's id. Precedent boundary, stated honestly:
+  the gate's local NOOP rule (`gate.ts:80`) fires only on cosine ≥ 0.89
+  AND a title-Jaccard match — near-identical text. The classifier screen
+  reaches into the 0.30–0.89 uncertain band and (per Q4) keyword mode,
+  exactly where update/supersede shapes live, which is why the question
+  is duplicate-only and why Q8 asks whether YES should ever be terminal.
+  A settled NOOP is dropped with a receipt (§6) — the gate's local drops
+  (`apply.ts:176`) carry none, and neither does a resolved NOOP
+  (`apply.ts:190`).
+- Confident NO and uncertain band → fall through to the generative resolve
+  (§5) — Open question Q1 decides whether confident NO may instead be a
+  terminal ADD.
+- Misroute accounting, stated plainly: a wrong NOOP drops a live fact
+  (data loss — this is why the floor is explicit and required); a wrong
+  ADD creates an additive duplicate the next pass can reconcile; the
+  generative path remains the fallback for everything the classifier does
+  not settle.
+- Classifier unavailable (`classify` absent) or throwing mid-pass: the
+  prologue is ALL-OR-NOTHING — any absent classifier or throw means
+  `settled` is empty (no partial results are kept), the pass warns ONCE
+  (scope per Q5), and ALL candidates fall through to the generative
+  batch; roadmap wording
+  (`docs/ROADMAP.md:274-276`) requires exactly this fallthrough.
+
+### 5. Fallthrough wiring (explicit at the one call site)
+
+`runResolve` (`resolve.ts:70`) gains a screening prologue, pure and
+unit-testable in the step-10 style: given the ambiguous candidates, the
+resolved mode/floor, and the classifier, return `{ settled: Map<candidate,
+ResolvedOp>, rest: GatedCandidate[], warnReason?: 'no-classifier' |
+'no-floor' }`. Only `rest` enters the existing `runBatched` generative
+call; `settled` entries flow back through `runResolve`'s existing return
+shape (they ARE `ResolvedOp`s) so `apply.ts` is unchanged — but the
+classifier-settled NOOP receipts are emitted by `ops/index.ts` through
+the pass-level DiagnosticBuffer it already owns (§6), so the call site
+gains a small emission loop. An empty `rest` skips the
+LLM call entirely (the `ambiguous.length === 0` precedent, `resolve.ts:77`).
+The `budget`/overflow machinery of the generative leg is untouched —
+screened candidates can no longer contribute overflow skips, which is a
+strict reduction in skipped work.
+
+### 6. Accounting and receipts
+
+Zero NEW diagnostic codes (step-10 D4 precedent), but receipts are NOT
+silent: a classifier-settled NOOP emits the EXISTING `fact_deduplicated`
+code with `detail.reason: 'classifier'` — the direct precedent is
+`ops/index.ts:61-64`, which already emits `fact_deduplicated` with
+`reason: 'in_batch'` for in-batch duplicates. This resolves the Opus
+review's blocker: the gate's local NOOP (`apply.ts:176`) and a resolved
+NOOP (`apply.ts:190`) carry no diagnostic today, so a dropped candidate
+would otherwise be unauditable — the data-loss outcome the roadmap's
+"receipts and counters make these moves auditable" line
+(`docs/ROADMAP.md:197-199`) exists to prevent. Emission goes through the
+pass-level DiagnosticBuffer in `ops/index.ts` (the same buffer
+`runResolve`'s overflow skips are buffered into, `resolve.ts:100-103`).
+`LibrarianResult` (`librarian/types.ts:109-116`) gains nothing —
+step 10 added NO pass-result counters, so a counter
+addition here would be new public surface and is NOT proposed by default;
+whether the owner wants counters on top of the receipts is Q6b. No
+`writer` change —
+`apply.ts` applies `ResolvedOp`s identically regardless of who resolved
+them (unlike backfill, ops apply has no `'classifier'` writer stamp today;
+adding one is Q6a, default: don't).
+
+### 7. Compatibility lock
+
+With no `systemOne.resolve` key set and no classifier provided: the screen
+prologue returns immediately (no classifier read, no floor read, no
+warning) and `runResolve` behaves byte-identically to today — same prompt,
+same batching, same outputs. `'llm'` is today exactly. `classify` present
+but the key unset changes nothing (REQ-COMPAT-01.5, `types.ts:811-813`).
+The generative prompt builder (`buildOpsResolvePrompt`) is untouched.
+
+### 8. Disclosed docstring/spec-text updates
+
+- `systemOne.ts` docstrings: `'resolve'` joins the promised-sites list it
+  already names (`systemOne.ts:5-8`); `SystemOneConfig.resolve` docstring
+  as in §2. The `SystemOneThresholdSite` one-line docstring
+  (`systemOne.ts:12`) updates its member count.
+- `engineDefaults.ts` resolver comments mirror the step-10 wording with
+  site-specific rationale (data-loss asymmetry).
+- Roadmap step 11 row gets its Done mark at cleanup (post-merge), per the
+  specs/README lifecycle — not in this PR.
+
+## Explicitly out of scope / rejected alternatives
+
+- **Heal screening** — step 12 / S1-0 PR 6 (`'healScreen'`). Ruled
+  separately; heal may forget (owner ruling 2026-11-20).
+- **Type-on-write / ingest typing** — steps 13/14.
+- **The backfill node-type resolution site**
+  (the typing chain at `MaintenanceService.ts:2171`; node-type matching
+  itself is `resolveNodeTypeMatch` in `OntologyService.ts:125`) —
+  that is typing (S1-0 PR 1 territory), not entity resolution. Named here
+  only to fence the word "resolution".
+- **Legacy strategy** — no resolve site exists there
+  (`legacy.ts` grep-verified); extending the gate/resolve split to legacy
+  is not a roadmap step.
+- **A `'choice'` question over the four ops** (ADD/UPDATE/SUPERSEDE/NOOP
+  as classifier options) — rejected as recommendation: a small binary
+  model answering "same fact?" is the question it can actually answer;
+  op selection between UPDATE/SUPERSEDE needs generative context (valid_from
+  semantics). Owner may overrule via Q1's menu.
+- **Screening inside `gateCandidates`** — rejected: the gate is pure/local
+  and runs for every candidate; the classifier screen belongs to the
+  resolve site where the ambiguous set is already known and the ops
+  receipts are scoped.
+
+## Open questions — OWNER RULINGS REQUIRED before plan dispatch
+
+1. **Confident-"different" handling.** When the classifier answers a
+   confident NO ("not the same fact") on the screened neighbour: (a)
+   terminal **ADD** — savings on the novel side too, risk is an additive
+   duplicate only; or (b) **fall through to generative** (recommended) —
+   savings only on the duplicate side, but UPDATE/SUPERSEDE remain
+   reachable for candidates a binary screen would have misfiled as novel.
+2. **Posture.** Inherit step-10 posture A — `'auto'` requires the explicit
+   `minConfidence.resolve` floor; missing/out-of-domain → warnOnce + site
+   resolves `'llm'` (recommended: yes; note resolve's wrong-NOOP mode is
+   data loss, the strongest posture-A case yet)?
+3. **Neighbour coverage.** Screen against `neighbours[0]` only (best
+   score — recommended; one binary answer per candidate) or against all k
+   neighbours (k binary answers per candidate, cost k× the calls, catches
+   duplicates ranked below the best)? Note (Opus review M2): in vector
+   mode `neighbours[0]` is cosine-ranked, in keyword mode it is
+   keyword-relevance-ranked — "best" means a different thing per mode.
+4. **Keyword mode.** Gate rule 4 routes EVERY keyword-mode candidate with
+   neighbours to ambiguous (`gate.ts:77`) — engage the classifier screen
+   there too (recommended: yes; the screen reads no scores itself, though
+   which neighbour is `neighbours[0]` is mode-ranked per Q3's note) or
+   vector-mode only?
+5. **Unavailable-classifier warning scope.** Warn once per process
+   (`warnOnce` shared-set precedent) or once per pass? Recommended: once
+   per process, naming the missing thing (`classify` or the floor key).
+   Note (Opus review m5): per-process is STRICTER than the roadmap's
+   "the pass warns once" wording (`docs/ROADMAP.md:274-276`) — ruling
+   here settles which contract the host sees.
+6. **Receipts depth.** (a) Writer stamp: add a `'classifier'`-style
+   provenance stamp on classifier-settled ops in ops receipts
+   (recommended: no — detail marker §6 suffices; ops apply has no writer
+   dimension today), or keep backfill-style parity? (b) Pass counters:
+   add `resolved_classified` / `resolved_fallthrough` counters to
+   `LibrarianResult` (NEW PUBLIC SURFACE — `librarian/types.ts:109-116`
+   today carries only `processedThrough`/`factsWritten`/`budgetStop`;
+   step 10 added none) or keep diagnostics-only receipts (recommended)?
+   Roadmap's auditability line (`docs/ROADMAP.md:197-199`) is the argument
+   for counters.
+7. **Floor domain.** `minConfidence.resolve` valid domain: (a) **[0.5, 1]**
+   (RECOMMENDED — the step-10 `isEdgesFloor` precedent,
+   `engineDefaults.ts:221-222`; resolution's wrong-NOOP mode is data loss,
+   so a sub-0.5 binary confidence is a coin toss) or (b) finite [0, 1]
+   (the S1-0 typing-chain domain, `engineDefaults.ts:193-219`)? Either
+   way: invalid warns once and is treated as unset.
+8. **Is a classifier YES ever terminal?** The M1 mitigation is strict
+   duplicate-only wording + the floor, but YES still drops the candidate.
+   (a) YES → terminal NOOP wherever the screen runs (recommended: the
+   savings case, guarded by floor + duplicate-only question + §6
+   receipts); (b) YES terminal only in vector mode, where cosine evidence
+   corroborates, and fall-through in keyword mode; (c) YES never terminal
+   — the screen only annotates diagnostics and every candidate still
+   resolves generatively (savings collapse to zero; listed for
+   completeness).
+
+## Files touched
+
+- `packages/core/src/config/systemOne.ts` — `'resolve'` site member (one
+  line), `SystemOneConfig.resolve` key + docstring.
+- `packages/core/src/utils/engineDefaults.ts` —
+  `resolveSystemOneResolve`, `resolveResolveMinConfidence` (both beside
+  their step-10 siblings; `warnOnce` reused).
+- `packages/core/src/services/librarian/ops/resolve.ts` — screening
+  prologue + fallthrough; generative leg otherwise untouched.
+- `packages/core/src/services/librarian/ops/index.ts` — emission loop for
+  classifier-settled NOOP receipts through the pass-level DiagnosticBuffer
+  (§6).
+- `packages/core/src/index.ts` — export the two new resolvers (new public
+  surface, same as step 10's exports at `index.ts:29-31`).
+- Tests: `packages/core/__tests__/opsResolve.test.ts` (screen prologue,
+  fallthrough, empty-batch skip, warn-once contracts, compatibility
+  byte-identity), `packages/core/__tests__/systemOneConfig.test.ts` +
+  `engineDefaults.test.ts` (key/floor resolution contracts), and an
+  ops-pass-level test beside `opsLibrarian.test.ts` (screen → apply flow,
+  receipts markers).
+
+## Test plan
+
+1. Compatibility (§7): no key + no classifier → screen prologue is a no-op;
+   `buildOpsResolvePrompt` receives identical input; existing
+   `opsResolve.test.ts` suite passes untouched.
+2. Key resolution (§2): unset → `'llm'`; `'auto'`/`'llm'` valid; invalid
+   value warns once and treated as unset; `classify` present without the
+   key changes nothing.
+3. Floor (§3): `minConfidence.resolve` read only under `'auto'`; missing
+   under `'auto'` → warnOnce + `'llm'` (posture A, per Q2 ruling); invalid
+   (NaN, out of the Q7 domain) treated as unset with the chain continuing;
+   domain endpoints valid per the Q7 ruling (`??` not `||`).
+4. Screen (§4): confident YES ≥ floor → NOOP on the aliased neighbour;
+   NO/certainty-band answers follow the Q1 ruling; abstain-shaped answers
+   (malformed/missing probability) are rejected untrusted and fall through;
+   per-candidate scoping holds (a YES for candidate A's n1 never settles
+   candidate B); an update-shaped pair (same entity, new content) does NOT
+   settle as NOOP under the duplicate-only question (red-first, per the
+   Opus M1 fix).
+5. Fallthrough (§5): mixed settle/fallthrough batches send only `rest` to
+   the LLM; empty `rest` makes zero LLM calls; classifier unavailable or
+   throwing mid-pass → `settled` is empty (all-or-nothing, per the Opus M3
+   fix), one warning, whole-batch fallthrough, pass still applies.
+6. Receipts (§6): a classifier-settled NOOP emits EXACTLY ONE existing
+   `fact_deduplicated` diagnostic with `detail.reason: 'classifier'`
+   (via `ops/index.ts`'s pass-level DiagnosticBuffer); zero NEW diagnostic
+   codes and zero `LibrarianResult` surface change asserted (counters only
+   if Q6b rules for them); ops apply applies settled `ResolvedOp`s
+   identically.
+7. Red-first TDD throughout; full core suite green (baseline at
+   `206936cc` — re-measure at lane open; step 10 landed at 255 files /
+   3014 tests) and `pnpm --filter @equationalapplications/core-llm-wiki
+   typecheck` clean.
