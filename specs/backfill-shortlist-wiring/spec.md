@@ -98,6 +98,17 @@ not a new performance claim). The
 pass already reads every typed row once; the query gains one column.
 The candidate renderer keeps showing title and type only.
 
+### 2a. Dated note (2026-11-21, Opus code-review m5): validity-window scope
+
+The scoring query filters live, typed rows like `findTitleIndexByEntityId`
+does; it does not apply a validity-window (`liveAt`) filter. This matches
+the old catalog and edge resolution, which resolve against the same
+index. The candidate queue filters to current facts, so a window-expired
+typed node can still appear as a candidate. Kept deliberate for index
+consistency: filtering the hint but not the resolver would create a new
+divergence. A validity-window pass over the title index is follow-up
+scope, not 2b.
+
 ### 3. The k knob (OQ3)
 
 `OntologyConfig` gains `shortlistK?: number`
