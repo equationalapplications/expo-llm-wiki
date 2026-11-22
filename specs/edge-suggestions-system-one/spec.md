@@ -181,6 +181,12 @@ Default-reachability disclosure, stated plainly: with the default floor
 well-calibrated binary classifier is an answer NEAR 0 or 1, which the
 directional rule classifies confidently; the band exists for genuinely
 torn answers. Hosts who want a wider fallthrough band raise the floor.
+Disclosed plainly: this narrowness holds under ANY chosen default
+(open question 5) — it is by construction, not a calibration claim —
+and the stakes are one-way: an edge is PERMANENT once applied
+(`addIgnoreDuplicate`, `OntologyService.ts:214-237`) and backfill only
+revisits UNTYPED facts, so a wrongly applied edge is not revisited by
+later passes.
 
 Validation precedes the floor comparison, mirroring `:2534-2542` ordering:
 `validateClassifierAnswer` runs first (`classifier.ts:20`); an invalid
@@ -266,7 +272,15 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   `overflow_skip` (stamped, no generative) exactly as before; if the
   retry succeeds, typing proceeds normally and edges are simply not
   screened this pass for that fact — no fallthrough and no edge receipt,
-  because the model saw no edge questions (disclosed). A request without
+  because the model saw no edge questions (disclosed; one
+  `context_overflow_skipped` diagnostic with `detail.site:
+  'edge_screen'` is emitted so hosts can see the screen was skipped —
+  the EXISTING code (`MaintenanceService.ts:2606`, severity `warn`,
+  `diagnostics.ts:34`), zero new codes kept). Error edges pinned: a
+  retry throwing `WikiBudgetExhausted` yields `unattempted` with the
+  `stopped` set pinned exactly as today (`:2524-2526`); a non-overflow
+  error yields `threw` — transient, no cooldown stamp (`:2529`). A
+  request without
   edge questions never hits the retry, so hosts that never set the key
   are byte-identical (§8, test 20).
 - Accepted answers (`p ≥ floor`) are converted, before
@@ -281,23 +295,33 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
 - Known limitation, resolved pre-call, disclosed and pinned: the classifier
   screens by `targetFactId`, but edges persist via `target_title`, resolved
   by `normalizeTitleKey` in a map where later rows overwrite earlier
-  (`MaintenanceService.ts:2711-2715`, intra-tx update `:2778`) — so a
-  title collision could otherwise resolve to a DIFFERENT fact than the one
-  screened. Pinned guard (PRE-CALL screen, not post-resolution): the
-  classifier pass builds its candidate pool from
+  (`MaintenanceService.ts:2711-2715` — a SEPARATE, LATER read inside the
+  apply tx, with no `ORDER BY`, so it is not order-consistent with any
+  pre-call map; the intra-transaction update at `:2778` overwrites the
+  index for every batch fact typed in THIS apply — same transaction, not
+  "later in the pass") — so a title collision could otherwise resolve to a
+  DIFFERENT fact than the one screened, and a pre-call guard that only
+  skips "maps to a different id" is ORDER-DEPENDENT: two typed rows
+  sharing a normalized title can pass the guard for A while the tx map
+  resolves to B. Pinned guard (PRE-CALL screen, not post-resolution,
+  ORDER-INDEPENDENT): the classifier pass builds its candidate pool from
   `findShortlistRowsByEntityId` and a title-normalization check —
   `normalizeTitleKey` applied the same way the generative title index
   built at `:2711-2715` is shaped (`normalizeTitleKey(row.title)` →
   `{id, okf_type}` map) — and SKIPS any candidate whose normalized title
-  maps to a DIFFERENT id than the candidate row's id; such pairs never
-  become questions (test case 17 pins this). The `edge:` question prefix
+  is shared by MORE THAN ONE pool row, or by any OTHER fact in this
+  pass's batch; BOTH sets are fully known before the classify call, so
+  the skip cannot depend on read order. Such pairs never become questions
+  (test case 17 pins both collision kinds: duplicate pool rows and
+  duplicate batch facts). The `edge:` question prefix
   cannot collide with the typing key `okf_type`, and `(edge_type,
   targetFactId)` pairs are unique per fact, so keys are unique; the
   key→(edge-definition, candidate-row) map remains the ONLY lookup
-  authority. Timing gap, disclosed: the
-  pool is as of pass-entry, the same discipline as the `:2293-2301`
-  comment — a title collision created later in the same pass (intra-tx
-  update at `:2778`) can still retarget — accepted limitation, stated.
+  authority. Timing gap, disclosed: the pool is as of the classifier
+  step's in-step read — the same discipline as the `:2293-2301` comment,
+  with NO hoist to pass entry (§4 candidates bullet) — so a title
+  collision created outside this pass's pool and batch sets can still
+  retarget; accepted limitation, stated.
   `resolveEdges`, `resolveAndPersistEdges`, `EdgeDropReason`, and the
   edge diagnostics are UNTOUCHED by this guard — it is a candidate
   screen, not a pipeline change. This skip COMPOSES with M2's pre-call
@@ -312,7 +336,12 @@ In `_runClassifierBackfill`, an outcome `edge_fallthrough` is produced
 ONLY for a fact whose typing outcome is ACCEPTED and which has an edge
 answer in the UNCERTAIN band (§3: anything that is not a confident "yes"
 `p > 0.5 && p ≥ floor` nor a confident "no" `p < 0.5 && 1−p ≥ floor` —
-including exactly `p = 0.5`), or an invalid edge answer (§6). Edge
+including exactly `p = 0.5`), or an invalid edge answer (§6) — EXCEPT
+the all-`missing_answer` shape (a fact whose every edge answer is
+`missing_answer`, e.g. a classifier that answers only `okf_type`),
+which is NOT flagged `edge_fallthrough` and takes the typing-continuity
+path instead (§6 first bullet: typing applied from the classifier, no
+edges screened, no generative routing). Edge
 outcomes are evaluated ONLY when the fact's typing outcome is ACCEPTED:
 under ANY other typing outcome (abstain, low_confidence, invalid, threw,
 unattempted), the edge answers are DISCARDED wholesale — no floor logic,
@@ -329,7 +358,8 @@ typing are DISCARDED (M2: `resolveEdges` drops source/target mismatches,
 "uncertain"). `edge_fallthrough` facts join the escalation set —
 UNconditionally, not gated by `onLowConfidence`. The UNCONDITIONAL
 trigger therefore applies ONLY when typing was accepted and an edge
-answer is uncertain or invalid; the `:2185` gate split below stands.
+answer is uncertain or invalid (the all-`missing_answer` carve-out
+above excluded); the rewritten `:2185` gate below stands.
 This requires TWO named
 gate changes, both pinned because the current machinery would strand
 fallthrough facts:
@@ -341,22 +371,26 @@ fallthrough facts:
 - The generative leg in `doRunOntologyBackfill` is gated at
   `MaintenanceService.ts:2185` on
   `classifierRun.escalated.length > 0 && this.resolveSystemOneOnLowConfidence() === 'llm'`.
-  Under the DEFAULT `onLowConfidence: 'leave'` that condition is false, so
-  if a fallthrough fact were merely added to `escalated`, it would be
-  excluded from `attempted` (un-stamped) but NEVER handed to generative —
-  re-asked and re-fallen-through every pass, never progressing. The
-  `:2185` condition SPLITS: typing escalations keep the
-  `onLowConfidence === 'llm'` requirement; any `edge_fallthrough` fact
-  triggers the generative leg unconditionally (test case 12 pins the
-  default-`'leave'` path). The split must keep the ontology-off live-mode
-  re-check (`:2195-2199`) INSIDE the triggered branch: ANY
+  The change, stated plainly: the `onLowConfidence` conjunct is REMOVED
+  from the `:2185` gate, which becomes
+  `classifierRun.escalated.length > 0` in BOTH modes, and the
+  `onLowConfidence === 'llm'` check MOVES INTO the `:2547` collection —
+  typing escalations join `escalated` only when that resolve is `'llm'`,
+  `edge_fallthrough` facts join unconditionally. Under the DEFAULT
+  `onLowConfidence: 'leave'` the `escalated` array contains no typing
+  escalations (`:2547-2549` filters abstain/low-confidence kinds out),
+  so the gate reduces to `escalated.length > 0` with the live-mode
+  re-check (`:2195-2199`) kept inside — the change introduces no
+  two-clause condition testing redundant state. Without it, a fallthrough
+  fact would be excluded from `attempted` (un-stamped) but NEVER handed
+  to generative — re-asked and re-fallen-through every pass, never
+  progressing (test case 12 pins the default-`'leave'` path); ANY
   fallthrough-triggered leg re-checks live mode before calling generative
-  (test case 13 pins this). Under the default
-  `onLowConfidence: 'leave'`, the `escalated` array contains no typing
-  escalations (`:2547-2549` filters abstain/low-confidence kinds out), so
-  the split gate reduces to `escalated.length > 0` with the live-mode
-  re-check (`:2195-2199`) kept inside — the split introduces no two-clause
-  condition testing redundant state.
+  (test case 13 pins this). Adjacent state pinned: `isEscalated`
+  (`:2550`) also feeds the `attempted` filter (`:2555`) and
+  `abstainCount` (`:2566`) — `edge_fallthrough` facts must NOT be
+  stamped via `attempted` (they stay un-stamped for the generative step)
+  and must NOT be counted as abstains by mistake.
 
 The Outcome union (`:2503-2510`) gains the compound state (a fact can be
 typing-accepted AND `edge_fallthrough`), and the collection/filter pair
@@ -374,9 +408,14 @@ incrementing `failedValidation` per fallthrough fact and double-reporting
 it in the merged result (`:2218`). Pinned: the `:2562` classifications
 filter EXCLUDES any outcome flagged `edge_fallthrough` — fallthrough
 facts ride the escalation hand-off only, so classifier classifications
-can never reach that continue (test case 11 additionally asserts
-`failedValidation === 0` on the classifier leg when a fallthrough
-occurs).
+can never reach that continue (test case 11 additionally asserts the
+classifier leg contributes zero to `failedValidation` when a
+fallthrough occurs). Carve-out, pinned with §6: a fact whose edge
+answers are ALL `missing_answer` (the answers-only-`okf_type` shape) is
+NOT flagged `edge_fallthrough` and is NOT excluded — it keeps its
+classifier typing in the `:2562` build and the apply batch (the
+typing-continuity path; dropping it here would generatively re-type
+it).
 
 `edge_fallthrough` facts are handed un-stamped to the generative step of
 the same pass, exactly like typing escalations
@@ -412,13 +451,23 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   invalid edge answers add **0** to `failedValidation` — `invalidCount`
   counts typing outcomes only (`:2565`) — because an invalid edge answer
   falls through (§5) and surfaces as a diagnostic (below). Missing edge
-  answers are disclosed: `validateClassifierAnswer` returns
-  `missing_answer` on absent answer keys (`classifier.ts:25`), so a
-  classifier that answers only `okf_type` would put EVERY fact with
-  candidates into the fallthrough band — the once-per-fact edge-site
-  diagnostic detail carries the missing-answer count (below), and such
-  facts ride the escalation hand-off, never the classifications build
-  (§5 pin).
+  answers take a TYPING-CONTINUITY path, NOT the fallthrough hand-off:
+  `validateClassifierAnswer` returns `missing_answer` on absent answer
+  keys (`classifier.ts:25`), so a classifier that answers only `okf_type`
+  makes every `edge:*` answer of every fact with candidates
+  `missing_answer`. When ALL of a fact's edge answers are
+  `missing_answer` (the answers-only-`okf_type` shape), the fact KEEPS
+  its classifier typing, screens NO edges, and is NOT routed to
+  generative — exactly the treatment of a successful overflow retry
+  (§4: the model saw no usable edge questions, so there is nothing to
+  re-decide). Concretely: such a fact is an `accepted` typing outcome
+  with no edges, so it REMAINS in the `:2562` classifications build and
+  the apply batch and typing applies normally — the earlier draft's
+  claim that such facts ride the escalation hand-off was WRONG and is
+  corrected here (escalated facts are excluded from `attempted`
+  (`:2554-2556`) and never reach the apply batch, so dropping them from
+  `:2562-2564` would GENERATIVELY RE-TYPE them). One per-fact edge-site
+  diagnostic carrying the missing-answer count is emitted (below).
 - Diagnostics: the EXISTING `classification_low_confidence` and
   `classification_invalid` emissions are EXTENDED to cover edge-screen
   fallthrough (uncertain-band answers) and invalid edge answers, with a
@@ -432,7 +481,16 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   PER FACT with a `detail` carrying counts (e.g. the fact's
   uncertain/invalid/asked edge-answer counts, plus the fact's
   missing-answer count, `classifier.ts:25`), NEVER per answer — a fact
-  with many uncertain edges emits one diagnostic, not a flood. No new
+  with many uncertain edges emits one diagnostic, not a flood. Pinned:
+  exactly ONE diagnostic per fact — `classification_invalid` (severity
+  `warn`, `diagnostics.ts:31`) if ANY of the fact's edge answers is
+  malformed, otherwise `classification_low_confidence` — with all counts
+  in the `detail`. Disclosed cost note: under the M1 answers-only-
+  `okf_type` scenario, a warn-severity diagnostic for EVERY
+  candidate-bearing fact would be loud; the per-fact cap bounds it, and
+  the escalation/generative re-type cost is avoided entirely because
+  all-missing takes the typing-continuity path instead (§6 first
+  bullet). No new
   diagnostic code (§7 keeps its zero-new-codes property).
 - Receipts: **no new diagnostic code in this PR.** Every model-proposed
   edge under this design reaches either the classifier validation pipeline
@@ -485,11 +543,13 @@ Under `'llm'` (or any path with no edge questions in flight) the
 overflow retry is NEVER reached — requests without edge questions
 overflow exactly as today (§4, byte-identical). Disclosed: with edge
 questions in flight, a classifier that answers only `okf_type`
-(`missing_answer`, `classifier.ts:25`) sends every candidate-bearing fact
-through the fallthrough hand-off — typing still applies and the
-once-per-fact edge-site diagnostic carries the missing-answer count (§6);
-no generative fallback exists for that shape beyond the existing
-escalation leg.
+(`missing_answer`, `classifier.ts:25`) makes every edge answer of every
+candidate-bearing fact `missing_answer` — this takes the
+typing-continuity path, NOT the fallthrough hand-off: typing still
+applies from the classifier (the fact is never dropped from the `:2562`
+classifications build, so no generative re-type), no edges are screened,
+and the once-per-fact edge-site diagnostic carries the missing-answer
+count (§6).
 
 ### 9. Disclosed docstring/spec-text updates
 
@@ -597,15 +657,28 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    **Recommendation: per-fact** — it is the step-11 wording, it reuses the
    escalation machinery verbatim, and per-edge would double the surface
    for a marginal recall gain.
-5. Default floor for `minConfidence.edges`: **recommendation `0.5`**,
-   matching typing's default (`engineDefaults.ts:174`), no legacy chain.
-   Domain is [0.5, 1] (deliberately diverging from `isConfidenceFloor`'s
-   [0, 1], §3 — below 0.5 the directional bands invert); values outside
-   [0.5, 1] warn once and are treated as unset. Under the default `0.5`
-   the fallthrough band is reachable only at exactly `p = 0.5` or via
-   invalid answers (§3 disclosure). Owner may prefer a higher floor or an
-   explicit required key (error when `'auto'` is set without a floor) —
-   owner pick.
+5. Default floor posture for `minConfidence.edges`: TWO postures, owner
+   pick. Context, stated plainly: a default of `0.5` makes the gate as
+   weak as possible — under the directional rule ANY `p > 0.5` applies
+   (the fallthrough band is then just `p = 0.5` plus invalid answers,
+   §3) — and the consequences are one-way: applied edges are PERMANENT
+   (`addIgnoreDuplicate`, `OntologyService.ts:214-237`) and backfill
+   only revisits UNTYPED facts, so a wrongly applied edge is not
+   revisited by later passes. The "matching typing's default" rationale
+   (`engineDefaults.ts:174`) is a FALSE PARALLEL: `0.5` on an N-way
+   choice (typing) is a much stronger signal than `0.5` on a binary
+   edge question. The postures:
+   (a) Require an EXPLICIT floor whenever `edges: 'auto'` is set — a
+       missing `minConfidence.edges` under `edges: 'auto'` warns once
+       and the site resolves `'llm'` (falls back to generative edges,
+       no classifier screen) until the host sets a floor.
+       **Recommendation: (a)** — the screen only runs once the host has
+       stated its own risk tolerance; no silent default decides for it.
+   (b) A substantially higher default — e.g. `0.7`, presented here as a
+       POSTURE choice, NOT a claimed accuracy gain (rule 11: this PR is
+       unbenchmarked, so no number is asserted to be more accurate; a
+       higher default merely narrows the applied band by construction,
+       §3).
 6. Escalated-typing facts (classifier abstain/low-confidence under
    `onLowConfidence: 'llm'`): their edge answers, though asked in the same
    call, are discarded and their edges come from the generative step.
@@ -636,14 +709,16 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
   outcome handling in `_runClassifierBackfill` (`:2494-2564` region);
   classifier classifications now carry converted `edges` (`:2562-2564`);
   PRE-CALL title-collision candidate screen in the classifier pass —
-  candidates whose normalized title maps to a different id are SKIPPED
-  before any question is built (§4, test 17); `edge_fallthrough` joins
+  candidates whose normalized title is shared by more than one pool row
+  or by another batch fact are SKIPPED before any question is built
+  (§4, test 17); `edge_fallthrough` joins
   the escalation set and the
   Outcome union gains
   the compound state with exactly-once collection (`:2503-2510`,
-  `:2544-2551`); the generative-leg gate at `:2185` SPLITS — typing
-  escalations stay `onLowConfidence`-gated, `edge_fallthrough` triggers
-  the leg unconditionally (§5); `_runClassifierBackfill`
+  `:2544-2551`); the generative-leg gate at `:2185` drops the
+  `onLowConfidence` conjunct (gate becomes `escalated.length > 0`; the
+  `onLowConfidence` check moves into the `:2547` collection — §5);
+  `_runClassifierBackfill`
   docstring update (§9).
 - `packages/core/__tests__/` — test plan below.
 - `packages/core/src/index.ts` — export the two new resolvers beside the
@@ -730,12 +805,20 @@ carried forward and re-pointed at the classifier-first design:
     classifier-built classification can NEVER hit that continue BECAUSE
     OF the §5 filter — the `:2562` classifications build excludes
     `edge_fallthrough` outcomes, so every classification is in the apply
-    batch (`:2554-2556`); and, when a fallthrough occurs, the classifier
-    leg reports `failedValidation === 0`.
+    batch (`:2554-2556`); and — fixture pin — the fixture must contain
+    NO typing-invalid facts (`invalidCount` feeds `failedValidation` at
+    `:2583`, so an invalid fixture would poison the assertion), and
+    when the escalation leg runs ONLY the MERGED result returns
+    (`:2215-2225`; the classifier leg's own result is not surfaced
+    separately) — so the assertion is on the MERGED result:
+    `merged.failedValidation === generative.failedValidation` (i.e.
+    the classifier leg's contribution to `failedValidation` is zero;
+    alternatively spy on the classifier leg's result to assert
+    `failedValidation === 0` directly).
 12. Fallthrough under the DEFAULT `onLowConfidence: 'leave'`: an
-    `edge_fallthrough` fact still reaches the generative step (the split
-    `:2185` gate pinned — §5's MAJOR failure mode: without the split the
-    fact is un-stamped but never progresses), is NOT cooldown-stamped
+    `edge_fallthrough` fact still reaches the generative step (the
+    rewritten `:2185` gate pinned — §5's MAJOR failure mode: without the
+    rewrite the fact is un-stamped but never progresses), is NOT cooldown-stamped
     (`markOntologyChecked` covers `attempted` only, `:2797`), and has its
     typing re-decided generatively.
 13. Ontology-off abort mid-classifier with `edges: 'auto'`: the aborted
@@ -760,12 +843,19 @@ carried forward and re-pointed at the classifier-first design:
     does not match the fact's chosen typing is discarded BEFORE any
     floor/fallthrough logic — it produces neither an applied edge nor a
     fallthrough.
-17. Title-collision pre-call skip (M3): a candidate whose normalized
-    title (`normalizeTitleKey`, mirroring the `:2711-2715` index shape)
-    maps to a DIFFERENT id than the candidate row's id is SKIPPED at
-    candidate-pool build time — the pair never becomes a question, and no
-    `edge_dropped` is emitted for it (the pre-call screen composes with
-    test 16's target_type filter; §4).
+17. Title-collision pre-call skip (M3, order-independent): a candidate
+    whose normalized title (`normalizeTitleKey`, mirroring the
+    `:2711-2715` index shape) is shared by MORE THAN ONE pool row, or by
+    any OTHER fact in this pass's batch, is SKIPPED at candidate-pool
+    build time — pinned in BOTH collision shapes: (a) duplicate POOL
+    ROWS (two typed rows share the key with different ids; with no
+    `ORDER BY` on `findTitleIndexByEntityId`, which id the tx index
+    resolves to is order-dependent, so the skip must not depend on
+    either order), and (b) duplicate BATCH FACTS (two facts in this
+    pass's batch share the key; the `:2778` intra-tx overwrite makes the
+    last-typed win). In both shapes the pair never becomes a question
+    and no `edge_dropped` is emitted for it (the pre-call screen
+    composes with test 16's target_type filter; §4).
 18. Floor boundaries, directional (m1): an edge answer with `p = 0.5`
     under the default floor falls through (neither band applies — accept
     requires strict `p > 0.5`); a configured floor of `0.3` is REJECTED
@@ -782,7 +872,23 @@ carried forward and re-pointed at the classifier-first design:
     overflows WITH edge questions present is retried ONCE with the typing
     question only — if the retry succeeds, typing proceeds normally, NO
     edges are screened this pass for that fact (no fallthrough, no edge
-    receipt — the model saw no edge questions), and `overflow_skip` is
-    NOT the outcome; if the retry overflows too, the outcome is today's
+    receipt — the model saw no edge questions), `overflow_skip` is
+    NOT the outcome, and ONE `context_overflow_skipped` diagnostic with
+    `detail.site: 'edge_screen'` is emitted (existing code, `:2606`,
+    severity `warn`, `diagnostics.ts:34` — zero new codes); if the RETRY
+    throws `WikiBudgetExhausted`, the outcome is `unattempted` with the
+    `stopped` set pinned exactly as today (`:2524-2526`); a non-overflow
+    error yields `threw` — transient, no cooldown stamp (`:2529`); if the
+    retry overflows too, the outcome is today's
     `overflow_skip` stamped untyped (`:2528`, `:2558-2559`, errata E2)
     with NO generative fallback, exactly as pre-PR (§4).
+21. Missing-answer typing continuity (M1): under `edges: 'auto'`, a
+    classifier that answers ONLY `okf_type` (every `edge:*` key
+    `missing_answer`, `classifier.ts:25`): the fact's typing is APPLIED
+    from the classifier answer — it stays in the `:2562` classifications
+    build and the apply batch, so there is NO generative leg and NO
+    generative re-type triggered by it (the M1 continuity path, §6) —
+    NO edges are persisted, and EXACTLY ONE per-fact edge-site
+    diagnostic is emitted with the missing-answer count in its `detail`
+    (§6 volume pin); assert `typed` reflects the classifier answer and
+    the result is NOT routed through the escalation hand-off.
