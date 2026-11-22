@@ -1,3 +1,15 @@
+## [9.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.13.0...v9.14.0) (2026-11-22)
+
+### Features
+
+* **core:** step-12 wave 1 — healScreen union member, heal_deleted/heal_downgraded codes, HealResult id fields, resolvers, exports, tests ([55e8145](https://github.com/equationalapplications/expo-llm-wiki/commit/55e8145196e74bd1226dd6290f99539225c29005))
+* **core:** step-12 wave 2 — {id,confidence} heal contract, normalizing parse, confidence carrier, applied/withheld seam, per-fact receipts, changed-id lists ([4dbf682](https://github.com/equationalapplications/expo-llm-wiki/commit/4dbf68285eff0c5d6915ad2a1986bfcfd1af5752))
+* **core:** step-12 wave 3 — withheld-delete+restate scenario test, host-clock docs, doRunHeal docstring, config reference updates ([13b7873](https://github.com/equationalapplications/expo-llm-wiki/commit/13b7873db2e7d66a40a479eaf668e44825960bfb))
+
+### Bug Fixes
+
+* **core:** step-12 close-out — order-independent warnOnce tests, receipt-verdict docstring, cross-batch duplicate test, floor-1 assertions, symbol-ref docstrings, spec as-landed note, guide receipt sentence, warning wording ([22d9dbc](https://github.com/equationalapplications/expo-llm-wiki/commit/22d9dbcc5f65313e350fd2d81cb72ff9e64cec85))
+
 ## [9.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.12.0...v9.13.0) (2026-11-22)
 
 ### Features
