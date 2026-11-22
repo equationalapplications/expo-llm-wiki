@@ -24,7 +24,7 @@ export interface ResolveOutcome {
   failed: GatedCandidate[];
   /** Merged-extract batch indexes of candidates skipped for context overflow; the pass-level DiagnosticBuffer owns their emission. */
   overflowSkipped: number[];
-  /** Merged-extract batch indexes of candidates the classifier screen settled as NOOP; the pass-level DiagnosticBuffer owns their receipts. */
+  /** Merged-extract batch indexes of candidates the classifier screen settled as NOOP; the pass-level DiagnosticBuffer owns their receipts. Indexes are unique: one entry per candidate (in-batch duplicates are removed upstream by the gate). */
   classifierSettled: number[];
   budgetStop?: { requiredEstimate: number };
 }
@@ -32,7 +32,7 @@ export interface ResolveOutcome {
 export interface ScreenResult {
   settled: Map<GatedCandidate, ResolvedOp>;
   rest: GatedCandidate[];
-  warnReason?: 'no-classifier' | 'no-floor';
+  warnReason?: 'no-classifier' | 'classifier-threw' | 'no-floor';
   budgetStop?: { requiredEstimate: number };
 }
 
@@ -51,7 +51,7 @@ export async function screenResolveCandidates(
   floor: number | undefined,
   ask: ((request: ClassifyRequest) => Promise<ClassifyResponse>) | undefined,
 ): Promise<ScreenResult> {
-  const whole = (warnReason?: 'no-classifier' | 'no-floor'): ScreenResult =>
+  const whole = (warnReason?: 'no-classifier' | 'classifier-threw' | 'no-floor'): ScreenResult =>
     warnReason ? { settled: new Map(), rest: ambiguous, warnReason } : { settled: new Map(), rest: ambiguous };
   if (mode !== 'auto') return whole();
   if (floor === undefined) return whole('no-floor');
@@ -82,7 +82,7 @@ export async function screenResolveCandidates(
       if (err instanceof WikiBudgetExhausted) {
         return { settled: new Map(), rest: ambiguous, budgetStop: { requiredEstimate: err.requiredEstimate } };
       }
-      return whole('no-classifier');
+      return whole('classifier-threw');
     }
     const checked = validateClassifierAnswer(response, best.ref, question);
     if (checked.ok && checked.answer.kind === 'binary' && checked.answer.probability >= floor) {
@@ -161,8 +161,13 @@ export async function runResolve(
   // 'no-floor' was already warned by resolveResolveMinConfidence (once per process).
   if (screen.warnReason === 'no-classifier') {
     warnOnce(
-      '[core-llm-wiki] systemOne: `systemOne.resolve` is \'auto\' but the provider has no usable classify() ' +
-        '(absent or it threw); ambiguous candidates fall through to the generative resolve.',
+      '[core-llm-wiki] systemOne: `systemOne.resolve` is \'auto\' but the provider has no classify(); ' +
+        'ambiguous candidates fall through to the generative resolve.',
+    );
+  } else if (screen.warnReason === 'classifier-threw') {
+    warnOnce(
+      '[core-llm-wiki] systemOne: `systemOne.resolve` is \'auto\' but classify() threw during the resolve screen; ' +
+        'ambiguous candidates fall through to the generative resolve.',
     );
   }
   for (const [g, op] of screen.settled) {

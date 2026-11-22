@@ -213,18 +213,17 @@ describe('screenResolveCandidates (resolution-system-one §4, §5)', () => {
     expect(r.warnReason).toBeUndefined();
   });
 
-  it('malformed answers stay in rest without throwing', async () => {
-    const hostile = {
-      get answers(): never {
-        throw new Error('boom');
-      },
-    } as unknown as ClassifyResponse;
+  // Per-candidate miss path: `ask` RESOLVES with a malformed (non-throwing) body, so
+  // validateClassifierAnswer rejects it and only that candidate stays in rest.
+  // A response body that THROWS on access is a different path: in production
+  // callClassify reads `response?.answers` inside `ask`, so it rejects and the
+  // whole input falls through (all-or-nothing, 'classifier-threw' — covered above).
+  it('malformed (non-throwing) answers stay in rest per candidate without throwing', async () => {
     const responses: unknown[] = [
       { answers: {} },
       { answers: { n1: { kind: 'choice', choice: 'x', confidence: 0.9, probabilities: { x: 0.9 } } } },
       { answers: { n1: { kind: 'binary', probability: NaN } } },
       { answers: { n1: { kind: 'binary', probability: 1.5 } } },
-      hostile,
     ];
     for (const resp of responses) {
       const g = mkGate(mkCand(0, 'a'), 'f0');
@@ -285,7 +284,7 @@ describe('screenResolveCandidates (resolution-system-one §4, §5)', () => {
     expect(r.rest).toEqual([g]);
   });
 
-  it("all-or-nothing: a throw on the second candidate → settled empty, whole input in rest, 'no-classifier'", async () => {
+  it("all-or-nothing: a throw on the second candidate → settled empty, whole input in rest, 'classifier-threw'", async () => {
     const gs = [mkGate(mkCand(0, 'a'), 'f0'), mkGate(mkCand(1, 'b'), 'f1')];
     let n = 0;
     const r = await screenResolveCandidates(gs, 'auto', 0.8, async () => {
@@ -294,7 +293,7 @@ describe('screenResolveCandidates (resolution-system-one §4, §5)', () => {
     });
     expect(r.settled.size).toBe(0);
     expect(r.rest).toEqual(gs);
-    expect(r.warnReason).toBe('no-classifier');
+    expect(r.warnReason).toBe('classifier-threw');
     expect(r.budgetStop).toBeUndefined();
   });
 
@@ -399,12 +398,35 @@ describe('runResolve with the screen (resolution-system-one §5, §7)', () => {
       expect(outB.ops.size).toBe(2);
       expect(outA.classifierSettled).toEqual([]);
       expect(outB.classifierSettled).toEqual([]);
-      const classifyWarns = warn.mock.calls.filter((c) => String(c[0]).includes('systemOne.resolve') && String(c[0]).includes('classif'));
-      expect(classifyWarns).toHaveLength(1);
+      // Independent warn-once messages: absent classify() and a throwing classify() each fire once.
+      const absentWarns = warn.mock.calls.filter((c) => String(c[0]).includes('has no classify()'));
+      const threwWarns = warn.mock.calls.filter((c) => String(c[0]).includes('classify() threw'));
+      expect(absentWarns).toHaveLength(1);
+      expect(threwWarns).toHaveLength(1);
+      // Second runs of each shape stay silent (once per process per message).
+      await mod.runResolve(a.deps, ctx, gs());
+      await mod.runResolve(b.deps, ctx, gs());
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('has no classify()'))).toHaveLength(1);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('classify() threw'))).toHaveLength(1);
     } finally {
       warn.mockRestore();
       vi.resetModules();
     }
+  });
+
+  it('overflow on a rest candidate never lists a classifier-settled candidate in overflowSkipped', async () => {
+    const classify = vi.fn(async (req: ClassifyRequest) => (req.state.startsWith('dup') ? yes(0.99) : yes(0.1)));
+    const generateText = vi.fn(async () => {
+      throw new Error("This model's maximum context length is 8192 tokens. However, you requested 10020 tokens.");
+    });
+    const { deps } = await mkDeps(auto, { classify, generateText });
+    const gDup = mkGate(mkCand(3, 'dup fact'), 'fDup');
+    const gNew = mkGate(mkCand(4, 'new fact'), 'fNew');
+    const out = await runResolve(deps, ctx, [gDup, gNew]);
+    expect(out.classifierSettled).toEqual([3]);
+    expect(out.ops.get(gDup)).toEqual({ op: 'NOOP', targetId: 'fDup' });
+    expect(out.overflowSkipped).toEqual([4]);
+    expect(out.overflowSkipped).not.toContain(3);
   });
 
   it('a tight meter during the screen surfaces as budgetStop with no LLM call', async () => {

@@ -162,7 +162,9 @@ describe('ops pass with the System-One resolve screen', () => {
         expect(classifierReceipts(t.diagnostics)).toHaveLength(0);
       }
       const warns = warn.mock.calls.filter((c) => String(c[0]).includes('systemOne.resolve'));
-      expect(warns).toHaveLength(1);
+      expect(warns).toHaveLength(2);
+      expect(warns.filter((c) => String(c[0]).includes('has no classify()'))).toHaveLength(1);
+      expect(warns.filter((c) => String(c[0]).includes('classify() threw'))).toHaveLength(1);
     } finally {
       warn.mockRestore();
     }
