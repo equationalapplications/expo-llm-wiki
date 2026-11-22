@@ -211,33 +211,35 @@ describe('PromptService', () => {
     });
   });
 
-  describe('buildOntologyBackfillPrompt title catalog (#381)', () => {
+  describe('buildOntologyBackfillPrompt candidate sections (spec §1, OQ1)', () => {
     const facts = [{ id: 'fact_1', title: 'T', body: 'B', tags: [] }];
 
-    it('splices the catalog between the base prompt and the ontology appendix', () => {
+    it('puts candidate sections in userPrompt after the Facts JSON, never in systemPrompt', () => {
       const svc = new PromptService();
       const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'TITLE CATALOG: x');
-      const base = systemPrompt.indexOf(ONTOLOGY_BACKFILL_SYSTEM_PROMPT);
-      const cat = systemPrompt.indexOf('TITLE CATALOG: x');
-      const appendix = systemPrompt.indexOf(ctx.ontologyModeInstructions);
-      expect(cat).toBeGreaterThan(base);
-      expect(appendix).toBeGreaterThan(cat);
-      expect(userPrompt).toContain('fact_1');
-    });
-
-    it('omits the catalog when none is supplied (baseline prompt unchanged)', () => {
-      const svc = new PromptService();
-      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx, 'CANDIDATES: x');
+      expect(userPrompt).toContain('CANDIDATES: x');
+      expect(userPrompt.indexOf('CANDIDATES: x')).toBeGreaterThan(userPrompt.indexOf('Facts:'));
+      expect(userPrompt.indexOf('CANDIDATES: x')).toBeGreaterThan(userPrompt.indexOf('fact_1'));
+      expect(systemPrompt).not.toContain('CANDIDATES: x');
       expect(systemPrompt).not.toContain('TITLE CATALOG');
+      expect(systemPrompt.startsWith(ONTOLOGY_BACKFILL_SYSTEM_PROMPT)).toBe(true);
+      expect(systemPrompt).toContain(ctx.ontologyModeInstructions);
     });
 
-    it('placeholder templates keep skipping the catalog (documented M5 limitation, locked by test)', () => {
+    it('omits candidate sections when none is supplied (template + appendix, facts JSON in user)', () => {
       const svc = new PromptService();
       const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
-      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'TITLE CATALOG: x');
-      expect(systemPrompt).not.toContain('TITLE CATALOG: x');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      expect(systemPrompt).not.toContain('TITLE CATALOG');
+      expect(userPrompt).toBe(`Facts:\n${JSON.stringify(facts, null, 2)}`);
+    });
+
+    it('placeholder templates return before any splice (byte-identical branch)', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}', ctx, 'CANDIDATES: x');
+      expect(systemPrompt).not.toContain('CANDIDATES: x');
       expect(systemPrompt).toContain('fact_1');
       expect(userPrompt).toBe('Please classify the facts.');
     });
