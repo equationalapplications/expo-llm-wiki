@@ -136,13 +136,7 @@ Add `resolveEdgesMinConfidence(config)` in `engineDefaults.ts`:
 discipline as typing, `engineDefaults.ts:174`); valid only in **[0.5, 1]**
 — a deliberate divergence from `isConfidenceFloor`'s [0, 1] typing
 validator, see the Floor DOMAIN paragraph below; a present value outside
-[0.5, 1] warns once and is treated as unset). There is no legacy
-`ontology.*` chain for
-edges — none exists to preserve. This is the consumer the `'edges'` union
-member was reserved for; the old "dead config" footgun (a set
-`minConfidence.edges` with no reader) does not exist in this design.
-
-Floor semantics: the floor applies to the classifier's per-edge answer
+[0.5, 1] warns once and is treated as unset). Floor semantics: the floor applies to the classifier's per-edge answer
 CONFIDENCE, defined DIRECTIONALLY on the binary answer `{probability}`
 (`types.ts:832`; `p` is P(edge)) — mirroring typing's floor on the
 classifier's confidence in its answer (`:2538` uses strict `<`, so accept
@@ -226,25 +220,23 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   path resolves against is built inside the batch tx
   (`MaintenanceService.ts:2711-2715`) and updated intra-tx (`:2778`), so
   the classifier's candidate pool is narrower — it excludes facts typed
-  earlier in the same pass (rows are not re-read). The rows are read ONCE
-  per pass — BUT only when edges resolve `'auto'`: the shortlist rows read
-  (`:2302`) and the scorer built from them
-  (`createShortlistScorer`, `:2314`) are HOISTED from
-  `_runGenerativeBackfill` to `doRunOntologyBackfill` pass entry, beside
-  the mode/floor/`shortlistK` resolution, and the shared scorer + rows are
-  passed to BOTH steps ONLY WHEN `resolveSystemOneEdges` resolves
-  `'auto'`. When edges resolve `'llm'` (the default), the generative step
-  KEEPS its existing in-step read and scorer construction exactly as
-  today: the escalation-leg prompt built at `:2201-2209` lists the same
-  candidate facts the classifier just typed (facts typed earlier in the
-  pass are accepted targets but not listed, per the `:2293-2301` comment),
-  and hoisting the pool read would NOT drop those rows from that prompt
-  (it is a pool read, not a per-fact list) — but a hoisted-by-default
-  read is still a behavior-adjacent change, so it is gated to keep every
-  host that never set the key on a byte-identical path (§8, test 10).
-  Feasible when engaged because the `:2293-2301` timing comment
-  already establishes "read once per pass, outside a transaction" as the
-  existing discipline. Zero candidates is the
+  earlier in the same pass (rows are not re-read). The pool is read ONCE
+  per pass, in-step —
+  `_runClassifierBackfill` performs its OWN `findShortlistRowsByEntityId`
+  read (`:2302`) and builds its own scorer from them
+  (`createShortlistScorer`), before the classify calls; there is NO hoist
+  to `doRunOntologyBackfill` pass entry. Cost disclosed: one extra
+  indexed pool query per classifier pass. The pass-entry hoist considered
+  in an earlier draft is DROPPED as factually unmotivated: the
+  escalation-leg generative read at `:2302` happens AFTER the classifier
+  apply tx commits (`:2573-2579`), so classifier-just-typed facts ARE in
+  the escalation pool today, and hoisting the read to pass entry would
+  REMOVE them. `_runGenerativeBackfill` keeps its existing in-step read
+  and scorer construction in EVERY mode — `'auto'` and `'llm'` — so the
+  escalation-leg prompt built at `:2201-2209` lists the same
+  candidate facts the classifier just typed exactly as today (facts typed
+  earlier in the pass are accepted targets but not listed, per the
+  `:2293-2301` comment) (§8, test 10). Zero candidates is the
   bootstrap norm: `findShortlistRowsByEntityId` returns only
   `okf_type IS NOT NULL` rows (`EntryRepository.ts:1892-1895`), so on a
   fresh or mostly-untyped store every fact has zero candidates and routing
@@ -263,6 +255,20 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   (edge type, target) is O(edgeTypes × k) questions in one already-existing
   call, keeps the abstain-sentinel machinery unnecessary (a "no" answer IS
   the decline), and gives a clean single number to floor.
+- Overflow retry-once: adding up to `edgeTypes × k` binary questions to
+  the classify call makes provider context overflow MORE likely; an
+  overflow today becomes `overflow_skip` (`MaintenanceService.ts:2528`)
+  stamped untyped ON PURPOSE (`:2558-2559`, errata E2) — so
+  `edges: 'auto'` could stop typing that works today, with no generative
+  fallback. Pinned rule: when a classify call overflows WITH edge
+  questions present, the call is retried ONCE with the typing question
+  only; if the retry overflows too, the outcome is today's
+  `overflow_skip` (stamped, no generative) exactly as before; if the
+  retry succeeds, typing proceeds normally and edges are simply not
+  screened this pass for that fact — no fallthrough and no edge receipt,
+  because the model saw no edge questions (disclosed). A request without
+  edge questions never hits the retry, so hosts that never set the key
+  are byte-identical (§8, test 20).
 - Accepted answers (`p ≥ floor`) are converted, before
   `_applyOntologyBackfillBatch`, into ordinary
   `classifications[].edges` entries `{edge_type, target_title}` built from
@@ -284,7 +290,11 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   built at `:2711-2715` is shaped (`normalizeTitleKey(row.title)` →
   `{id, okf_type}` map) — and SKIPS any candidate whose normalized title
   maps to a DIFFERENT id than the candidate row's id; such pairs never
-  become questions (test case 17 pins this). Timing gap, disclosed: the
+  become questions (test case 17 pins this). The `edge:` question prefix
+  cannot collide with the typing key `okf_type`, and `(edge_type,
+  targetFactId)` pairs are unique per fact, so keys are unique; the
+  key→(edge-definition, candidate-row) map remains the ONLY lookup
+  authority. Timing gap, disclosed: the
   pool is as of pass-entry, the same discipline as the `:2293-2301`
   comment — a title collision created later in the same pass (intra-tx
   update at `:2778`) can still retarget — accepted limitation, stated.
@@ -293,9 +303,8 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   screen, not a pipeline change. This skip COMPOSES with M2's pre-call
   `target_type` filter: both are pre-call candidate screens (§4 first
   bullet; §5 M2).
-- Public surface: none beyond §1/§2. `ClassifyRequest`,
-  `ClassifierQuestion`, and `LLMProvider.classify` (`types.ts:815`) are
-  unchanged; hosts' existing classifiers answer binary questions already.
+- Public surface: none beyond §1/§2. `ClassifyRequest`, `ClassifierQuestion`, and `LLMProvider.classify`
+  (`types.ts:815`) are unchanged.
 
 ### 5. Fallthrough wiring (explicit at both call sites)
 
@@ -342,13 +351,32 @@ fallthrough facts:
   default-`'leave'` path). The split must keep the ontology-off live-mode
   re-check (`:2195-2199`) INSIDE the triggered branch: ANY
   fallthrough-triggered leg re-checks live mode before calling generative
-  (test case 13 pins this).
+  (test case 13 pins this). Under the default
+  `onLowConfidence: 'leave'`, the `escalated` array contains no typing
+  escalations (`:2547-2549` filters abstain/low-confidence kinds out), so
+  the split gate reduces to `escalated.length > 0` with the live-mode
+  re-check (`:2195-2199`) kept inside — the split introduces no two-clause
+  condition testing redundant state.
 
 The Outcome union (`:2503-2510`) gains the compound state (a fact can be
 typing-accepted AND `edge_fallthrough`), and the collection/filter pair
 (`:2547-2551`) is extended so such a fact joins `escalated` EXACTLY ONCE —
 no double-add when a fact is both a typing escalation and an edge
 fallthrough (test case 14 pins the overlap).
+
+Classifications-leak pin: the classifications build at
+`MaintenanceService.ts:2562-2564` maps every `kind === 'accepted'`
+outcome, but the `attempted` apply batch at `:2554-2556` EXCLUDES
+escalated facts — without a filter, a typing-accepted fact flagged
+`edge_fallthrough` would stay in `classifications`, be absent from the
+apply batch, and hit the unmatched-id continue (`:2723-2725`),
+incrementing `failedValidation` per fallthrough fact and double-reporting
+it in the merged result (`:2218`). Pinned: the `:2562` classifications
+filter EXCLUDES any outcome flagged `edge_fallthrough` — fallthrough
+facts ride the escalation hand-off only, so classifier classifications
+can never reach that continue (test case 11 additionally asserts
+`failedValidation === 0` on the classifier leg when a fallthrough
+occurs).
 
 `edge_fallthrough` facts are handed un-stamped to the generative step of
 the same pass, exactly like typing escalations
@@ -383,14 +411,27 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   counts generative-side validation failures unchanged; classifier-side
   invalid edge answers add **0** to `failedValidation` — `invalidCount`
   counts typing outcomes only (`:2565`) — because an invalid edge answer
-  falls through (§5) and surfaces as a diagnostic (below).
+  falls through (§5) and surfaces as a diagnostic (below). Missing edge
+  answers are disclosed: `validateClassifierAnswer` returns
+  `missing_answer` on absent answer keys (`classifier.ts:25`), so a
+  classifier that answers only `okf_type` would put EVERY fact with
+  candidates into the fallthrough band — the once-per-fact edge-site
+  diagnostic detail carries the missing-answer count (below), and such
+  facts ride the escalation hand-off, never the classifications build
+  (§5 pin).
 - Diagnostics: the EXISTING `classification_low_confidence` and
   `classification_invalid` emissions are EXTENDED to cover edge-screen
   fallthrough (uncertain-band answers) and invalid edge answers, with a
   `detail` field distinguishing the edge site (e.g.
-  `site: 'edge_screen'`). Volume pin: the edge-site emissions fire ONCE
+  `site: 'edge_screen'`). Disclosed: the reused codes' message texts say
+  the answer "was not applied" (`diagnostics.ts:85-86`), but an edge-site
+  fallthrough RE-ROUTES the fact to the generative step rather than
+  dropping it — the message text is UNCHANGED and `diagnostics.ts` stays
+  untouched (§7/Files-touched), with `detail.site: 'edge_screen'`
+  disambiguating. Volume pin: the edge-site emissions fire ONCE
   PER FACT with a `detail` carrying counts (e.g. the fact's
-  uncertain/invalid/asked edge-answer counts), NEVER per answer — a fact
+  uncertain/invalid/asked edge-answer counts, plus the fact's
+  missing-answer count, `classifier.ts:25`), NEVER per answer — a fact
   with many uncertain edges emits one diagnostic, not a flood. No new
   diagnostic code (§7 keeps its zero-new-codes property).
 - Receipts: **no new diagnostic code in this PR.** Every model-proposed
@@ -408,8 +449,12 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   continue at `:2723-2726` precedes the receipt region
   (`:2745-2753`) and both precede the edge staging/persistence — unchanged
   by this spec, but classifier-built classifications always match batch
-  ids by construction (`:2562-2564`), so only the generative path can hit
-  that continue.
+  ids by construction (`:2562-2564`) — and BECAUSE OF the §5 filter: the
+  `:2562` classifications build EXCLUDES `edge_fallthrough` outcomes, so
+  every classification in `classifications` is present in the apply batch
+  (`:2554-2556`), and only the generative path can hit that continue
+  (test case 11 pins both halves and asserts `failedValidation === 0` on
+  the classifier leg when a fallthrough occurs).
 
 ### 7. Suppressed-edge receipts — decided: none
 
@@ -436,6 +481,15 @@ path. Capability alone never switches paths (REQ-COMPAT-01.5,
 counter fields, and no scheduler changes. Engaging classifier edges requires
 the host to set BOTH `systemOne.typing: 'auto'` (so the classifier step
 runs at all, `MaintenanceService.ts:2167`) and `systemOne.edges: 'auto'`.
+Under `'llm'` (or any path with no edge questions in flight) the
+overflow retry is NEVER reached — requests without edge questions
+overflow exactly as today (§4, byte-identical). Disclosed: with edge
+questions in flight, a classifier that answers only `okf_type`
+(`missing_answer`, `classifier.ts:25`) sends every candidate-bearing fact
+through the fallthrough hand-off — typing still applies and the
+once-per-fact edge-site diagnostic carries the missing-answer count (§6);
+no generative fallback exists for that shape beyond the existing
+escalation leg.
 
 ### 9. Disclosed docstring/spec-text updates
 
@@ -521,7 +575,11 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    (`engineDefaults.ts:162-171`), classifier calls are metered separately
    from generative (`MaintenanceService.ts:2518-2522` rides the classify
    meter argument, `:2481`), and a cap would silently hide candidate
-   targets, which for a screen is worse than cost. Revisit with data.
+   targets, which for a screen is worse than cost. Softened: **no cap in
+   this PR; the §4 retry-once rule bounds the regression risk** — the
+   added questions make the classify call overflow more likely, and the
+   retry trades one extra classify call for typing continuity —
+   revisit with data.
 3. `edges: 'auto'` when the classifier step never runs — typing resolves
    `'llm'`, the classify method is absent, or the manifest is
    sentinel-reserved/over-cap (`MaintenanceService.ts:2171-2175`):
@@ -570,12 +628,11 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
   `:2231-2238`; asserts at `:2269-2279`); `shortlistK` joins the EXPLICIT
   `_runClassifierBackfill` arguments (`:2475-2483`) — no re-resolve, so
   the once-per-pass discipline (`:2300-2301`) and the single throw-site
-  stand; the pass-level shortlist scorer + rows are HOISTED to
-  `doRunOntologyBackfill` entry (beside the mode/floor resolution) and
-  SHARED by both steps ONLY WHEN `resolveSystemOneEdges` resolves
-  `'auto'` — under the default `'llm'` the generative step keeps its
-  in-step read so prompts stay byte-identical for hosts that never set
-  the key (§4, test 10); edge-question construction and
+  stand; the classifier pass performs its own shortlist-pool read +
+  `createShortlistScorer` construction in-step (NO hoist to
+  `doRunOntologyBackfill` entry — one extra indexed query per classifier
+  pass, disclosed) and `_runGenerativeBackfill` keeps its in-step read in
+  every mode (§4, test 10); edge-question construction and
   outcome handling in `_runClassifierBackfill` (`:2494-2564` region);
   classifier classifications now carry converted `edges` (`:2562-2564`);
   PRE-CALL title-collision candidate screen in the classifier pass —
@@ -660,15 +717,21 @@ carried forward and re-pointed at the classifier-first design:
    made.)
 10. Compat full-pass: a complete pass with only legacy keys matches the
     pre-PR baseline on persisted edges, `edge_dropped` diagnostics, and
-    counters, for both typing modes; AND, when no `systemOne.edges` key
-    is set, the escalation-leg prompt's candidate list is byte-identical
-    to pre-PR (the `:2201-2209` prompt unchanged — the hoist is gated to
-    `'auto'`, §4/MAJOR pin).
+    counters, for both typing modes; AND the no-`systemOne.edges` default
+    path is byte-identical to pre-PR — trivially so now, since no hoist
+    exists to gate and the generative in-step read is unchanged (§4); AND
+    under `edges: 'auto'`, the escalation-leg pool INCLUDES the
+    classifier-typed facts of the same pass — same as today — because the
+    generative in-step read at `:2302` runs after the classifier apply tx
+    commits (`:2573-2579`).
 11. Ordering pin: a generative classification whose id matches no batch
     fact still increments `failedValidation` at the `:2723-2726` continue
     before any receipt region executes (m4 pin); and a
-    classifier-built classification can never hit that continue (its ids
-    are batch ids by construction, `:2562-2564`).
+    classifier-built classification can NEVER hit that continue BECAUSE
+    OF the §5 filter — the `:2562` classifications build excludes
+    `edge_fallthrough` outcomes, so every classification is in the apply
+    batch (`:2554-2556`); and, when a fallthrough occurs, the classifier
+    leg reports `failedValidation === 0`.
 12. Fallthrough under the DEFAULT `onLowConfidence: 'leave'`: an
     `edge_fallthrough` fact still reaches the generative step (the split
     `:2185` gate pinned — §5's MAJOR failure mode: without the split the
@@ -715,3 +778,11 @@ carried forward and re-pointed at the classifier-first design:
     and left, edges included — NO generative leg, NO edges persisted; the
     same discard holds when the typing outcome is abstain or invalid
     (§5: edge outcomes are evaluated only for typing-ACCEPTED facts).
+20. Overflow retry-once (M3): under `edges: 'auto'`, a classify call that
+    overflows WITH edge questions present is retried ONCE with the typing
+    question only — if the retry succeeds, typing proceeds normally, NO
+    edges are screened this pass for that fact (no fallthrough, no edge
+    receipt — the model saw no edge questions), and `overflow_skip` is
+    NOT the outcome; if the retry overflows too, the outcome is today's
+    `overflow_skip` stamped untyped (`:2528`, `:2558-2559`, errata E2)
+    with NO generative fallback, exactly as pre-PR (§4).
