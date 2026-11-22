@@ -3,15 +3,15 @@
  *
  * Boundary: S1-0 owns exactly `typing`, `minConfidence` (with the `'typing'`
  * member), and `onLowConfidence`; the edge-suggestions step adds `edges` and
- * the `'edges'` member; the resolution step adds `resolve` and the
- * `'resolve'` member. Later PRs add more threshold sites
- * (`'healScreen'`) — each as one new line in
- * `SystemOneThresholdSite`, so sibling PRs merge cleanly. Nothing outside
+ * the `'edges'` member; the resolution step added the `'resolve'` member and
+ * the heal-screen step added the `'healScreen'` member. Each landed as one
+ * new line in
+ * `SystemOneThresholdSite`, so sibling PRs merged cleanly. Nothing outside
  * that boundary belongs here.
  */
 
-/** Sites a System-One threshold can apply to. Exactly three members today: `'typing'`, `'edges'`, and `'resolve'` (§10 fence). */
-export type SystemOneThresholdSite = 'typing' | 'edges' | 'resolve';
+/** Sites a System-One threshold can apply to. Exactly four members today: `'typing'`, `'edges'`, `'resolve'` and `'healScreen'` (§10 fence). */
+export type SystemOneThresholdSite = 'typing' | 'edges' | 'resolve' | 'healScreen';
 
 export interface SystemOneConfig {
   /**
@@ -46,6 +46,20 @@ export interface SystemOneConfig {
    * configuration that can silently discard a candidate fact.
    */
   resolve?: 'auto' | 'llm';
+  /**
+   * Heal-screen mode. `'llm'` (default) keeps heal exactly as today: every
+   * model-directed verdict the mutable-ids guard admits is applied, no
+   * confidence is read. `'auto'` floors each model-directed downgrade and
+   * delete on the confidence the model declares in its verdict (§4): at or
+   * above the `minConfidence.healScreen` floor the verdict applies with a
+   * per-fact receipt (§5); below it the verdict is withheld — the fact is
+   * left untouched, never silently discarded, and the withheld move is
+   * itself receipted (§5). The deterministic SQL passes (orphan-marking,
+   * stale-inferred downgrade) are rule-driven host policy and are NEVER
+   * gated by this key (§4). There is no `'off'`: this PR adds no
+   * configuration that can silently discard a model-directed heal action.
+   */
+  healScreen?: 'auto' | 'llm';
   /** Per-site minimum confidence. Only the classifier path reads a floor. */
   minConfidence?: Partial<Record<SystemOneThresholdSite, number>>;
   /**

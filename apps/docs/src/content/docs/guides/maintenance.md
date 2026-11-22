@@ -77,6 +77,16 @@ inferred facts older than `staleInferredAfterDays` (default 60). It asks the mod
 delete, or replace them. `immutable_document` facts are never rewritten. Set either threshold
 to `null` to turn that check off.
 
+With `systemOne.healScreen: 'auto'` and `systemOne.minConfidence.healScreen` set, heal withholds
+model-directed deletes and downgrades below the floor. Independently of the screen and in every mode,
+every model-directed move emits a
+`heal_deleted` or `heal_downgraded` receipt. `HealResult` carries `deletedIds` and `downgradedIds`.
+Heal may forget when the host runs it (owner ruling, 2026-11-20): auditability is bounded by your
+retention clocks and by how your host persists diagnostics — heal receipts arrive only through
+`onDiagnostic` and are not event-table rows, so `pruneEventsAfter` does not retain them. See
+[Heal clocks and auditability](/expo-llm-wiki/reference/configuration/#heal-clocks-and-auditability)
+for the full clock set, the `healSystemPrompt` caveat, and the withheld-delete/restatement case.
+
 ## Reembed
 
 ```ts

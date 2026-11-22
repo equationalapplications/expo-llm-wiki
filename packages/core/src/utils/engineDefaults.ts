@@ -93,6 +93,15 @@ export function warnOnce(message: string): void {
 }
 
 /**
+ * Clears the shared warn-once set so tests can assert warning counts
+ * independently of module load order or earlier tests in the same process.
+ * @internal test-only — never call from library code.
+ */
+export function __resetWarnOnceForTests(): void {
+  warnedDefaults.clear();
+}
+
+/**
  * Formats an invalid config value for a warning message without throwing.
  * A raw `JSON.stringify` throws on `bigint` (e.g. `systemOne.typing: 1n`)
  * and on circular references — config arriving from an unvalidated host
@@ -279,6 +288,45 @@ export function resolveResolveMinConfidence(config: WikiConfig | undefined): num
       : `[core-llm-wiki] systemOne: \`systemOne.minConfidence.resolve\` is ${formatConfigValue(floor)}, which `
         + 'is not a finite number in [0.5, 1]. A wrong NOOP drops a live fact, so the resolution screen is off; '
         + 'resolution stays on the generative path.',
+  );
+  return undefined;
+}
+
+/**
+ * Heal-screen mode resolution (specs/heal-screening-system-one §2):
+ * `systemOne.healScreen` → `'llm'`. A present non-`'auto'`/non-`'llm'` value
+ * warns once and is treated as unset. No legacy chain and no call option.
+ */
+export function resolveSystemOneHealScreen(config: WikiConfig | undefined): 'auto' | 'llm' {
+  const healScreen = config?.systemOne?.healScreen;
+  if (healScreen !== undefined && !isTypingMode(healScreen)) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.healScreen\` is ${formatConfigValue(healScreen)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+    return 'llm';
+  }
+  return healScreen ?? 'llm';
+}
+
+/**
+ * Heal-screen floor (specs/heal-screening-system-one §3): returns the
+ * `systemOne.minConfidence.healScreen` floor only when the heal-screen mode
+ * resolves `'auto'` and the floor is a finite number in [0.5, 1]. There is no
+ * default floor: a missing or out-of-domain value warns once and returns
+ * `undefined` (the site then resolves `'llm'`). Under `'llm'` or unset it
+ * reads nothing.
+ */
+export function resolveHealScreenMinConfidence(config: WikiConfig | undefined): number | undefined {
+  if (resolveSystemOneHealScreen(config) !== 'auto') return undefined;
+  const floor = config?.systemOne?.minConfidence?.healScreen;
+  if (isEdgesFloor(floor)) return floor;
+  warnOnce(
+    floor === undefined
+      ? '[core-llm-wiki] systemOne: `systemOne.minConfidence.healScreen` is required when `systemOne.healScreen` is '
+        + "'auto'. The heal screen is off for this site; heal stays ungated."
+      : `[core-llm-wiki] systemOne: \`systemOne.minConfidence.healScreen\` is ${formatConfigValue(floor)}, which `
+        + 'is not a finite number in [0.5, 1]. The heal screen is off for this site; heal stays ungated.',
   );
   return undefined;
 }

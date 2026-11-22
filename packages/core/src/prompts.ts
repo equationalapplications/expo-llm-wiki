@@ -41,10 +41,11 @@ Keep facts concise. Do not return markdown, just raw JSON.`;
 export const HEAL_SYSTEM_PROMPT = `You are a memory grooming agent. Your job is to review a full dump of facts and recent events to resolve contradictions, downgrade stale claims, and flag obsolete facts for deletion.
 Return ONLY a valid JSON object matching this schema:
 {
-  "downgraded": ["string (fact IDs)"],
-  "deleted": ["string (fact IDs)"],
+  "downgraded": [{ "id": "string (fact ID)", "confidence": "number 0-1" }],
+  "deleted": [{ "id": "string (fact ID)", "confidence": "number 0-1" }],
   "newFacts": [{ "title": "string (max 80 chars)", "body": "string (max 800 chars)", "tags": ["string"], "confidence": "certain|inferred|tentative" }]
 }
+For downgraded and deleted entries, "confidence" is your confidence in that verdict.
 Do not return markdown, just raw JSON.`;
 
 export const INGEST_SYSTEM_PROMPT = `You are a document ingestion agent. Your job is to extract factual knowledge from the provided document chunk.

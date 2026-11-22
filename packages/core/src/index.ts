@@ -32,6 +32,8 @@ export {
   resolveEdgesMinConfidence,
   resolveSystemOneResolve,
   resolveResolveMinConfidence,
+  resolveSystemOneHealScreen,
+  resolveHealScreenMinConfidence,
   warnOnce,
   DEFAULT_TYPING_MIN_CONFIDENCE,
 } from './utils/engineDefaults';

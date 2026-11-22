@@ -123,6 +123,7 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
     expect(generateText).not.toHaveBeenCalled();
     expect(result).toEqual({
       scanned: 0, downgraded: 0, deleted: 0, newFactsCreated: 0,
+      downgradedIds: [], deletedIds: [],
       skipped: [], degraded: [], remaining: 0, deferred: 1,
     });
   });
