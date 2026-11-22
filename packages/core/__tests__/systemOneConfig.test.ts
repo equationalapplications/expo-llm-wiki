@@ -754,3 +754,15 @@ describe('public export surface (step 11)', () => {
     expect('screenResolveCandidates' in idx).toBe(false);
   });
 });
+
+describe('public export surface (step 12)', () => {
+  it('exports both heal-screen resolvers from the package index', async () => {
+    const idx = await import('../src/index');
+    expect(typeof idx.resolveSystemOneHealScreen).toBe('function');
+    expect(typeof idx.resolveHealScreenMinConfidence).toBe('function');
+    expect(idx.resolveSystemOneHealScreen({ systemOne: { healScreen: 'auto' } })).toBe('auto');
+    expect(idx.resolveHealScreenMinConfidence({ systemOne: { healScreen: 'auto', minConfidence: { healScreen: 0.8 } } })).toBe(0.8);
+    expect(idx.resolveSystemOneHealScreen(undefined)).toBe('llm');
+    expect(idx.resolveHealScreenMinConfidence({ systemOne: { healScreen: 'llm', minConfidence: { healScreen: 0.8 } } })).toBeUndefined();
+  });
+});
