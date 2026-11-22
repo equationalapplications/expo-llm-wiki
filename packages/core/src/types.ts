@@ -107,6 +107,11 @@ export interface OntologyConfig {
    * (no edges are proposed); `'llm'` always uses `generateText`. Default `'llm'`.
    */
   backfillClassifier?: 'auto' | 'llm';
+  /**
+   * Maximum number of candidate types shortlisted per node in the backfill
+   * shortlist. Must be a finite integer >= 1; anything else throws. Default 10.
+   */
+  shortlistK?: number;
   /** Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Default 0.5. */
   classifyMinConfidence?: number;
   /**
