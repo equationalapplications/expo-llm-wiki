@@ -112,7 +112,7 @@ describe('declared backfill boundary (spec test 4)', () => {
       expect(present.length).toBe(1);
       const len = prompts.systemPrompt.length + prompts.userPrompt.length;
       expect(len).toBeLessThanOrEqual(cap);
-      expect(len).toBeGreaterThan(40_000);
+      expect(len).toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
     }
   });
 });
