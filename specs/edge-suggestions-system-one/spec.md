@@ -3,8 +3,10 @@
 Status: Draft 2026-11-22 — pending owner approval; owner ruling 2026-11-22
 msg 1574082000854188136 (reply '1' to the presented menu): **classifier-first** —
 the small classifier starts proposing/screening edges, gated by a confidence
-floor (`minConfidence.edges`, the exact shape S1-0 reserved), falling back to
-the generative model when the classifier is missing or below floor — because
+floor (`minConfidence.edges`, the exact shape S1-0 reserved) applied to the
+classifier's confidence in its per-edge ANSWER (`max(p, 1−p)`, §3), with
+uncertain-band facts falling back to the generative model and confident
+"no" answers terminal — because
 step 11 uses this identical pattern in its own wording, and S1-0 reserved
 `edges` as a threshold site, not a switch.
 Base: origin/main @ `c0aa79e3`. Every pin below re-verified live against the
@@ -107,10 +109,11 @@ Add to `SystemOneConfig` (`systemOne.ts:14-31`, beside `typing`):
 /**
  * Edge mode for ontology backfill. `'llm'` (default) keeps edge proposal
  * on the generative path exactly as today. `'auto'` engages the classifier
- * edge screen (§4) when the classifier step runs; facts the classifier
- * cannot commit above the floor fall through to the generative step of the
- * same pass (§5). There is no `'off'`: this PR adds no configuration that
- * can silently discard a model-proposed edge.
+ * edge screen (§4) when the classifier step runs; answers at or above the
+ * floor apply the edge, confident "no" answers are terminal, and facts
+ * whose edge answers land in the uncertain band fall through to the
+ * generative step of the same pass (§3, §5). There is no `'off'`: this PR
+ * adds no configuration that can silently discard a model-proposed edge.
  */
 edges?: 'auto' | 'llm';
 ```
@@ -139,14 +142,26 @@ member was reserved for; the old "dead config" footgun (a set
 `minConfidence.edges` with no reader) does not exist in this design.
 
 Floor semantics: the floor applies to the classifier's per-edge answer
-confidence (the binary `probability`, §4). At or below floor → that FACT's
-edges fall through to the generative step of the same pass (§5) — the exact
-step-11 pattern ("when the configured model is unavailable or below
-threshold, the fact falls through to the generative path"), applied at
-per-fact granularity. Validation precedes the floor comparison, mirroring
-`:2534-2542` ordering: `validateClassifierAnswer` runs first
-(`classifier.ts:20`); an invalid answer is never floored, it falls through
-(§6).
+CONFIDENCE, defined as `max(p, 1−p)` for a binary answer `{probability}`
+(`types.ts:832`; `p` is P(edge)) — mirroring typing's floor on the
+classifier's confidence in its answer (`:2538` uses strict `<`, so accept
+is `confidence ≥ floor`). Two-sided bands, per answer:
+
+- `p ≥ floor` → the classifier is confident "yes": accept the edge (§4).
+- `p ≤ 1 − floor` → the classifier is confident "no": nothing to do — the
+  answer is TERMINAL, not a fallthrough. (A one-sided "at or below floor →
+  fallthrough" rule would make every confident "no" a fallthrough, making
+  the classifier edge path inert and doubling cost.) A realistic fact's
+  many confident "no"s are the COMMON case, not fallthrough.
+- strictly between (`1 − floor < p < floor`) → uncertain → that FACT's
+  edges fall through to the generative step of the same pass (§5) — the
+  exact step-11 pattern ("when the configured model is unavailable or
+  below threshold, the fact falls through to the generative path"),
+  applied at per-fact granularity.
+
+Validation precedes the floor comparison, mirroring `:2534-2542` ordering:
+`validateClassifierAnswer` runs first (`classifier.ts:20`); an invalid
+answer is never floored, it falls through (§6).
 
 ### 4. The classifier edge screen (question shape — recommendation)
 
@@ -159,8 +174,17 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
 - Questions: for each manifest edge type and each of the fact's ranked
   shortlist candidates, one `binary` question keyed
   `edge:<edge_type>:<targetFactId>` with instructions naming the edge type
-  and the candidate. The answer's `probability` is the confidence the §3
-  floor compares.
+  and the candidate. The answer's `probability` is the `p` the §3 floor
+  compares. Only (edge-definition, candidate) pairs whose `target_type` the
+  candidate SATISFIES are asked: the candidate row's `okf_type` is known
+  pre-call (`findShortlistRowsByEntityId` returns `okf_type`,
+  `EntryRepository.ts:1892-1895`) and `resolveEdges` drops
+  source/target type mismatches (`OntologyService.ts:176-199`), so asking
+  an impossible pair would guarantee a wasted answer. Keys are NEVER
+  parsed: edge types are host-authored and may contain `:`, so the
+  implementation carries a key→(edge-definition, candidate-row) map
+  alongside the question map. The worst-case cost question (OQ2) counts
+  RELEVANT pairs, not the raw `edgeTypes × k` cross product.
 - Candidates: the same ranked per-fact shortlist the step-8 generative
   prompt consumes (`specs/backfill-shortlist-wiring`; k bounded by
   `resolveShortlistK`, `engineDefaults.ts:162-171`), computed in
@@ -173,12 +197,24 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   path resolves against is built inside the batch tx
   (`MaintenanceService.ts:2711-2715`) and updated intra-tx (`:2778`), so
   the classifier's candidate pool is narrower — it excludes facts typed
-  earlier in the same pass (rows are not re-read) — and when both steps
-  run in one pass the rows are read twice. A fact with zero
-  candidates gets no edge questions and falls through to generative (§5) —
-  a classifier can only pick from what it is shown, and generative can
-  still reach same-response and catalog targets
-  (`prompts.ts:120-139`).
+  earlier in the same pass (rows are not re-read). The rows are read ONCE
+  per pass: the shortlist rows read (`:2302`) and the scorer built from
+  them (`createShortlistScorer`, `:2314`) are HOISTED from
+  `_runGenerativeBackfill` to `doRunOntologyBackfill` pass entry, beside
+  the mode/floor/`shortlistK` resolution, and the shared scorer + rows are
+  passed to BOTH steps — feasible because the `:2293-2301` timing comment
+  already establishes "read once per pass, outside a transaction" as the
+  existing discipline. Zero candidates is the
+  bootstrap norm: `findShortlistRowsByEntityId` returns only
+  `okf_type IS NOT NULL` rows (`EntryRepository.ts:1892-1895`), so on a
+  fresh or mostly-untyped store every fact has zero candidates and routing
+  them ALL to generative would make `'auto'` mean "generative for
+  everything" at bootstrap with double cost. Instead: a fact with zero
+  candidates gets NO edge questions, KEEPS its classifier typing, and
+  produces NO edges from the classifier — it is not a fallthrough (§5).
+  Disclosed: same-response and catalog targets are lost for these facts.
+  Generative edge recall for zero-candidate facts, if ever wanted, is an
+  explicit receipted choice in a later PR — not the default here.
 - Why binary, not one big `choice`: a fact can carry several edges of
   different types; the `choice` shape returns exactly one choice per
   question (`types.ts:820`), so a choice-per-fact cannot express the
@@ -187,7 +223,7 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   (edge type, target) is O(edgeTypes × k) questions in one already-existing
   call, keeps the abstain-sentinel machinery unnecessary (a "no" answer IS
   the decline), and gives a clean single number to floor.
-- Accepted answers (probability ≥ floor) are converted, before
+- Accepted answers (`p ≥ floor`) are converted, before
   `_applyOntologyBackfillBatch`, into ordinary
   `classifications[].edges` entries `{edge_type, target_title}` built from
   the candidate row (`MaintenanceService.ts:2562-2564` shape, now with
@@ -196,6 +232,15 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   (`:2719`, `:2779-2781`), the two-phase `resolveAndPersistEdges` pass
   (`:2786-2791`), and `edge_dropped` diagnostics — the classifier is
   untrusted input to the same strict validation the generative model faces.
+- Known limitation, disclosed and pinned: the classifier screens by
+  `targetFactId`, but edges persist via `target_title`, resolved by
+  `normalizeTitleKey` in a map where later rows overwrite earlier
+  (`MaintenanceService.ts:2711-2715`, intra-tx update `:2778`) — so a
+  title collision could resolve to a DIFFERENT fact than the one screened.
+  Pinned guard: after `resolveEdges`, if the resolved target id ≠ the
+  screened `targetFactId`, the edge is DROPPED through the existing
+  `edge_dropped` path (detail names the id mismatch) — never silently
+  retargeted (test case 18 pins this).
 - Public surface: none beyond §1/§2. `ClassifyRequest`,
   `ClassifierQuestion`, and `LLMProvider.classify` (`types.ts:815`) are
   unchanged; hosts' existing classifiers answer binary questions already.
@@ -203,8 +248,14 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
 ### 5. Fallthrough wiring (explicit at both call sites)
 
 In `_runClassifierBackfill`, an outcome `edge_fallthrough` is produced when
-a fact has any edge answer below floor, any invalid edge answer (§6), or no
-candidates at all. `edge_fallthrough` facts join the escalation set —
+a fact has any edge answer in the UNCERTAIN band (§3: strictly between
+`1 − floor` and `floor`), or any invalid edge answer (§6). Confident-"no"
+answers (`p ≤ 1 − floor`) are terminal, accepted answers apply, and a fact
+with zero candidates is not a fallthrough (§4). Before ANY floor/fallthrough
+logic runs, answers whose source_type does not match the fact's CHOSEN
+typing are DISCARDED (M2: `resolveEdges` drops source/target mismatches,
+`OntologyService.ts:176-199`; a pair that cannot exist is not "uncertain").
+`edge_fallthrough` facts join the escalation set —
 UNconditionally, not gated by `onLowConfidence`. This requires TWO named
 gate changes, both pinned because the current machinery would strand
 fallthrough facts:
@@ -261,15 +312,23 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   the classifier step's result (`:2584`), and the escalation counter-merge
   already sums `edgesAdded` across both steps
   (`MaintenanceService.ts:2215-2225`, at `:2219`). `failedValidation`
-  counts classifier-side invalid edge answers where the fact did NOT fall
-  through (there are none — invalid falls through, §5) and generative-side
-  validation failures unchanged.
+  counts generative-side validation failures unchanged; classifier-side
+  invalid edge answers add **0** to `failedValidation` — `invalidCount`
+  counts typing outcomes only (`:2565`) — because an invalid edge answer
+  falls through (§5) and surfaces as a diagnostic (below).
+- Diagnostics: the EXISTING `classification_low_confidence` and
+  `classification_invalid` emissions are EXTENDED to cover edge-screen
+  fallthrough (uncertain-band answers) and invalid edge answers, with a
+  `detail` field distinguishing the edge site (e.g.
+  `site: 'edge_screen'`). No new diagnostic code (§7 keeps its
+  zero-new-codes property).
 - Receipts: **no new diagnostic code in this PR.** Every model-proposed
   edge under this design reaches either the classifier validation pipeline
   (drops receipted as `edge_dropped`, `diagnostics.ts:78`, `:288`) or the
   generative fallback (same). No configuration introduced here can silently
-  discard a proposed edge — there is no `'off'` mode (§2) and below-floor
-  is a ROUTING decision whose destination still proposes. S1-0 §6's
+  discard a proposed edge — there is no `'off'` mode (§2) and an
+  uncertain-band answer is a ROUTING decision whose destination still
+  proposes (§3). S1-0 §6's
   "omissions carry receipts" discipline is preserved vacuously: there is no
   omission. The previous draft's `edge_suggestion_suppressed` receipt is
   dropped as dead surface. The docstring invariants that DO change (§9) are
@@ -287,9 +346,12 @@ Superseding the previous draft's §4: the owner did not rule on receipts,
 and this design picks the smallest surface. A receipt is warranted only
 where a drop is config-driven and silent. Here no config can silently
 discard a model-proposed edge: `'llm'` mode means the generative model
-proposes (as today, nothing suppressed); `'auto'` mode routes below-floor
-facts to generative, which proposes. If a future PR adds an `'off'` mode,
-THAT PR adds the receipt with it.
+proposes (as today, nothing suppressed); `'auto'` mode routes
+uncertain-band facts to generative, which proposes; confident-"no"
+answers (`p ≤ 1 − floor`) are terminal decisions, not drops (§3). The
+extended `classification_low_confidence` / `classification_invalid`
+emissions (§6) reuse EXISTING codes — still zero new codes. If a future
+PR adds an `'off'` mode, THAT PR adds the receipt with it.
 
 ### 8. Compatibility lock
 
@@ -310,13 +372,18 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
 - `MaintenanceService.ts:2465-2473` (`_runClassifierBackfill` docstring):
   becomes "No edges are proposed unless `systemOne.edges` is `'auto'`;
   under `'auto'` the classifier screens per-fact edge questions against
-  `systemOne.minConfidence.edges` and below-floor facts fall through to the
-  generative step."
+  `systemOne.minConfidence.edges` — answers at or above the floor apply,
+  confident "no" answers (`p ≤ 1 − floor`) are terminal, and facts with
+  uncertain-band or invalid edge answers fall through to the generative
+  step."
 - `systemOne.ts:15-19` (`typing` docstring, "'auto' uses
   `llmProvider.classify` when present (no edges proposed)"): the
   parenthetical gains "unless `systemOne.edges: 'auto'`".
-- `docs/ROADMAP.md` step 10 entry: filled with the landed design and its
-  merged PR reference, per the roadmap's convention for Done entries.
+- `docs/ROADMAP.md` step 10 entry: one line in the established Done
+  convention, exactly like steps 7-9 (`ROADMAP.md:232,244,255`):
+  `Done — merged <date>, PR #…, spec [edge-suggestions-system-one](../specs/edge-suggestions-system-one/spec.md)` —
+  the roadmap carries order, not status (`AGENTS.md`); the design
+  narrative lives in the spec, not the roadmap line.
 - The `systemOne` rows in
   `apps/docs/src/content/docs/reference/configuration.md` and the
   ontologies guide gain `systemOne.edges` and `minConfidence.edges`.
@@ -358,10 +425,13 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    also ingest/librarian fact-edges? **Recommendation: backfill only** —
    the §10 fence and "runs first among the site conversions" both point
    there; the other sites are later conversions with their own specs.
-2. Cost posture: with `edges: 'auto'`, each classify call carries up to
-   `manifestEdgeTypes × shortlistK` extra binary questions per fact
-   (typed per-fact, `types.ts:824-828`) — worst case is that whole
-   product in ONE request per fact; nothing in core caps the questions
+2. Cost posture: with `edges: 'auto'`, the worst case per fact is the
+   count of RELEVANT (edge-definition, candidate) pairs — pairs whose
+   `target_type` the candidate's `okf_type` satisfies (§4; only these are
+   asked, since `resolveEdges` would drop any others,
+   `OntologyService.ts:176-199`) — in ONE request per fact; this is
+   bounded above by `manifestEdgeTypes × shortlistK` but usually smaller
+   (typed per-fact, `types.ts:824-828`). Nothing in core caps the questions
    map (`CLASSIFIER_MAX_CHOICES` at `MaintenanceService.ts:61` bounds
    only choice OPTIONS, `:2173`), so any request-size limit is the host
    classifier's contract (`types.ts:815`). Accept the uncapped cost and
@@ -379,7 +449,7 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    typing is generative? **Recommendation: inert** — one step, one pass,
    no second scheduling surface; a standalone screen is a later PR if
    hosts ask for it.
-4. Per-fact fallthrough granularity (§5): a fact with any below-floor or
+4. Per-fact fallthrough granularity (§5): a fact with any uncertain-band or
    invalid edge answer has BOTH its edges and its typing re-decided by the
    generative step. Confirm, or prefer per-edge fallthrough (classifier
    keeps typing, generative adds edges — requires new plumbing so a typed
@@ -411,10 +481,19 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
   once per pass in `doRunOntologyBackfill` (beside `:2165`); plumb
   explicitly into `_runClassifierBackfill` (beside `:2487`) and via
   `runOpts` to BOTH `_runGenerativeBackfill` call sites (`:2201-2209`,
-  `:2231-2238`; asserts at `:2269-2279`); edge-question construction and
+  `:2231-2238`; asserts at `:2269-2279`); `shortlistK` joins the EXPLICIT
+  `_runClassifierBackfill` arguments (`:2475-2483`) — no re-resolve, so
+  the once-per-pass discipline (`:2300-2301`) and the single throw-site
+  stand; the pass-level shortlist scorer + rows are HOISTED to
+  `doRunOntologyBackfill` entry (beside the mode/floor resolution) and
+  SHARED by both steps (§4, feasible per `:2293-2302` and the scorer
+  construction at `:2314`); edge-question construction and
   outcome handling in `_runClassifierBackfill` (`:2494-2564` region);
   classifier classifications now carry converted `edges` (`:2562-2564`);
-  `edge_fallthrough` joins the escalation set and the Outcome union gains
+  post-resolution identity check — resolved target id ≠ screened
+  `targetFactId` drops the edge via the existing `edge_dropped` path
+  (§4, test 18); `edge_fallthrough` joins the escalation set and the
+  Outcome union gains
   the compound state with exactly-once collection (`:2503-2510`,
   `:2544-2551`); the generative-leg gate at `:2185` SPLITS — typing
   escalations stay `onLowConfidence`-gated, `edge_fallthrough` triggers
@@ -423,6 +502,14 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
 - `packages/core/__tests__/` — test plan below.
 - `packages/core/src/index.ts` — export the two new resolvers beside the
   S1-0 resolvers.
+- Spec-directory prerequisites: `plan.md` and `LEDGER.md` must exist in
+  `specs/edge-suggestions-system-one/` before implementation starts (the
+  spec-draft stage is fine without them; a Files-touched/implementation
+  note, not a code change).
+- Shipped unbenchmarked (INTENT.md rule 11, cf. `MaintenanceService.ts:2301`):
+  this PR carries NO accuracy or cost benchmark; disclosed — under
+  `edges: 'auto'` the cost profile can EXCEED `'llm'` (a classify call
+  with edge questions plus the generative step for uncertain-band facts).
 - Docs, same PR: `systemOne.edges` + `minConfidence.edges` rows in
   `apps/docs/src/content/docs/reference/configuration.md` and the
   ontologies guide (§9); `docs/ROADMAP.md` step 10 entry (§9).
@@ -447,10 +534,10 @@ carried forward and re-pointed at the classifier-first design:
    and `resolveAndPersistEdges` pipeline, persist edges with writer
    `'classifier'` on the `node_type_assigned` receipt, and the classifier
    step's `edgesAdded` is nonzero.
-3. Below-floor fallthrough: an edge answer below `minConfidence.edges`
-   sends the fact UN-stamped to the generative step of the same pass,
-   which types and edges it; the merged result reports the summed
-   `edgesAdded` (`MaintenanceService.ts:2215-2225`).
+3. Uncertain-band fallthrough: an edge answer strictly between `1 − floor`
+   and `floor` sends the fact UN-stamped to the generative step of the
+   same pass, which types and edges it; the merged result reports the
+   summed `edgesAdded` (`MaintenanceService.ts:2215-2225`).
 4. No classifier (or `typing: 'llm'`): with `edges: 'auto'` but no
    `classify` method, behavior is byte-identical to the pre-PR baseline —
    generative proposes edges exactly as today (open question 3's
@@ -466,11 +553,17 @@ carried forward and re-pointed at the classifier-first design:
 7. Invalid edge answer (malformed/out-of-range probability): treated as
    fallthrough, never applied, no `edge_dropped` from the classifier leg
    for it; the generative leg's own drops still surface as `edge_dropped`.
-8. Zero-shortlist fact under `edges: 'auto'`: no edge questions asked;
-   fact falls through to generative (§4).
+8. Zero candidates (M1): a fact on a fresh/mostly-untyped store
+   (`findShortlistRowsByEntityId` returns only `okf_type IS NOT NULL` rows,
+   `EntryRepository.ts:1892-1895`) under `edges: 'auto'`: classifier
+   typing applied, NO edge questions asked, no edges persisted, and the
+   fact does NOT fall through to generative (§4).
 9. Vocabulary: `ontologyReceiptVocabulary.test.ts` passes UNCHANGED —
    asserting no new diagnostic code and no interpolation surface was added
-   (§7). The test asserts the absence explicitly (count of codes
+   (§7). The extended edge-site emissions (§6) reuse the existing
+   `classification_low_confidence` / `classification_invalid` codes, which
+   the count assertion covers. The test asserts the absence explicitly
+   (count of codes
    unchanged) so a later silent addition fails loudly.
 10. Compat full-pass: a complete pass with only legacy keys matches the
     pre-PR baseline on persisted edges, `edge_dropped` diagnostics, and
@@ -487,8 +580,29 @@ carried forward and re-pointed at the classifier-first design:
     (`markOntologyChecked` covers `attempted` only, `:2797`), and has its
     typing re-decided generatively.
 13. Ontology-off abort mid-classifier with `edges: 'auto'`: the aborted
-    zeroed return (`:2616-2623`) drops ALL edge state — no partial edges,
-    no `edgesAdded`, host loop terminates.
+    zeroed return (`:2616-2623`) has no persisted edges, `edgesAdded 0`,
+    and `escalated` empty — diagnostics ARE still flushed on abort by
+    design (`:2609-2612`), so the assertion does NOT claim an empty
+    diagnostic buffer; host loop terminates.
 14. Overlap: a fact that is BOTH a typing escalation (`onLowConfidence:
     'llm'`) and an `edge_fallthrough` appears in `escalated` exactly once
     and gets ONE generative decision (§5 compound-state dedupe).
+15. Mostly-confident-"no" fact (B1): several edge answers at
+    `p ≤ 1 − floor` plus one confident "yes" at `p ≥ floor` — the "yes"
+    edge is applied and the fact does NOT fall through to generative (the
+    common case per §3; confident "no"s are terminal).
+16. Source/target type mismatch (M2): a (definition, candidate) pair whose
+    `target_type` the candidate's `okf_type` does not satisfy is never
+    ASKED (§4 pre-call filter), and a returned answer whose source_type
+    does not match the fact's chosen typing is discarded BEFORE any
+    floor/fallthrough logic — it produces neither an applied edge nor a
+    fallthrough.
+17. Title-collision retarget guard (M3): a screened `targetFactId` whose
+    title resolves in `resolveEdges` to a DIFFERENT id (later-row-wins
+    titleIndex, `:2711-2715`) is dropped through the existing
+    `edge_dropped` path with the id mismatch in its detail — never
+    silently retargeted (§4).
+18. Floor boundary (m1): an edge answer with `p` EXACTLY at
+    `minConfidence.edges` is accepted (accept is `p ≥ floor`, mirroring
+    typing's strict `<` low-confidence comparison at `:2538`), not a
+    fallthrough.
