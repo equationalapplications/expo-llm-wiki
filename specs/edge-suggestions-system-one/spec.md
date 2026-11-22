@@ -164,10 +164,17 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
 - Candidates: the same ranked per-fact shortlist the step-8 generative
   prompt consumes (`specs/backfill-shortlist-wiring`; k bounded by
   `resolveShortlistK`, `engineDefaults.ts:162-171`), computed in
-  `_runClassifierBackfill` BEFORE the classify calls. Note the asymmetry
-  with the generative path: the title index is built inside the batch tx
-  (`MaintenanceService.ts:2711-2715`); the classifier screen must rank
-  outside the tx, from the same repository read. A fact with zero
+  `_runClassifierBackfill` BEFORE the classify calls. The pool read is the
+  same plain repo method the generative prompt-build uses outside any tx
+  (`this.entryRepo.findShortlistRowsByEntityId(entityId)`,
+  `MaintenanceService.ts:2302`; the `:2293-2301` timing comment already
+  establishes "as of prompt-build time, not write time" as the existing
+  discipline). Disclosed asymmetries: the title index the generative APPLY
+  path resolves against is built inside the batch tx
+  (`MaintenanceService.ts:2711-2715`) and updated intra-tx (`:2778`), so
+  the classifier's candidate pool is narrower — it excludes facts typed
+  earlier in the same pass (rows are not re-read) — and when both steps
+  run in one pass the rows are read twice. A fact with zero
   candidates gets no edge questions and falls through to generative (§5) —
   a classifier can only pick from what it is shown, and generative can
   still reach same-response and catalog targets
@@ -198,10 +205,34 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
 In `_runClassifierBackfill`, an outcome `edge_fallthrough` is produced when
 a fact has any edge answer below floor, any invalid edge answer (§6), or no
 candidates at all. `edge_fallthrough` facts join the escalation set —
-UNconditionally, not gated by `onLowConfidence` (the step-11 fallthrough is
-threshold behavior, not a cost posture; `onLowConfidence` stays a typing
-routing knob, `MaintenanceService.ts:2248-2258`) — and are handed un-stamped
-to the generative step of the same pass, exactly like typing escalations
+UNconditionally, not gated by `onLowConfidence`. This requires TWO named
+gate changes, both pinned because the current machinery would strand
+fallthrough facts:
+
+- The escalation collection at `:2544-2550` is itself gated by the
+  `onLowConfidence === 'llm'` resolve (`:2544`) and keys only on
+  `abstain`/`low_confidence` kinds (`:2547-2549`). `edge_fallthrough` must
+  join `escalated` regardless of that resolve.
+- The generative leg in `doRunOntologyBackfill` is gated at
+  `MaintenanceService.ts:2185` on
+  `classifierRun.escalated.length > 0 && this.resolveSystemOneOnLowConfidence() === 'llm'`.
+  Under the DEFAULT `onLowConfidence: 'leave'` that condition is false, so
+  if a fallthrough fact were merely added to `escalated`, it would be
+  excluded from `attempted` (un-stamped) but NEVER handed to generative —
+  re-asked and re-fallen-through every pass, never progressing. The
+  `:2185` condition SPLITS: typing escalations keep the
+  `onLowConfidence === 'llm'` requirement; any `edge_fallthrough` fact
+  triggers the generative leg unconditionally (test case 12 pins the
+  default-`'leave'` path).
+
+The Outcome union (`:2503-2510`) gains the compound state (a fact can be
+typing-accepted AND `edge_fallthrough`), and the collection/filter pair
+(`:2547-2551`) is extended so such a fact joins `escalated` EXACTLY ONCE —
+no double-add when a fact is both a typing escalation and an edge
+fallthrough (test case 14 pins the overlap).
+
+`edge_fallthrough` facts are handed un-stamped to the generative step of
+the same pass, exactly like typing escalations
 today (`:2544-2550` collection, `:2201-2209` hand-off). Per-fact
 granularity consequence, disclosed: a fact whose edges fall through also has
 its typing re-decided generatively (it must stay untyped for the generative
@@ -329,7 +360,11 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    there; the other sites are later conversions with their own specs.
 2. Cost posture: with `edges: 'auto'`, each classify call carries up to
    `manifestEdgeTypes × shortlistK` extra binary questions per fact
-   (typed per-fact, `types.ts:824-828`). Accept the uncapped cost and
+   (typed per-fact, `types.ts:824-828`) — worst case is that whole
+   product in ONE request per fact; nothing in core caps the questions
+   map (`CLASSIFIER_MAX_CHOICES` at `MaintenanceService.ts:61` bounds
+   only choice OPTIONS, `:2173`), so any request-size limit is the host
+   classifier's contract (`types.ts:815`). Accept the uncapped cost and
    measure, or cap edge questions per fact now? **Recommendation: no cap
    in this PR** — the shortlist is already k-bounded
    (`engineDefaults.ts:162-171`), classifier calls are metered separately
@@ -379,7 +414,11 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
   `:2231-2238`; asserts at `:2269-2279`); edge-question construction and
   outcome handling in `_runClassifierBackfill` (`:2494-2564` region);
   classifier classifications now carry converted `edges` (`:2562-2564`);
-  `edge_fallthrough` joins the escalation set (`:2544-2550`); `_runClassifierBackfill`
+  `edge_fallthrough` joins the escalation set and the Outcome union gains
+  the compound state with exactly-once collection (`:2503-2510`,
+  `:2544-2551`); the generative-leg gate at `:2185` SPLITS — typing
+  escalations stay `onLowConfidence`-gated, `edge_fallthrough` triggers
+  the leg unconditionally (§5); `_runClassifierBackfill`
   docstring update (§9).
 - `packages/core/__tests__/` — test plan below.
 - `packages/core/src/index.ts` — export the two new resolvers beside the
@@ -441,3 +480,15 @@ carried forward and re-pointed at the classifier-first design:
     before any receipt region executes (m4 pin); and a
     classifier-built classification can never hit that continue (its ids
     are batch ids by construction, `:2562-2564`).
+12. Fallthrough under the DEFAULT `onLowConfidence: 'leave'`: an
+    `edge_fallthrough` fact still reaches the generative step (the split
+    `:2185` gate pinned — §5's MAJOR failure mode: without the split the
+    fact is un-stamped but never progresses), is NOT cooldown-stamped
+    (`markOntologyChecked` covers `attempted` only, `:2797`), and has its
+    typing re-decided generatively.
+13. Ontology-off abort mid-classifier with `edges: 'auto'`: the aborted
+    zeroed return (`:2616-2623`) drops ALL edge state — no partial edges,
+    no `edgesAdded`, host loop terminates.
+14. Overlap: a fact that is BOTH a typing escalation (`onLowConfidence:
+    'llm'`) and an `edge_fallthrough` appears in `escalated` exactly once
+    and gets ONE generative decision (§5 compound-state dedupe).
