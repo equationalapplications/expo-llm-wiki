@@ -206,15 +206,34 @@ The screen sits BETWEEN the mutable-ids guard and the transaction apply:
   that discards synthesized repairs would contradict the no-silent-
   discard rule; `newFacts` confidence is the existing
   `certain|inferred|tentative` enum (`prompts.ts:46`), not a number.
+- Screen plumbing between parse and guard (in the widened parse of the
+  §2 contract, per open question 1 recommendation (a)):
+  1. Confidence validation — a finite number in [0, 1] is a confidence;
+     a non-numeric value, NaN, a negative number, or a value > 1 counts
+     as MISSING and is receipted distinctly (see §5: the
+     `'applied_unscreened'` reason, not `'applied'`).
+  2. Carrier — the validated confidence rides a
+     `Map<string, number>` built alongside the parse output, BEFORE the
+     mutable-ids guard collapses verdicts into `Set<string>`s
+     (`MaintenanceService.ts:1889-1903`, unchanged by this PR).
+  3. Duplicates — if the same id appears in multiple batch results, the
+     LOWEST confidence wins (most conservative).
 - Outcome rule per verdict, under resolved `'auto'`:
   - `confidence ≥ floor` → apply as today.
   - `confidence < floor` → WITHHOLD: a below-floor delete does not run,
     a below-floor downgrade does not run; the fact is left untouched.
-    Withholding is not data loss (the fact survives; the next heal pass
-    re-reviews it), so no generative fallthrough machinery is needed —
-    there is no alternative engine for heal to fall through TO. The
-    withheld move is receipted (`detail.reason: 'below_floor'`, §5) so
-    the host sees what heal chose not to do.
+    Withholding is not data loss in the fact-survival sense: the fact
+    remains untouched and its content is never destroyed. But a withheld
+    verdict IS a COMPLETED model review, so the withheld id receives the
+    same `heal_checked` cooldown stamp as applied ids —
+    `MaintenanceService.ts:2019-2023` excludes only `call_error` and
+    unattempted ids from the stamp — meaning it is NOT re-reviewed for
+    `HEAL_RECHECK_MS` = 7 days (`:89`). Whether withheld ids should skip
+    the stamp is open question 5. Either way, no generative fallthrough
+    machinery is needed — there is no alternative engine for heal to fall
+    through TO. The withheld move is receipted
+    (`detail.reason: 'below_floor'`, §5) so the host sees what heal chose
+    not to do.
   - Missing confidence (§2 contract migration) → apply as today AND
     warn once (open question 1 wire-compat; §2 contract migration).
 - Mode/floor plumbing is explicit, never defaulted: resolved ONCE at
@@ -231,8 +250,8 @@ Two new codes in `WikiDiagnosticCode` (`types.ts:918+`, after
 `heal_skipped` at `:927`) with SEVERITY (`info` both — receipts record
 compliance, not problems; contrast `heal_skipped: 'warn'`,
 `diagnostics.ts:27`) and MESSAGE entries in BOTH exhaustive maps of
-`packages/core/src/utils/diagnostics.ts` (the file's other exhaustive
-maps change with them). Suggested messages:
+`packages/core/src/utils/diagnostics.ts` (SEVERITY and MESSAGE — those
+are the only exhaustive maps in the file). Suggested messages:
 `heal_deleted: 'Heal soft-deleted a fact (or withheld the delete below the confidence floor).'`
 `heal_downgraded: 'Heal downgraded a fact to tentative (or withheld the downgrade below the confidence floor).'`
 (These messages and the `detail` shapes below assume open question 1
@@ -240,7 +259,11 @@ resolves (a); adjust if it resolves (b).)
 
 Emission mirrors the `heal_skipped` per-fact pattern
 (`MaintenanceService.ts:2030-2033`): per-fact, through `diagBase` /
-`diagBuffer`, flushed once at `:2033`'s flush point. Shape mirrors
+`diagBuffer`, flushed once at `:2033`'s flush point. Receipts are
+buffered in `diagBuffer` and flush only AFTER the transaction commits
+(`MaintenanceService.ts:2030-2033`) — a thrown transaction emits NO
+receipts (the rollback also discards its buffered diagnostics), so a
+receipt always corresponds to a committed move. Shape mirrors
 `edgeDropDiagnostic` (`diagnostics.ts:271-289`) — `detail` carries
 `reason`, `factId`, and omits unknown locators rather than sending
 nulls:
@@ -253,10 +276,13 @@ nulls:
   the action, `detail: { factId, reason: 'below_floor', confidence }`
   (confidence included when the model declared one; this detail shape
   also assumes open question 1 resolves (a) — adjust if it resolves
-  (b)). A missing-confidence verdict that fires under `'auto'` is
-  receipted like any applied move — same code,
-  `detail: { factId, reason: 'applied' }`, with the `confidence` field
-  omitted.
+  (b)). A missing-confidence verdict that fires under `'auto'` — whether
+  the schema omitted confidence (wire-compat migration) or the model
+  declared an invalid confidence (§4 confidence validation) — is
+  receipted as a DISTINCT ungated reason: same code,
+  `detail: { factId, reason: 'applied_unscreened' }`, with the
+  `confidence` field omitted. Auditors must be able to tell an ungated
+  move (`'applied_unscreened'`) from a gated one (`'applied'`).
 
 Volume pin: ONE diagnostic per (fact, action) — a pass that deletes 40
 facts emits 40 receipts, not one summary; receipts are the audit trail
@@ -338,7 +364,11 @@ input. No edge code is added or changed here.
 With no `systemOne` keys (or `healScreen` resolving `'llm'`):
 `resolveSystemOneHealScreen` returns `'llm'`, no floor is read, every
 admitted verdict applies exactly as today, no receipts fire (zero new
-diagnostics on default hosts), and behavior is byte-identical. The
+diagnostics on default hosts), and behavior is behaviourally identical;
+the `HealResult` shape gains the additive §6 fields on every host.
+Test-churn budget: existing `toEqual` assertions on `HealResult` will
+break against the new fields and must be updated in the same PR.
+The
 `minConfidence.healScreen` key present with NO `healScreen: 'auto'` is
 dead surface by construction only under `'llm'` — but unlike the edges
 "dead config" footgun, the `'auto'` consumer exists in the same PR
@@ -350,13 +380,21 @@ host that sets only `'auto'` gets a one-time `warnOnce` naming the key
 and ungated heal exactly as pre-PR (no behavior loss). Disclosed by
 design: under open question 1 recommendation (a)'s wire-compat rule, an
 engaged `'auto'` host whose model still emits the old bare-string schema
-gets behavior byte-identical to `'llm'` — every verdict lacks
+gets behaviour identical to `'llm'` — every verdict lacks
 confidence, so each applies as today plus the one-time `warnOnce` —
 until the model upgrades; for such hosts the floor is engaged in name
 only. There is no
 `'off'` mode (edges precedent, `systemOne.ts:30-31`): `'llm'` already
 means "ungated generative", and an `'off'` would be a discard path
 dragging in suppression receipts this design does not need.
+
+Prompt-override chain: `healSystemPrompt` (`types.ts:45`) resolved as
+runtime override → global override → `HEAL_SYSTEM_PROMPT`
+(`PromptService.ts:282`, `:424`). A host overriding the heal prompt must
+carry the `{id, confidence}` schema itself, or `'auto'` screens nothing
+for as long as the override lasts — permanent `'applied_unscreened'`
+receipts (§5) plus the one-time `warnOnce`, NOT a transient migration
+state. The `warnOnce` text must name `healSystemPrompt`.
 
 ### 9. Disclosed docstring/spec-text updates
 
@@ -417,14 +455,22 @@ dragging in suppression receipts this design does not need.
    `confidence: undefined` → treated as missing → apply as today plus a
    one-time `warnOnce` naming the migration, §4), so old-model hosts
    never regress; and a bare-string fallback keeps the no-silent-discard
-   rule intact. Grounds: `prompts.ts:41-48`,
-   `MaintenanceService.ts:1861-1870`, `docs/ROADMAP.md:280-288`.
+   rule intact. Wire-compat requirement under (a): the widened parse
+   MUST normalize to bare string ids in EVERY mode — objects are
+   accepted, ids extracted, and confidence carried aside (§4 carrier
+   map) — because the mutable-ids guard
+   (`MaintenanceService.ts:1901-1902`) tests string membership; an
+   un-normalized object response would make every model action silently
+   drop, breaking no-silent-discard on the default path. This
+   normalization is required under ANY resolution of open question 6.
+   Grounds: `prompts.ts:41-48`, `MaintenanceService.ts:1861-1870`,
+   `docs/ROADMAP.md:280-288`.
 2. Where receipts land — diagnostics only, `HealResult` fields only, or
    both. **Recommendation: both, different jobs** — the per-fact
    diagnostics (§5) are the streaming audit trail hosts already consume
    via the diagnostic pipeline (the `heal_skipped` precedent,
    `MaintenanceService.ts:2030-2033`), while `downgradedIds`/`deletedIds`
-   (§6) are the run-scaped answer to "what did that pass touch",
+   (§6) are the run-scoped answer to "what did that pass touch",
    consumable off the return value (`useWikiMaintenance.ts:7`).
    Diagnostics alone lose run-scoping; `HealResult` alone loses hosts
    that only listen to diagnostics. Grounds: pins §5 (no `changedIds`
@@ -455,6 +501,27 @@ dragging in suppression receipts this design does not need.
    precedent (pins §5) is a flat array. Grounds: `MaintenanceService.ts:2085-2086`,
    `types.ts:211-249`, pins §5.
 
+5. Should withheld (below-floor) ids skip the `heal_checked` cooldown
+   stamp so the next heal pass re-reviews them, or keep the stamp (7-day
+   lockout, disclosed)? **Recommendation: keep the stamp** — a withheld
+   verdict is a completed model review (unlike `call_error`/unattempted,
+   which the code already excludes for exactly this reason,
+   `MaintenanceService.ts:2005-2018`); re-LLMing the same below-floor
+   fact every run re-opens the per-run cost and queue-starvation
+   concerns the stamp exists to bound, and the withhold is already
+   visible via its `'below_floor'` receipt. Grounds: `:2019-2023`,
+   `:89`, §4 as amended.
+6. Should the `{id, confidence}` response schema go to ALL hosts (single
+   `HEAL_SYSTEM_PROMPT`, parse normalizes in every mode) or be
+   mode-conditional (`'llm'` hosts keep today's prompt text)?
+   **Recommendation: all hosts** — one code path, the normalization
+   parse is required in every mode regardless (§8 wire-compat
+   requirement), the token delta is one schema line, and a
+   mode-conditional template couples PromptService to systemOne config
+   it does not currently see (`PromptService.ts:282` resolves with no
+   config knowledge). Grounds: `PromptService.ts:282`, `:424`,
+   `types.ts:45`.
+
 ## Files touched
 
 - `packages/core/src/config/systemOne.ts` — `'healScreen'` joins
@@ -480,7 +547,12 @@ dragging in suppression receipts this design does not need.
 - `packages/core/src/utils/diagnostics.ts` — SEVERITY + MESSAGE entries
   for both new codes (both exhaustive maps, §5).
 - `packages/core/src/prompts.ts` — `HEAL_SYSTEM_PROMPT` response schema
-  (open question 1 recommendation (a) only).
+  (open question 1 recommendation (a) only). `PromptService.ts` itself
+  is NOT modified: the `healSystemPrompt` override chain
+  (`types.ts:45`) — runtime override → global override →
+  `HEAL_SYSTEM_PROMPT` (`PromptService.ts:282`, `:424`) — is used as-is
+  (§8; open question 6 covers whether the schema line is
+  mode-conditional).
 - `packages/core/src/index.ts` — export the two new resolvers beside the
   S1-0/edges resolvers (L29-32; both lanes touch, pins §9.5).
 - `packages/core/__tests__/` — test plan below; the
@@ -526,7 +598,9 @@ lands second, pins §8), plus a new
    fires, and the id is absent from `deletedIds`; same for a
    below-floor downgrade.
 4. Deterministic SQL passes never gated: with the screen `'auto'` and a
-   floor of `1` (every model verdict withheld), the orphan pass and
+   floor of `1` (verdicts with confidence strictly below 1.0 withheld —
+   the comparison is inclusive `≥`, so a confidence-1.0 verdict applies;
+   fixtures use 0.9, never 1.0), the orphan pass and
    stale-inferred pass still run under the host clocks and their ids
    still land in `deletedIds`/`downgradedIds` (§4 OUT-pin; the unions at
    `:2085-2086`).
@@ -534,8 +608,10 @@ lands second, pins §8), plus a new
    `'auto'` → verdicts apply as today (no silent discard), one-time
    `warnOnce` names the contract migration (open question 1
    recommendation) — conditional on open question 1 resolving (a),
-   evaporates under (b); under `'llm'` no warning and byte-identical.
-6. Default mode: no `systemOne` keys at all — byte-identical to pre-PR:
+   evaporates under (b); under `'llm'` no warning and behaviour
+   identical modulo the additive §6 `HealResult` fields.
+6. Default mode: no `systemOne` keys at all — behaviourally identical to
+   pre-PR except the additive §6 `HealResult` fields:
    no floor read, no new diagnostics, `deletedIds`/`downgradedIds` still
    populated (they exist under `'llm'` too — surfacing is unconditional,
    §6) and match `deleted`/`downgraded` counts.
@@ -555,3 +631,7 @@ lands second, pins §8), plus a new
 11. Retention-clock doc test (light): the doc build/configuration
     reference contains the §7 clock set (or a snapshot test of the doc
     section), pinning that the consolidation ships with the code.
+12. Transaction rollback: a heal pass whose transaction throws emits
+    ZERO `heal_deleted`/`heal_downgraded` receipts — `diagBuffer` flush
+    happens only after commit (`MaintenanceService.ts:2030-2033`, §5);
+    assert the diagnostics list is empty after a rolled-back pass.
