@@ -261,6 +261,8 @@ last prompt-size constant to do so.
 
 ### Step 10 — Edge suggestions from System-One — PLANNED
 
+Done — merged 2026-11-22, PR #459, spec [edge-suggestions-system-one](../specs/edge-suggestions-system-one/spec.md)
+
 The edge-suggestion site opts in to the configured model. Edge
 suggestion is additive — a wrong edge is a wrong fact, not a lost one —
 so it runs first among the site conversions.

@@ -28,6 +28,8 @@ export { resolveOntologyJobDefaults, DEFAULT_ONTOLOGY_JOB_BATCH_SIZE } from './u
 export {
   resolveSystemOneTyping,
   resolveTypingMinConfidence,
+  resolveSystemOneEdges,
+  resolveEdgesMinConfidence,
   warnOnce,
   DEFAULT_TYPING_MIN_CONFIDENCE,
 } from './utils/engineDefaults';

@@ -95,8 +95,10 @@ createWiki(db, {
 
 | Field | Default | Description |
 |---|---|---|
-| `systemOne.typing` | `'llm'` | Typing mode: `'auto'` uses `llmProvider.classify` (no edges proposed); `'llm'` always uses `generateText`. Wins over `ontology.backfillClassifier` when both are set (a one-time warning names the disagreement) |
+| `systemOne.typing` | `'llm'` | Typing mode: `'auto'` uses `llmProvider.classify` (no edges proposed unless `systemOne.edges: 'auto'`); `'llm'` always uses `generateText`. Wins over `ontology.backfillClassifier` when both are set (a one-time warning names the disagreement) |
 | `systemOne.minConfidence.typing` | `0.5` | Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Wins over `ontology.classifyMinConfidence` |
+| `systemOne.edges` | `'llm'` | Requires `systemOne.typing: 'auto'`; otherwise inert. Edge-suggestion mode for the ontology backfill: `'auto'` has `llmProvider.classify` screen per-fact edge questions; `'llm'` leaves edges to `generateText`. Under `'auto'` an explicit `systemOne.minConfidence.edges` is required — if it is missing, a one-time warning is logged and edges resolve `'llm'`. Uncertain or invalid edge answers fall through to the generative step |
+| `systemOne.minConfidence.edges` | none (required under `edges: 'auto'`) | Confidence floor for classifier edge answers. Finite, in [0.5, 1]; missing or out-of-domain warns once and the site resolves `'llm'`. A confident "yes" (`p > 0.5` and `p ≥ floor`) applies the edge; a confident "no" (`p < 0.5` and `1 − p ≥ floor`) is terminal; anything else, including `p = 0.5`, falls through to the generative step |
 | `systemOne.onLowConfidence` | `'leave'` | `'llm'` escalates classifier low-confidence and abstain outcomes to the generative step of the same pass. A cost/quality setting, not a safety mechanism — it cannot catch a confidently wrong classifier. No-op when typing resolves `'llm'` |
 
 Invalid values for these keys warn once (distinct `[core-llm-wiki] systemOne:` prefix) and are treated as unset.

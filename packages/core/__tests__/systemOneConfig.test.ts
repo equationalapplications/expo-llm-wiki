@@ -439,3 +439,113 @@ describe('compatibility lock (spec §9, test 13)', () => {
     expect(h.generateText).toHaveBeenCalled();
   });
 });
+
+describe('edges config surface (edge-suggestions-system-one §1, §2)', () => {
+  it('accepts systemOne.edges and minConfidence.edges at the type level', () => {
+    const config: WikiConfig = {
+      systemOne: { edges: 'auto', minConfidence: { typing: 0.5, edges: 0.7 } },
+    };
+    expect(config.systemOne?.edges).toBe('auto');
+    expect(config.systemOne?.minConfidence?.edges).toBe(0.7);
+  });
+});
+
+describe('resolveSystemOneEdges (edge-suggestions-system-one §2)', () => {
+  it("defaults to 'llm' for unset config and {}", async () => {
+    const { resolveSystemOneEdges } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneEdges(undefined)).toBe('llm');
+    expect(resolveSystemOneEdges({})).toBe('llm');
+    expect(resolveSystemOneEdges({ systemOne: {} })).toBe('llm');
+  });
+
+  it("passes 'auto' and 'llm' through, and typing never changes the result", async () => {
+    const { resolveSystemOneEdges } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneEdges({ systemOne: { edges: 'auto' } })).toBe('auto');
+    expect(resolveSystemOneEdges({ systemOne: { edges: 'llm' } })).toBe('llm');
+    expect(resolveSystemOneEdges({ systemOne: { typing: 'auto' } })).toBe('llm');
+    expect(resolveSystemOneEdges({ systemOne: { typing: 'auto', edges: 'llm' } })).toBe('llm');
+    expect(resolveSystemOneEdges({ systemOne: { typing: 'llm', edges: 'auto' } })).toBe('auto');
+    expect(resolveSystemOneEdges({ ontology: { backfillClassifier: 'auto' } })).toBe('llm');
+  });
+
+  it("invalid values return 'llm' and warn exactly once naming systemOne.edges", async () => {
+    const { resolveSystemOneEdges } = await import('../src/utils/engineDefaults');
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    for (const bad of ['off', 1, BigInt(1), circular]) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { systemOne: { edges: bad as never } } as WikiConfig;
+      expect(resolveSystemOneEdges(config)).toBe('llm');
+      expect(resolveSystemOneEdges(config)).toBe('llm');
+      const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.edges'));
+      expect(hits.length).toBe(1);
+      expect(String(hits[0][0]).startsWith('[core-llm-wiki] systemOne:')).toBe(true);
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('resolveEdgesMinConfidence (edge-suggestions-system-one §3)', () => {
+  it("under 'auto', a missing floor returns undefined and warns once naming the key", async () => {
+    const { resolveEdgesMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config: WikiConfig = { systemOne: { edges: 'auto' } };
+    expect(resolveEdgesMinConfidence(config)).toBeUndefined();
+    expect(resolveEdgesMinConfidence(config)).toBeUndefined();
+    const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.edges'));
+    expect(hits.length).toBe(1);
+  });
+
+  it("under 'auto', out-of-domain floors return undefined and warn once each", async () => {
+    const { resolveEdgesMinConfidence } = await import('../src/utils/engineDefaults');
+    for (const bad of [0, 0.3, 0.49, 1.01, NaN, Infinity, '0.7']) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { systemOne: { edges: 'auto', minConfidence: { edges: bad as never } } } as WikiConfig;
+      expect(resolveEdgesMinConfidence(config)).toBeUndefined();
+      expect(resolveEdgesMinConfidence(config)).toBeUndefined();
+      // formatConfigValue renders NaN and Infinity both as `null`, so the second
+      // of the pair shares NaN's already-emitted (process-deduped) message.
+      const expectedWarns = bad === Infinity ? 0 : 1;
+      expect(warn.mock.calls.filter(([m]) => String(m).includes('systemOne.minConfidence.edges')).length).toBe(expectedWarns);
+      warn.mockRestore();
+    }
+  });
+
+  it("under 'auto', floors in [0.5, 1] pass through", async () => {
+    const { resolveEdgesMinConfidence } = await import('../src/utils/engineDefaults');
+    for (const ok of [0.5, 0.7, 1]) {
+      expect(resolveEdgesMinConfidence({ systemOne: { edges: 'auto', minConfidence: { edges: ok } } })).toBe(ok);
+    }
+  });
+
+  it('typing floor and legacy classifyMinConfidence never feed the result', async () => {
+    const { resolveEdgesMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveEdgesMinConfidence({
+      ontology: { classifyMinConfidence: 0.9 },
+      systemOne: { edges: 'auto', minConfidence: { typing: 0.8 } },
+    })).toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it("with edge mode 'llm' or unset, returns undefined without reading the floor or warning", async () => {
+    const { resolveEdgesMinConfidence } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveEdgesMinConfidence(undefined)).toBeUndefined();
+    expect(resolveEdgesMinConfidence({})).toBeUndefined();
+    expect(resolveEdgesMinConfidence({ systemOne: { edges: 'llm', minConfidence: { edges: 0.3 } } })).toBeUndefined();
+    expect(resolveEdgesMinConfidence({ systemOne: { minConfidence: { edges: 0.3 } } })).toBeUndefined();
+    expect(resolveEdgesMinConfidence({ systemOne: { edges: 'llm', minConfidence: { edges: 0.8 } } })).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('public export surface (step 10)', () => {
+  it('exports both edge resolvers from the package index', async () => {
+    const idx = await import('../src/index');
+    expect(typeof idx.resolveSystemOneEdges).toBe('function');
+    expect(typeof idx.resolveEdgesMinConfidence).toBe('function');
+    expect(idx.resolveSystemOneEdges({ systemOne: { edges: 'auto' } })).toBe('auto');
+    expect(idx.resolveEdgesMinConfidence({ systemOne: { edges: 'auto', minConfidence: { edges: 0.7 } } })).toBe(0.7);
+  });
+});

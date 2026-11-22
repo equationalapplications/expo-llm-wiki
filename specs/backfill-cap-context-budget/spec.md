@@ -1,9 +1,13 @@
 # Spec — Step 9: The ontology-backfill prompt cap joins the context budget
 
-Status: Approved by owner 2026-11-22 (Discord thread, msg `1574024786680746015`:
-"1,1"). Open question 1 ruled: option 1 — the backfill cap derives with the
-resolve/heal formula. Tier 3 (Opus) writes the implementation plan per the
-owner's directive in the same message.
+Status: Implemented 2026-11-22 (PR #455, head `0472dbff`; acceptance tests in
+`packages/core/__tests__/contextBudgetBackfill.test.ts` plus the retained
+pins; owner-approved by ruling 2026-11-22, msg `1574024786680746015` —
+derivation follows the resolve/heal formula. Ladder: GLM-flash rung 1
+APPROVE, GLM-flash rung 2 APPROVE, Opus rung 3 approve-once-task-8; all
+findings folded in-PR or deferred to issue #456. Plan authored by tier-3
+Opus per the owner's same-message directive; controller adjudicated the
+classifier-path open point to pass-entry resolve.)
 Base: origin/main @ `2b69852a` (PR #454 merge; release v9.10.0). Every pin
 below is re-verified live against `2b69852a`. Repo: expo-llm-wiki. Product
 rule: hosts bring their own models; core stays unopinionated about providers.
