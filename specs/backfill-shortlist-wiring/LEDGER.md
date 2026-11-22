@@ -5,8 +5,8 @@ delta). No implementation tasks started.
 
 - [x] T1 — `shortlistK` knob + resolver (commit: `feat(core): shortlistK config knob…`)
   Evidence: commit `56e16692`; controller re-ran gates at head: engineDefaults 19/19, typecheck exit 0, core suite `Tests  2947 passed (2947)` (253 files); RED evidence in `.superpowers/sdd/2b-backfill-shortlist/task-1-report.md`.
-- [ ] T2 — per-fact candidate renderer (commit: `feat(core): per-fact candidate section renderer…`)
-  Evidence: 
+- [x] T2 — per-fact candidate renderer (commit: `feat(core): per-fact candidate section renderer…`)
+  Evidence: commit `e321b98a`; controller re-ran gates at head: PromptService.test 48/48, typecheck exit 0, core suite `Tests  2953 passed (2953)`; RED evidence in `task-2-report.md`.
 - [ ] T3 — scoring rows query reads `body` (commit: `feat(core): shortlist scoring rows query…`)
   Evidence: 
 - [ ] T4 — PromptService candidate sections (commit: `feat(core): backfill prompt carries per-fact candidate sections…`)
