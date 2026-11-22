@@ -11,8 +11,8 @@ delta). No implementation tasks started.
   Evidence: commit `ce1a40a7`; controller re-ran gates at head: ontologyBackfill.test 33/33, typecheck exit 0, core suite `Tests  2954 passed (2954)`; RED evidence in `task-3-report.md`.
 - [x] T4 — PromptService candidate sections (commit: `feat(core): backfill prompt carries per-fact candidate sections…`)
   Evidence: commit `f19382e4`; controller re-ran per-file gate 48/48 + typecheck exit 0 at head; full suite 2 failed / 2952 passed — the 2 failures are the PREDICTED interim breakage (ontologyBackfill.test.ts catalog assertions, fixed by T5), verified controller-side. RED evidence in `task-4-report.md`.
-- [ ] T5 — MaintenanceService wiring (commit: `feat(core): shortlist wiring in the ontology backfill pass…`)
-  Evidence: 
+- [x] T5 — MaintenanceService wiring (commit: `feat(core): shortlist wiring in the ontology backfill pass…`)
+  Evidence: commit `d781b492`; controller re-ran gates at head: ontologyBackfill.test 39/39, typecheck exit 0, core suite `Tests  2960 passed (2960)`. Fold follow-up (plan gap found by gates): the benchmarks harness ride-through test pinned the retired system-prompt catalog shape — fixed test-only in the commit above, benchmarks suite back to `206 passed (206)` controller-side. RED evidence in `task-5-report.md`.
 - [ ] T6 — gates green at final head; cleanup commit (spec → `Implemented`, prune plan/LEDGER, write ROADMAP step 8 done mark, `gh pr ready`)
   Evidence: 
 
