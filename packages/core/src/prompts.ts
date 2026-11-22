@@ -143,8 +143,13 @@ export function buildTitleCatalogBlock(
  * Per-fact candidate sections (backfill shortlist, spec §1). The caller has
  * already ranked and cut each fact's shortlist; row order is render order.
  * Lines match the catalog's shape exactly. No char budget: the shortlist is
- * k-bounded by the caller. An input with no rows at all means an empty pool
- * and yields one shared footer instead of per-fact sections.
+ * k-bounded by the caller. When NO fact receives rows, one shared
+ * empty-pool footer is emitted instead of per-fact sections (spec §4:
+ * with k >= 1 that means the typed pool itself is empty). Caller
+ * contract: `rowsByFact` carries an entry for every batch fact id — a
+ * fact id absent from the map is skipped, so dropping ids can mislabel
+ * a non-empty pool as empty; the MaintenanceService caller maps every
+ * batch fact, pinned by the section-per-fact integration tests.
  */
 export function buildCandidateSections(
   facts: ReadonlyArray<{ id: string }>,
@@ -173,7 +178,7 @@ export function buildCandidateSections(
   return sections.join('\n\n');
 }
 
-const GROUNDING_SOURCE:Record<GroundingWriter, { key: string; source: string }> = {
+const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {
   ingest: { key: 'facts', source: 'the document chunk' },
   librarian: { key: 'facts', source: 'the "summary" text of the events' },
   heal: { key: 'newFacts', source: 'the "summary" text of the recent events or the "body" text of the document anchors' },
