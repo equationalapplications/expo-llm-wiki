@@ -16,8 +16,8 @@ lane worktree** (code-identical to `206936cc`; lane commits are docs-only).
 - [x] 7. Receipt emission loop in `ops/index.ts` (D2 applied) — evidence: commit `11a11b4b`; RED 0 receipts vs expected 1 → GREEN; loop after overflowSkipped, before budgetStop check
 - [x] 8. Public exports — evidence: commit `aa0db68c`; exactly 2 added lines; `screenResolveCandidates` asserted absent from index
 - [x] 9. Pass-level tests (D2 applied) — evidence: commit `11a11b4b`; new `__tests__/opsResolveSystemOne.test.ts` 9/9; zero-new-codes fixed-list assertion; pass-result keys audited; keyword-mode screen case green
-- [ ] 10. Invariant audit — evidence: <commit, test run, or log link>
-- [ ] 11. Suite health — evidence: <commit, test run, or log link>
+- [x] 10. Invariant audit — evidence: controller-run 2026-11-22 14:20 EST: off-limits diff EMPTY (BoundedLlmCall/PromptService/gate/apply/librarian-types/types/diagnostics); index.ts diff exactly 2 added lines; 0 validateOp hunks; 9 related test files 163/163 (incl. 7 pass files 90/90)
+- [x] 11. Suite health — evidence: controller-run: full core suite 256 files / 3052 tests GREEN (baseline 255/3014 + 1 file + 38 tests, no removals); typecheck clean; root `pnpm test` green after workspace build (mcp-server dist was unbuilt — environmental)
 - [ ] 12. Cleanup commit (D1 RESOLVED — roadmap mark lands in this PR) — evidence: <commit, test run, or log link>
 
 ## Discrepancies
