@@ -6,7 +6,7 @@ import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts,
 import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import { buildCandidateSections } from '../prompts';
-import { buildShortlist } from '../utils/shortlist';
+import { buildShortlist, createShortlistScorer } from '../utils/shortlist';
 import { HISTORY_MAX_DEPTH } from './TemporalService';
 
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
@@ -2288,10 +2288,20 @@ export class MaintenanceService {
     // starve it (spec Decision 2). Output size is bounded separately, by
     // runBatched — the two bounds are independent and both enforced.
     const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
+    // Once per pass: row tokens are precomputed and each fact's shortlist is
+    // cached by id, so runBatched's repeated buildPrompt calls (overflow
+    // halving) do not re-score the whole pool.
+    const shortlistScorer = createShortlistScorer(shortlistRows);
+    const shortlistCache = new Map<string, ReturnType<typeof buildShortlist>>();
     const buildPrompt = (facts: WikiFact[]) => {
       const rowsByFact = new Map<string, ReturnType<typeof buildShortlist>>();
       for (const f of facts) {
-        rowsByFact.set(f.id, buildShortlist({ title: f.title, body: f.body }, shortlistRows, shortlistK));
+        let rows = shortlistCache.get(f.id);
+        if (!rows) {
+          rows = buildShortlist({ title: f.title, body: f.body }, shortlistRows, shortlistK, shortlistScorer);
+          shortlistCache.set(f.id, rows);
+        }
+        rowsByFact.set(f.id, rows);
       }
       return this.promptService.buildOntologyBackfillPrompt(
         facts.map(toPromptShape),

@@ -108,8 +108,8 @@ export interface OntologyConfig {
    */
   backfillClassifier?: 'auto' | 'llm';
   /**
-   * Maximum number of candidate types shortlisted per node in the backfill
-   * shortlist. Must be a finite integer >= 1; anything else throws. Default 10.
+   * Maximum number of candidate typed nodes (titles) shortlisted per fact in
+   * the backfill shortlist. Must be a finite integer >= 1; anything else throws. Default 10.
    */
   shortlistK?: number;
   /** Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Default 0.5. */

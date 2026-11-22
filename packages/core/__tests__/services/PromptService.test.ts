@@ -377,7 +377,7 @@ describe('PromptService', () => {
       expect(out.indexOf('f1')).toBeLessThan(out.indexOf('f2'));
     });
 
-    it('keeps the non-exclusive footer in each section', () => {
+    it('emits the non-exclusive footer once, after all sections', () => {
       const out = buildCandidateSections(
         [{ id: 'f1' }, { id: 'f2' }],
         new Map([
@@ -385,14 +385,18 @@ describe('PromptService', () => {
           ['f2', [{ title: 'Other', okf_type: 'area' }]],
         ]),
       );
-      expect(out.match(/omit "edges" rather than invent a target_title/g)?.length).toBe(2);
-      expect(out.match(/classified in this same response/g)?.length).toBe(2);
+      expect(out.match(/omit "edges" rather than invent a target_title/g)?.length).toBe(1);
+      expect(out.match(/classified in this same response/g)?.length).toBe(1);
+      expect(out.match(/Any other existing typed node/g)?.length).toBe(1);
+      expect(out).toContain('is also a valid "target_title", even if not listed here.');
+      expect(out.lastIndexOf('Any other existing typed node')).toBeGreaterThan(out.lastIndexOf('CANDIDATE TARGETS for fact'));
       expect(out).not.toContain('valid only if');
     });
 
     it('zero pool: no per-fact sections, one shared no-typed-nodes footer', () => {
       const out = buildCandidateSections([{ id: 'f1' }, { id: 'f2' }], new Map());
-      expect(out).toContain('no typed nodes yet');
+      expect(out).toContain('CANDIDATE TARGETS: this memory contains no typed nodes yet.');
+      expect(out).not.toContain('TITLE CATALOG');
       expect(out).toContain('omit "edges" rather than invent a target_title');
       expect(out).not.toContain('f1');
       expect(out).not.toContain('f2');

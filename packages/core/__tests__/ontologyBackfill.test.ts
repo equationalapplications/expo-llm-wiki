@@ -298,8 +298,9 @@ describe('runOntologyBackfill', () => {
     generateText.mockResolvedValue(llmJson({ classifications: [] }));
     await wiki.runOntologyBackfill('e1');
     const user = generateText.mock.calls[0][0].userPrompt as string;
-    expect(user).not.toContain('CANDIDATE TARGETS');
-    expect(user).toContain('this memory contains no typed nodes yet');
+    expect(user).not.toContain('CANDIDATE TARGETS for fact');
+    expect(user).toContain('CANDIDATE TARGETS: this memory contains no typed nodes yet.');
+    expect(user).not.toContain('TITLE CATALOG');
   });
 
   it('candidate sections: an invalid ontology.shortlistK throws', async () => {

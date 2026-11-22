@@ -156,7 +156,7 @@ export function buildCandidateSections(
   rowsByFact: ReadonlyMap<string, ReadonlyArray<{ title: string; okf_type: string }>>,
 ): string {
   const footer =
-    'A "target_title" may be copied verbatim from the candidates above for this fact, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.';
+    'A "target_title" may be copied verbatim from the candidates above for its fact, or be another fact classified in this same response. Any other existing typed node in this memory is also a valid "target_title", even if not listed here. If no valid target exists, omit "edges" rather than invent a target_title.';
   const sections: string[] = [];
   for (const fact of facts) {
     const rows = rowsByFact.get(fact.id);
@@ -165,17 +165,16 @@ export function buildCandidateSections(
       [
         `CANDIDATE TARGETS for fact ${JSON.stringify(fact.id)}: typed nodes in this memory that may relate to it:`,
         ...rows.map(formatCatalogLine),
-        footer,
       ].join('\n'),
     );
   }
   if (sections.length === 0) {
     return [
-      'TITLE CATALOG: this memory contains no typed nodes yet.',
+      'CANDIDATE TARGETS: this memory contains no typed nodes yet.',
       'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
     ].join('\n');
   }
-  return sections.join('\n\n');
+  return [...sections, footer].join('\n\n');
 }
 
 const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {

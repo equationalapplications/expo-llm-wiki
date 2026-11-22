@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildShortlist, shortlistScore, type ShortlistRow } from '../src/utils/shortlist';
+import { buildShortlist, createShortlistScorer, shortlistScore, type ShortlistRow } from '../src/utils/shortlist';
+
+describe('createShortlistScorer parity', () => {
+  const pool: ShortlistRow[] = [
+    { title: 'Ada Lovelace', okf_type: 'person', body: 'mathematician analytical engine' },
+    { title: 'Analytical Engine', okf_type: 'software_application', body: 'Babbage machine design' },
+    { title: 'Babbage Institute', okf_type: 'organization', body: 'research on computing history' },
+    { title: 'Compiler Notes', okf_type: 'area', body: 'parsing and code generation' },
+    { title: 'Zed', okf_type: 'area' },
+  ];
+  const facts = [
+    { title: 'Ada wrote notes on the engine', body: 'analytical engine mathematician' },
+    { title: 'Compiler design', body: 'parsing code generation' },
+    { title: 'x', body: '' },
+  ];
+
+  it('matches the default scorer top-k ordering for several facts', () => {
+    const scorer = createShortlistScorer(pool);
+    for (const f of facts) {
+      for (const k of [1, 3, 10]) {
+        expect(buildShortlist(f, pool, k, scorer)).toEqual(buildShortlist(f, pool, k));
+      }
+    }
+  });
+
+  it('scores identically to shortlistScore, repeat calls included', () => {
+    const scorer = createShortlistScorer(pool);
+    for (const f of facts) {
+      for (let i = 0; i < 2; i++) {
+        for (const r of pool) expect(scorer(f, r)).toBe(shortlistScore(f.title, f.body, r));
+      }
+    }
+  });
+});
 
 const row = (title: string, body?: string, okf_type = 'area'): ShortlistRow => ({ title, body, okf_type });
 

@@ -24,6 +24,35 @@ export function shortlistScore(factTitle: string, factBody: string, row: Shortli
 }
 
 /**
+ * Scorer with `shortlistScore` parity that tokenizes each row once up front
+ * and memoizes fact token sets by fact-object identity. Rows not in `rows`
+ * are tokenized lazily (and cached) so any row object still scores correctly.
+ */
+export function createShortlistScorer(
+  rows: ReadonlyArray<ShortlistRow>,
+): (fact: ShortlistFact, row: ShortlistRow) => number {
+  const rowTokens = new Map<ShortlistRow, Set<string>>();
+  const tokensOfRow = (row: ShortlistRow): Set<string> => {
+    let t = rowTokens.get(row);
+    if (!t) {
+      t = new Set([...titleTokens(row.title), ...titleTokens(row.body ?? '')]);
+      rowTokens.set(row, t);
+    }
+    return t;
+  };
+  for (const r of rows) tokensOfRow(r);
+  const factTokens = new WeakMap<ShortlistFact, Set<string>>();
+  return (fact, row) => {
+    let ft = factTokens.get(fact);
+    if (!ft) {
+      ft = new Set([...titleTokens(fact.title), ...titleTokens(fact.body)]);
+      factTokens.set(fact, ft);
+    }
+    return jaccardScore(ft, tokensOfRow(row));
+  };
+}
+
+/**
  * Return the top `k` rows for `fact`, highest score first.
  *
  * - Dedupes `rows` by `normalizeTitleKey(row.title)` BEFORE sorting,
