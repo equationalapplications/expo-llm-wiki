@@ -12,7 +12,7 @@ import { HISTORY_MAX_DEPTH } from './TemporalService';
 const CHAIN_TRUNCATED_NOTICE = `includeChain walk stopped at the depth cap (${HISTORY_MAX_DEPTH} links per direction); the chain is longer than the ids listed. Run forget again on a remaining chain id to continue.`;
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
-import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveEdgesMinConfidence, resolveShortlistK, resolveSystemOneEdges, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
+import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveEdgesMinConfidence, resolveHealScreenMinConfidence, resolveShortlistK, resolveSystemOneEdges, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
 import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
@@ -1721,6 +1721,8 @@ export class MaintenanceService {
     const batchSize = options?.batchSize ?? HEAL_BATCH_SIZE;
     const trigger: WikiDiagnosticTrigger = options?.trigger ?? 'call';
     const diagBase = { entityId, operation: 'heal' as const, trigger };
+    // Screening is engaged iff a floor resolves (resolved 'auto' + valid floor).
+    const healFloor = resolveHealScreenMinConfidence(this.options.config);
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error('Invalid batchSize: must be an integer >= 1');
     }
@@ -1784,6 +1786,8 @@ export class MaintenanceService {
         downgraded: staleDowngradedIds.length,
         deleted: orphanedIds.length,
         newFactsCreated: 0,
+        downgradedIds: Array.from(new Set(staleDowngradedIds)),
+        deletedIds: Array.from(new Set(orphanedIds)),
         skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
         // remaining stays > 0 so maybeRunHeal holds the checkpoint back and
         // retries after the outage; the flag lets a host loop stop instead.
@@ -1828,7 +1832,10 @@ export class MaintenanceService {
     // The post-reconcile log line fires for the survivors only.
     const degraded: DegradedRecord[] = [];
 
-    const outcome = await runBatched<WikiFact, HealBatch>({
+    // Confidence carriers ride beside HealBatch (declared locally: the interface
+    // sits outside the heal region this PR may edit).
+    type ScreenedHealBatch = HealBatch & { downgradedConfidence: Map<string, number>; deletedConfidence: Map<string, number> };
+    const outcome = await runBatched<WikiFact, ScreenedHealBatch>({
       items: healCandidates,
       buildPrompt: async (batch, attemptLevel = 0) => {
         const documentAnchors = await this._selectHealAnchors(
@@ -1859,11 +1866,34 @@ export class MaintenanceService {
       },
       call: (prompts) => callLlm(this.options, { operation: 'heal', entityId, trigger, meter: options?.meter }, prompts),
       parse: (responseText, batch, prompts) => {
-        const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
+        const result = parseJsonResponse<{ downgraded: unknown, deleted: unknown, newFacts: ExtractedFact[] }>(responseText);
+        // Entries are bare string ids (legacy) or `{ id, confidence }`; both
+        // normalize to string ids in every mode. Only finite [0,1] confidences
+        // are carried; anything else is MISSING.
+        const normalize = (raw: unknown): { ids: string[]; confidence: Map<string, number> } => {
+          const ids: string[] = [];
+          const confidence = new Map<string, number>();
+          if (!Array.isArray(raw)) return { ids, confidence };
+          for (const entry of raw) {
+            const id = typeof entry === 'string' ? entry : (entry as { id?: unknown } | null)?.id;
+            if (typeof id !== 'string') continue;
+            ids.push(id);
+            const c = typeof entry === 'object' && entry !== null ? (entry as { confidence?: unknown }).confidence : undefined;
+            if (typeof c === 'number' && Number.isFinite(c) && c >= 0 && c <= 1) {
+              const prev = confidence.get(id);
+              if (prev === undefined || c < prev) confidence.set(id, c);
+            }
+          }
+          return { ids, confidence };
+        };
+        const down = normalize(result.downgraded);
+        const del = normalize(result.deleted);
         return {
           batch,
-          downgraded: Array.isArray(result.downgraded) ? result.downgraded : [],
-          deleted: Array.isArray(result.deleted) ? result.deleted : [],
+          downgraded: down.ids,
+          deleted: del.ids,
+          downgradedConfidence: down.confidence,
+          deletedConfidence: del.confidence,
           newFacts: Array.isArray(result.newFacts) ? result.newFacts : [],
           corpus: corpusByPrompt.get(prompts) ?? null,
         };
@@ -1907,8 +1937,53 @@ export class MaintenanceService {
       });
     }
 
+    // Confidence carriers (spec §4): guard-admitted verdicts only, rebuilt per
+    // batch with the same membership rule as the guard above. Lowest valid
+    // value wins across duplicate ids.
+    const downgradeConfidence = new Map<string, number>();
+    const deleteConfidence = new Map<string, number>();
+    const mergeLowest = (into: Map<string, number>, id: string, c: number | undefined): void => {
+      if (c === undefined) return;
+      const prev = into.get(id);
+      if (prev === undefined || c < prev) into.set(id, c);
+    };
+    for (const batchResult of outcome.results) {
+      const mutableIds = new Set(batchResult.batch.map(f => f.id));
+      for (const id of batchResult.downgraded) if (mutableIds.has(id)) mergeLowest(downgradeConfidence, id, batchResult.downgradedConfidence.get(id));
+      for (const id of batchResult.deleted) if (mutableIds.has(id)) mergeLowest(deleteConfidence, id, batchResult.deletedConfidence.get(id));
+    }
+
     const safeDowngraded = Array.from(safeDowngradedSet);
     const safeDeleted = Array.from(safeDeletedSet);
+
+    // Screen seam (spec §4): the applied sets REPLACE the guard sets for every
+    // downstream reader (apply, sync, removals, counts, id lists). Missing
+    // confidence applies (unscreened); below-floor is withheld. With no floor
+    // the applied sets equal the guard sets exactly.
+    const withheldDowngraded = new Map<string, number | undefined>();
+    const withheldDeleted = new Map<string, number | undefined>();
+    let appliedDowngraded = safeDowngraded;
+    let appliedDeleted = safeDeleted;
+    if (healFloor !== undefined) {
+      const screen = (ids: string[], confidences: Map<string, number>, withheld: Map<string, number | undefined>): string[] => {
+        const applied: string[] = [];
+        for (const id of ids) {
+          const c = confidences.get(id);
+          if (c !== undefined && c < healFloor) withheld.set(id, c);
+          else applied.push(id);
+        }
+        return applied;
+      };
+      appliedDowngraded = screen(safeDowngraded, downgradeConfidence, withheldDowngraded);
+      appliedDeleted = screen(safeDeleted, deleteConfidence, withheldDeleted);
+      if (appliedDowngraded.some((id) => !downgradeConfidence.has(id)) || appliedDeleted.some((id) => !deleteConfidence.has(id))) {
+        warnOnce(
+          '[core-llm-wiki] systemOne: heal returned downgraded/deleted verdicts without a valid `confidence`, so the '
+          + 'heal screen could not gate them and they were applied. Update `healSystemPrompt` to the '
+          + '`{ "id", "confidence" }` entry contract (see HEAL_SYSTEM_PROMPT).',
+        );
+      }
+    }
     const diagBuffer = new DiagnosticBuffer();
     const validNewFacts: ExtractedFact[] = [];
     const validNewFactItemIndexes: number[] = [];
@@ -1926,7 +2001,7 @@ export class MaintenanceService {
     });
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
-    const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
+    const uniqueDeletedFactIds = Array.from(new Set(appliedDeleted));
 
     // Full-breadth, independent of batchSize. Seeding from healCandidates would
     // shrink dedupe to a batchSize window, letting a synthesized fact that
@@ -1945,8 +2020,8 @@ export class MaintenanceService {
     // entirely after it ends, so there is no interleaving point at which a
     // librarian insert could land unseen.
     await this.db.withTransactionAsync(async (tx) => {
-      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
-      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
+      await this.entryRepo.downgradeByIds(appliedDowngraded, entityId, tx);
+      await this.entryRepo.softDeleteByIds(appliedDeleted, entityId, tx);
 
       const healFactsForDedupe: Array<{ id: string; title: string }> =
         await this.entryRepo.findInferredTitlesByEntityId(entityId, tx);
@@ -2030,6 +2105,32 @@ export class MaintenanceService {
     for (const { item, reason } of outcome.skipped) {
       diagBuffer.push({ ...diagBase, code: 'heal_skipped', detail: { factId: item.id, reason } });
     }
+    // Receipts (spec §5): one per model-directed (fact, action), carried from
+    // the seam; SQL-pass ids get none. Pushed after the tx commits, so a
+    // rolled-back apply emits nothing.
+    const pushReceipts = (
+      code: 'heal_downgraded' | 'heal_deleted',
+      applied: string[],
+      confidences: Map<string, number>,
+      withheld: Map<string, number | undefined>,
+    ): void => {
+      for (const factId of applied) {
+        if (healFloor !== undefined && !confidences.has(factId)) {
+          diagBuffer.push({ ...diagBase, code, detail: { factId, reason: 'applied_unscreened' } });
+        } else {
+          diagBuffer.push({ ...diagBase, code, detail: { factId, reason: 'applied' } });
+        }
+      }
+      for (const [factId, confidence] of withheld) {
+        diagBuffer.push({
+          ...diagBase,
+          code,
+          detail: { factId, reason: 'below_floor', ...(confidence !== undefined ? { confidence } : {}) },
+        });
+      }
+    };
+    pushReceipts('heal_downgraded', appliedDowngraded, downgradeConfidence, withheldDowngraded);
+    pushReceipts('heal_deleted', appliedDeleted, deleteConfidence, withheldDeleted);
     diagBuffer.flush(this.options);
 
     // Union of every id heal's passes touched, all of which are enumerated by
@@ -2040,7 +2141,7 @@ export class MaintenanceService {
     const healSyncIds = Array.from(new Set([
       ...orphanedIds,
       ...staleDowngradedIds,
-      ...safeDowngraded,
+      ...appliedDowngraded,
       ...uniqueDeletedFactIds,
       ...insertedFacts.map((f) => f.id),
     ]));
@@ -2082,7 +2183,7 @@ export class MaintenanceService {
     // Union rather than sum: the orphan pass runs before candidate selection so
     // its ids cannot also be model-deleted, but a fact the stale pass downgraded
     // can be downgraded again by the model in the same pass.
-    const allDowngraded = new Set([...staleDowngradedIds, ...safeDowngraded]);
+    const allDowngraded = new Set([...staleDowngradedIds, ...appliedDowngraded]);
     const allDeleted = new Set([...orphanedIds, ...uniqueDeletedFactIds]);
 
     const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
@@ -2090,6 +2191,8 @@ export class MaintenanceService {
       scanned,
       downgraded: allDowngraded.size,
       deleted: allDeleted.size,
+      downgradedIds: Array.from(allDowngraded),
+      deletedIds: Array.from(allDeleted),
       newFactsCreated: insertedFacts.length,
       skipped: outcome.skipped.map(({ item, reason }) => ({ id: item.id, reason })),
       degraded: healedDegraded,

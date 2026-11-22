@@ -37,10 +37,10 @@ Wave 1
 - [x] T1.5 Resolvers + exports + resolver tests
 
 Wave 2
-- [ ] T2.1 `HEAL_SYSTEM_PROMPT` schema
-- [ ] T2.2 Widened parse + carrier + wire compat
-- [ ] T2.3 Mode/floor resolution + applied-set seam
-- [ ] T2.4 Receipts + changed-id lists + `toEqual` churn. Churned files: ___
+- [x] T2.1 `HEAL_SYSTEM_PROMPT` schema. Churned prompt pins (heal string only): `__tests__/__fixtures__/guidance-golden.json` (3 lines), `__tests__/contextBudgetByteIdentity.test.ts:68`. Gate: full vitest run passes.
+- [x] T2.2 Widened parse + carrier + wire compat. `healScreen.test.ts` `wire compat` describe; full vitest run passes
+- [x] T2.3 Mode/floor resolution + applied-set seam. `healScreen.test.ts` `screen seam` describe; full vitest run passes
+- [x] T2.4 Receipts + changed-id lists + `toEqual` churn. Churned files: `__tests__/healBounding.test.ts` (the no-candidates `toEqual` gained `downgradedIds: [], deletedIds: []`). Keyword-outage early-return test added. Wave-2 vitest: files 256 / tests 3045 passed (baseline 3024 after wave 1 + 21 new); `pnpm -r typecheck` clean. G-fence git diff NOT run by the implementer (git diff needs approval in this rung): controller to run.
 
 Wave 3
 - [ ] T3.1 Withheld delete + paired restate test
