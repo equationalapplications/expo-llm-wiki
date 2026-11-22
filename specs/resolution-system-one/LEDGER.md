@@ -66,7 +66,19 @@ held tasks are unheld above):**
   harmless); (2) the `whole()` helper builds two near-identical objects
   (cosmetic); (3) `ask` is built before the floor check can
   short-circuit (never fired, harmless).
-- **Opus close-out rung: result recorded below when it lands.**
+- **Opus close-out rung (opus-review, effort medium, cap $2.50): APPROVE
+  WITH CHANGES — cost $0.89.** No blockers. Folds dispatched to the fixer
+  rung (sonnet, cap $0.60): m2 distinct warn-once keys for absent vs
+  threw classifier (within ruling Q5's once-per-process contract; each
+  message warns once); m3 throwing-getter test realigned with the
+  production `callClassify` path; m4 the plan-task-6 overflow case added
+  (settled candidate never in `overflowSkipped`); m6 `classifierSettled`
+  docstring gains the uniqueness note. Recorded-not-coded: m5 sequential
+  classifier calls (one request per candidate ruled; bounded concurrency
+  or batched candidates = follow-up); m7 stale spec §6 pin
+  (`resolve.ts:100-103`) refreshed by the controller in the cleanup
+  commit. M1 = task 12 (cleanup) lands before the PR is marked ready —
+  standing plan.
 
 Plan-author discrepancy questions (D1–D5), preserved verbatim below —
 adjudications above govern; the verbatim text is historical.
