@@ -6,6 +6,7 @@ import {
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
   buildTitleCatalogBlock,
+  buildCandidateSections,
 } from '../../src/prompts';
 import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
 
@@ -342,6 +343,69 @@ describe('PromptService', () => {
       expect(block).toContain('TITLE CATALOG: this memory contains no typed nodes yet');
       expect(block).toContain('omit "edges" rather than invent a target_title');
       expect(block).toContain('classified in this same response');
+    });
+  });
+
+  describe('buildCandidateSections (spec §1)', () => {
+    const rowsA = [
+      { title: 'Zeta', okf_type: 'area' },
+      { title: 'Alpha "q"', okf_type: 'organization' },
+      { title: 'Mid', okf_type: 'software_application' },
+    ];
+
+    it('renders each row exactly as the catalog block renders it', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      // Catalog sorts alphabetically; compare per-row line shape via one-row blocks.
+      for (const r of rowsA) {
+        const catalogLine = buildTitleCatalogBlock([r]).split('\n')[1];
+        expect(out).toContain(catalogLine);
+      }
+    });
+
+    it('names the fact id in each section header', () => {
+      const out = buildCandidateSections(
+        [{ id: 'f1' }, { id: 'f2' }],
+        new Map([
+          ['f1', rowsA],
+          ['f2', [{ title: 'Other', okf_type: 'area' }]],
+        ]),
+      );
+      expect(out).toContain('f1');
+      expect(out).toContain('f2');
+      expect(out.indexOf('f1')).toBeLessThan(out.indexOf('f2'));
+    });
+
+    it('keeps the non-exclusive footer in each section', () => {
+      const out = buildCandidateSections(
+        [{ id: 'f1' }, { id: 'f2' }],
+        new Map([
+          ['f1', rowsA],
+          ['f2', [{ title: 'Other', okf_type: 'area' }]],
+        ]),
+      );
+      expect(out.match(/omit "edges" rather than invent a target_title/g)?.length).toBe(2);
+      expect(out.match(/classified in this same response/g)?.length).toBe(2);
+      expect(out).not.toContain('valid only if');
+    });
+
+    it('zero pool: no per-fact sections, one shared no-typed-nodes footer', () => {
+      const out = buildCandidateSections([{ id: 'f1' }, { id: 'f2' }], new Map());
+      expect(out).toContain('no typed nodes yet');
+      expect(out).toContain('omit "edges" rather than invent a target_title');
+      expect(out).not.toContain('f1');
+      expect(out).not.toContain('f2');
+      expect(out.match(/no typed nodes yet/g)?.length).toBe(1);
+    });
+
+    it('fewer than k: renders exactly the given rows', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      expect(out.split('\n').filter((l) => l.startsWith('- ')).length).toBe(3);
+    });
+
+    it('keeps the given (score) order, not alphabetical', () => {
+      const out = buildCandidateSections([{ id: 'f1' }], new Map([['f1', rowsA]]));
+      expect(out.indexOf('"Zeta"')).toBeLessThan(out.indexOf('"Alpha'));
+      expect(out.indexOf('"Alpha')).toBeLessThan(out.indexOf('"Mid"'));
     });
   });
 

@@ -75,6 +75,10 @@ When echoing an existing fact's title verbatim into "target_title", preserve eve
  */
 export const TITLE_CATALOG_MAX_ENTRIES = 200;
 
+function formatCatalogLine(r: { title: string; okf_type: string }): string {
+  return `- ${JSON.stringify(r.title)} (${r.okf_type})`;
+}
+
 export function buildTitleCatalogBlock(
   rows: ReadonlyArray<{ title: string; okf_type: string | null }>,
 ): string {
@@ -100,7 +104,7 @@ export function buildTitleCatalogBlock(
   const listed: Array<{ title: string; okf_type: string }> = [];
   let used = 0;
   for (const r of typed) {
-    const line = `- ${JSON.stringify(r.title)} (${r.okf_type})`;
+    const line = formatCatalogLine(r);
     // Non-fitting lines are SKIPPED (continue), never a break: a break would
     // hide every shorter title sorting after an oversized one, and stopping
     // on the first line could empty the block while typed nodes exist — the
@@ -126,7 +130,7 @@ export function buildTitleCatalogBlock(
       'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
     ].join('\n');
   }
-  const catalog = listed.map((r) => `- ${JSON.stringify(r.title)} (${r.okf_type})`).join('\n');
+  const catalog = listed.map(formatCatalogLine).join('\n');
   return [
     'TITLE CATALOG: existing typed nodes in this memory include:',
     catalog,
@@ -135,7 +139,41 @@ export function buildTitleCatalogBlock(
   ].join('\n');
 }
 
-const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {
+/**
+ * Per-fact candidate sections (backfill shortlist, spec §1). The caller has
+ * already ranked and cut each fact's shortlist; row order is render order.
+ * Lines match the catalog's shape exactly. No char budget: the shortlist is
+ * k-bounded by the caller. An input with no rows at all means an empty pool
+ * and yields one shared footer instead of per-fact sections.
+ */
+export function buildCandidateSections(
+  facts: ReadonlyArray<{ id: string }>,
+  rowsByFact: ReadonlyMap<string, ReadonlyArray<{ title: string; okf_type: string }>>,
+): string {
+  const footer =
+    'A "target_title" may be copied verbatim from the candidates above for this fact, or be another fact classified in this same response. If no valid target exists, omit "edges" rather than invent a target_title.';
+  const sections: string[] = [];
+  for (const fact of facts) {
+    const rows = rowsByFact.get(fact.id);
+    if (!rows || rows.length === 0) continue;
+    sections.push(
+      [
+        `CANDIDATE TARGETS for fact ${JSON.stringify(fact.id)}: typed nodes in this memory that may relate to it:`,
+        ...rows.map(formatCatalogLine),
+        footer,
+      ].join('\n'),
+    );
+  }
+  if (sections.length === 0) {
+    return [
+      'TITLE CATALOG: this memory contains no typed nodes yet.',
+      'A fact classified in this same response is a valid "target_title" once typed. Otherwise omit "edges" rather than invent a target_title.',
+    ].join('\n');
+  }
+  return sections.join('\n\n');
+}
+
+const GROUNDING_SOURCE:Record<GroundingWriter, { key: string; source: string }> = {
   ingest: { key: 'facts', source: 'the document chunk' },
   librarian: { key: 'facts', source: 'the "summary" text of the events' },
   heal: { key: 'newFacts', source: 'the "summary" text of the recent events or the "body" text of the document anchors' },
