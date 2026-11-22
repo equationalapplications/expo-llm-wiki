@@ -331,8 +331,11 @@ request the typing question rides today (`MaintenanceService.ts:2518-2522`):
   `normalizeTitleKey` applied the same way the generative title index
   built at `:2711-2715` is shaped (`normalizeTitleKey(row.title)` →
   `{id, okf_type}` map) — and SKIPS any candidate whose normalized title
-  is shared by MORE THAN ONE pool row, or by any OTHER fact in this
-  pass's batch; BOTH sets are fully known before the classify call, so
+  is shared by MORE THAN ONE pool row, or by any fact in this
+  pass's batch (the source fact's own title included — controller
+  ruling D3: a self-titled candidate could retarget via the intra-tx
+  index update, and a self-edge is the garbage posture A guards
+  against); BOTH sets are fully known before the classify call, so
   the skip cannot depend on read order. Such pairs never become questions
   (test case 17 pins both collision kinds: duplicate pool rows and
   duplicate batch facts). The `edge:` question prefix
@@ -512,8 +515,10 @@ Mode/floor plumbing is explicit, never defaulted: resolved ONCE per pass in
   with many uncertain edges emits one diagnostic, not a flood. Pinned:
   exactly ONE diagnostic per fact — `classification_invalid` (severity
   `warn`, `diagnostics.ts:31`) if ANY of the fact's edge answers is
-  malformed, otherwise `classification_low_confidence` — with all counts
-  in the `detail`. Disclosed cost note: under the M1 answers-only-
+  malformed, otherwise `classification_low_confidence` — with the edge
+  site marked through `detail.reason` (controller ruling D4: no `site`
+  key and no counts in `detail`; `types.ts` is frozen; the counts are
+  computed internally and not emitted). Disclosed cost note: under the M1 answers-only-
   `okf_type` scenario, a warn-severity diagnostic for EVERY
   candidate-bearing fact would be loud; the per-fact cap bounds it, and
   the escalation/generative re-type cost is avoided entirely because
@@ -913,7 +918,8 @@ carried forward and re-pointed at the classifier-first design:
 17. Title-collision pre-call skip (M3, order-independent): a candidate
     whose normalized title (`normalizeTitleKey`, mirroring the
     `:2711-2715` index shape) is shared by MORE THAN ONE pool row, or by
-    any OTHER fact in this pass's batch, is SKIPPED at candidate-pool
+    any fact in this pass's batch (the source fact's own title included
+    — D3 ruling), is SKIPPED at candidate-pool
     build time — pinned in BOTH collision shapes: (a) duplicate POOL
     ROWS (two typed rows share the key with different ids; with no
     `ORDER BY` on `findTitleIndexByEntityId`, which id the tx index
@@ -959,6 +965,7 @@ carried forward and re-pointed at the classifier-first design:
     build and the apply batch, so there is NO generative leg and NO
     generative re-type triggered by it (the M1 continuity path, §6) —
     NO edges are persisted, and EXACTLY ONE per-fact edge-site
-    diagnostic is emitted with the missing-answer count in its `detail`
-    (§6 volume pin); assert `typed` reflects the classifier answer and
+    diagnostic is emitted with `detail.reason: 'edge_answers_missing'`
+    (D4: counts stay internal; §6 volume pin); assert `typed` reflects
+    the classifier answer and
     the result is NOT routed through the escalation hand-off.
