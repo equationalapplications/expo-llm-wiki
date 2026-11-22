@@ -271,6 +271,8 @@ so it runs first among the site conversions.
 
 ### Step 11 — Resolution from System-One — PLANNED
 
+Done — merged 2026-11-22, PR #461, spec [resolution-system-one](../specs/resolution-system-one/spec.md)
+
 The entity-resolution site opts in to the configured model. When the
 configured model is unavailable or below threshold, the fact falls
 through to the generative path, and the pass warns once.
