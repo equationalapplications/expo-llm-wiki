@@ -3,6 +3,13 @@
 Status: Implemented 2026-11-22 (PR #463). Owner approval 2026-11-22
 (Discord thread `1570840529388965951`, msg `1574148740716175392`); all eight
 open questions ruled as recommended. Draft 2026-11-22.
+
+> **As landed:** the shipped `SystemOneConfig` union has FOUR members —
+> `'typing' | 'edges' | 'resolve' | 'healScreen'` — because the step-11 lane
+> already landed `'resolve'` before this spec drafted the heal-screen
+> extension. Also, `HealResult` carries BOTH the counts and the id lists
+> (`deletedIds` / `downgradedIds`) side by side, notwithstanding §6's
+> "becomes" phrasing; both are populated by `doRunHeal` today.
 Base: branch `tessera/session1-laneA` @ `206936cc`. Every pin below re-verified
 live against this worktree (`.sdd/step12/pins-recon.md` is the pin report;
 line numbers match it except where this spec quotes the live file directly).

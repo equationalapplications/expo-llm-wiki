@@ -1713,7 +1713,9 @@ export class MaintenanceService {
    * lists); a missing or invalid confidence is applied unscreened. Each
    * model-directed move emits a `heal_deleted` / `heal_downgraded` receipt
    * after commit (`applied`, `applied_unscreened`, or `below_floor`), in every
-   * mode. A withheld delete paired with a restating `newFact` leaves the fact
+   * mode. An `applied` receipt records that the model VERDICT was applied
+   * (`downgradeByIds` runs unconditionally): a fact that was already at
+   * reduced confidence still gets an `applied` receipt. A withheld delete paired with a restating `newFact` leaves the fact
    * live and the restatement is skipped as `fact_deduplicated`.
    */
   async doRunHeal(
@@ -1987,9 +1989,10 @@ export class MaintenanceService {
       appliedDeleted = screen(safeDeleted, deleteConfidence, withheldDeleted);
       if (appliedDowngraded.some((id) => !downgradeConfidence.has(id)) || appliedDeleted.some((id) => !deleteConfidence.has(id))) {
         warnOnce(
-          '[core-llm-wiki] systemOne: heal returned downgraded/deleted verdicts without a valid `confidence`, so the '
-          + 'heal screen could not gate them and they were applied. Update `healSystemPrompt` to the '
-          + '`{ "id", "confidence" }` entry contract (see HEAL_SYSTEM_PROMPT).',
+          '[core-llm-wiki] systemOne: heal returned downgraded/deleted verdicts without a valid `confidence` (out-of-range '
+          + 'or non-numeric), so the heal screen could not gate them and they were applied. Restore the schema — or a '
+          + '`healSystemPrompt` override — to the `{ "id", "confidence" }` entry contract with confidences in 0-1 '
+          + '(see HEAL_SYSTEM_PROMPT).',
         );
       }
     }

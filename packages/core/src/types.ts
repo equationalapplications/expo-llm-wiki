@@ -228,9 +228,9 @@ export interface HealResult {
    * `downgraded`. Optional so existing `HealResult` literals (host mocks)
    * keep compiling; `doRunHeal` always populates it today. NOT disjoint
    * with `deletedIds`: a fact both downgraded and deleted in one pass
-   * appears in BOTH lists (union-not-sum semantics,
-   * `MaintenanceService.ts:2082-2086`) — hosts must not treat the lists
-   * as disjoint.
+   * appears in BOTH lists (union-not-sum semantics — see the
+   * `allDowngraded` / `allDeleted` unions in `doRunHeal`) — hosts must not
+   * treat the lists as disjoint.
    */
   downgradedIds?: string[];
   /**

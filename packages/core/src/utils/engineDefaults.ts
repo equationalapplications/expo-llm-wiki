@@ -93,6 +93,15 @@ export function warnOnce(message: string): void {
 }
 
 /**
+ * Clears the shared warn-once set so tests can assert warning counts
+ * independently of module load order or earlier tests in the same process.
+ * @internal test-only — never call from library code.
+ */
+export function __resetWarnOnceForTests(): void {
+  warnedDefaults.clear();
+}
+
+/**
  * Formats an invalid config value for a warning message without throwing.
  * A raw `JSON.stringify` throws on `bigint` (e.g. `systemOne.typing: 1n`)
  * and on circular references — config arriving from an unvalidated host

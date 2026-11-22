@@ -78,7 +78,8 @@ delete, or replace them. `immutable_document` facts are never rewritten. Set eit
 to `null` to turn that check off.
 
 With `systemOne.healScreen: 'auto'` and `systemOne.minConfidence.healScreen` set, heal withholds
-model-directed deletes and downgrades below the floor, and every model-directed move emits a
+model-directed deletes and downgrades below the floor. Independently of the screen and in every mode,
+every model-directed move emits a
 `heal_deleted` or `heal_downgraded` receipt. `HealResult` carries `deletedIds` and `downgradedIds`.
 Heal may forget when the host runs it (owner ruling, 2026-11-20): auditability is bounded by your
 retention clocks. Keep `pruneEventsAfter` at 7 days or more so `'below_floor'` receipts outlive the

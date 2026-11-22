@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import {
   createWiki,
@@ -579,6 +579,11 @@ describe('resolveSystemOneHealScreen (heal-screening-system-one §2)', () => {
 });
 
 describe('resolveHealScreenMinConfidence (heal-screening-system-one §3)', () => {
+  beforeEach(async () => {
+    const { __resetWarnOnceForTests } = await import('../src/utils/engineDefaults');
+    __resetWarnOnceForTests();
+  });
+
   it("under 'auto', a missing floor returns undefined and warns once naming the key", async () => {
     const { resolveHealScreenMinConfidence } = await import('../src/utils/engineDefaults');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -1,18 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { createWiki } from '../src/index';
+import { __resetWarnOnceForTests } from '../src/utils/engineDefaults';
 import { HEAL_SYSTEM_PROMPT } from '../src/prompts';
 import { EntryRepository } from '../src/repositories/EntryRepository';
 import { SearchService } from '../src/services/SearchService';
 import type { SQLiteAdapter } from '../src/types';
 
 const PREFIX = 'llm_wiki_';
-const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
-  warnSpy.mockClear();
+  __resetWarnOnceForTests();
   vi.restoreAllMocks();
-  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  warnSpy.mockRestore();
 });
 
 async function seed(db: SQLiteAdapter, id: string, updatedAt = 1000): Promise<void> {
@@ -61,8 +66,7 @@ describe('wire compat (§4, OQ1a)', () => {
     expect((await live(db, 'f2')).deleted_at).not.toBeNull();
     await db.runAsync(`UPDATE ${PREFIX}entries SET heal_checked_at = NULL, deleted_at = NULL`);
     await wiki.runHeal('e1');
-    const w = warnSpy.mock.calls.length ? warnSpy.mock.calls : (console.warn as any).mock.calls;
-    const hits = (w as any[][]).filter((c) => String(c[0]).includes('healSystemPrompt'));
+    const hits = warnSpy.mock.calls.filter((c) => String(c[0]).includes('healSystemPrompt'));
     expect(hits).toHaveLength(1);
   });
 
@@ -103,6 +107,32 @@ describe('wire compat (§4, OQ1a)', () => {
     expect(diags.find((d) => d.code === 'heal_deleted').detail.reason).toBe('applied_unscreened');
   });
 
+  it('a non-offered rejection in one batch does not lower the same id admitted in a later batch', async () => {
+    // f2 is rejected in batch A (mutableIds miss) and admitted in batch B; the
+    // 0.1 rejection must not merge into the carrier's confidence.
+    const db = openTestDatabase();
+    const diags: any[] = [];
+    const generateText = vi.fn()
+      .mockResolvedValueOnce(JSON.stringify({ downgraded: [], deleted: [{ id: 'f2', confidence: 0.1 }], newFacts: [] }))
+      .mockResolvedValueOnce(JSON.stringify({ downgraded: [], deleted: [{ id: 'f2', confidence: 0.9 }], newFacts: [] }));
+    const wiki = createWiki(db, {
+      llmProvider: { generateText },
+      config: { orphanAfterDays: null, staleInferredAfterDays: null, systemOne: AUTO(0.7) },
+      onDiagnostic: (d: any) => diags.push(d),
+    } as any);
+    await wiki.setup();
+    await seed(db, 'f1');
+    await seed(db, 'f2', 1001);
+    await wiki.runHeal('e1', { batchSize: 1 }); // batch A: [f1], verdict f2@0.1 non-offered → rejected
+    const r = await wiki.runHeal('e1', { batchSize: 1 }); // batch B: [f2], verdict f2@0.9 → applied
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(r.deletedIds).toEqual(['f2']); // admitted at 0.9, above the 0.7 floor
+    expect((await live(db, 'f2')).deleted_at).not.toBeNull();
+    const rc = receipts(diags);
+    expect(rc).toHaveLength(1);
+    expect(rc[0].detail).toEqual({ factId: 'f2', reason: 'applied' });
+  });
+
   it('a non-offered id with low confidence does not lower an admitted duplicate', async () => {
     // Same id verdict in one batch cannot be non-offered, so use a foreign id plus admitted id.
     const { wiki, diags } = await make({ downgraded: [], deleted: [{ id: 'ghost', confidence: 0.1 }, { id: 'f1', confidence: 0.9 }], newFacts: [] }, AUTO(0.7));
@@ -140,17 +170,25 @@ describe('screen seam (§4)', () => {
 
   it('floor 1 still runs the SQL passes', async () => {
     const db = openTestDatabase();
+    const diags: any[] = [];
     const wiki = createWiki(db, {
       llmProvider: { generateText: async () => JSON.stringify({ downgraded: [], deleted: [{ id: 'f1', confidence: 0.9 }], newFacts: [] }) },
       config: { orphanAfterDays: 0, staleInferredAfterDays: 0, systemOne: AUTO(1) },
+      onDiagnostic: (d: any) => diags.push(d),
     } as any);
     await wiki.setup();
     await seed(db, 'f1');
+    // Accessed, so the orphan pass skips f1 — it reaches the model as a stale
+    // candidate instead. f2 stays never-accessed → SQL orphan pass.
+    await db.runAsync(`UPDATE ${PREFIX}entries SET access_count = 1 WHERE id = 'f1'`);
     await seed(db, 'f2', 1001);
+    const del = vi.spyOn(EntryRepository.prototype, 'softDeleteByIds');
     const r = await wiki.runHeal('e1');
-    expect(r.deletedIds!.length + r.downgradedIds!.length).toBeGreaterThan(0);
+    expect(del.mock.calls[0][0]).toEqual([]); // model's 0.9 delete of f1 withheld below floor 1
+    expect((await live(db, 'f1')).deleted_at).toBeNull(); // f1 stays live
+    expect(r.deletedIds).toEqual(['f2']); // SQL orphan-pass id landed in deletedIds
     expect(r.deletedIds!.length).toBe(r.deleted);
-    expect(r.downgradedIds!.length).toBe(r.downgraded);
+    expect(receipts(diags).map((d) => d.detail.reason)).toEqual(['below_floor']);
   });
 
   it('screens each action independently for an id in both sets', async () => {
