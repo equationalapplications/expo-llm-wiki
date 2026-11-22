@@ -1,6 +1,11 @@
 # Spec — Step 11: Resolution from System-One
 
-Status: Proposed — draft 2026-11-22 (Tessera session-2 lane, Discord thread
+Status: **Approved by owner** — rulings 2026-11-22, Discord msg
+`1574134804725760061` ("As recommended across the board… Consider this your
+formal ruling. Lock the spec, generate the Tier-3 plan, and proceed to the
+implementer wave."). All 8 open questions resolved as recommended (see
+"Open questions" — each carries its ruling). Draft history: 2026-11-22
+(Tessera session-2 lane, Discord thread
 `1574117274791706748`). Review ladder: flash fidelity rung (glm-5.3-flash,
 free) folded — 8 findings; Opus spec-review rung (opus-review --doc,
 effort medium, $0.50 of $1.00 cap) REQUEST CHANGES folded — blocker B1
@@ -11,8 +16,8 @@ M2 (§4/Q3/Q4 mode-ranking note), M3 (prologue all-or-nothing), minors
 m1–m5. Lane assigned by the step-10 sibling session
 (thread `1570840529388965951`): spec prep only until its PR merged — #459
 merged 18:17:50Z, release v9.12.0 verified live 18:24:48Z, main tip
-`206936cc`. Owner rulings on the numbered Open questions below are required
-before any plan or implementer dispatch.
+`206936cc`. Owner rulings RECEIVED 2026-11-22 (see "Open questions — ALL
+RESOLVED"); plan and implementer dispatch authorized by the same ruling.
 Base: origin/main @ `206936cc` (post #459 + #460 release-PR merge). Every pin
 below re-verified live against the lane worktree
 `~/code/github/worktrees/expo-llm-wiki-tessera-laneB`. Repo: expo-llm-wiki.
@@ -143,12 +148,12 @@ returning `config?.systemOne?.resolve ?? 'llm'`; a present
 non-`'auto'`/non-`'llm'` value warns once via the existing `warnOnce`
 helper and is treated as unset — the S1-0 §2 treated-as-unset contract,
 mirroring `resolveSystemOneTyping`/`resolveSystemOneEdges`. Posture A is
-RECOMMENDED as inherited owner policy (step-10 ruling msg
-`1574101104528986284`): resolving `'auto'` alone does NOT engage the
+CONFIRMED owner policy (ruling msg `1574134804725760061`, Q2: "Yes,
+Posture A"; inheriting the step-10 ruling msg `1574101104528986284`):
+resolving `'auto'` alone does NOT engage the
 screen — the site additionally requires the explicit `minConfidence.resolve`
 floor; missing/out-of-domain floor → warnOnce naming the key, site resolves
-`'llm'`. Flagged as Open question Q2 for explicit confirmation because
-resolve's failure mode is data loss, not just a wrong fact. No call option
+`'llm'`. No call option
 — resolution mode is a config-level stance, not per-call tuning. No
 `'off'`.
 
@@ -157,23 +162,24 @@ resolve's failure mode is data loss, not just a wrong fact. No call option
 Add `resolveResolveMinConfidence(config)` in `engineDefaults.ts` (naming
 follows the step-10 `resolveEdgesMinConfidence` precedent): returns
 `undefined` unless the site resolves `'auto'` with a floor present and
-valid per the domain Q7 rules; an invalid value warns once and is treated
-as unset — the S1-0 treated-as-unset contract. Domain is an owner
-question (Q7): the S1-0 typing chain (`resolveTypingMinConfidence`,
-`engineDefaults.ts:193-219`) accepts finite [0, 1] and its "use `??`,
-never `||`" rule applies; the step-10 edges precedent (`isEdgesFloor`,
-`engineDefaults.ts:221-222`) instead enforces [0.5, 1] on the posture-A
-reasoning that a sub-0.5 binary confidence is a coin toss. Given
-resolution's wrong-NOOP mode is data loss, [0.5, 1] is RECOMMENDED. The
+valid — domain **[0.5, 1]** CONFIRMED (ruling msg `1574134804725760061`,
+Q7; the step-10 `isEdgesFloor` precedent, `engineDefaults.ts:221-222`;
+"S1-0 typing chain (`resolveTypingMinConfidence`,
+`engineDefaults.ts:193-219`) accepts finite [0, 1]" recorded here only as
+the rejected alternative). "Use `??`, never `||`" applies. An invalid
+value (NaN, out of [0.5, 1]) warns once and is treated
+as unset — the S1-0 treated-as-unset contract. The
 floor applies to the classifier's per-answer
 probability at the resolve site only; the generative path produces no
 confidence and is never floored.
 
-### 4. The classifier resolution screen (question shape — recommendation)
+### 4. The classifier resolution screen (question shape — ruled)
 
-RECOMMENDED shape (open questions Q1/Q3/Q4/Q8 let the owner move it): for
+SHAPE CONFIRMED (ruling msg `1574134804725760061`, Q1/Q3/Q4/Q8 — "as
+recommended"): for
 each gate-ambiguous candidate, ONE `ClassifyRequest` with one `binary`
-question per screened neighbour (coverage per Q3's ruling) — state =
+question per screened neighbour (**best neighbour only**, `neighbours[0]`
+— Q3; keeps token spend linearly bounded) — state =
 candidate title+body, question =
 "does this candidate add NO information beyond neighbour nX (a pure
 duplicate: same claims, no new content)?" — strict duplicate-only wording
@@ -191,15 +197,20 @@ is preserved by construction.
   **NOOP** on that neighbour's id. Precedent boundary, stated honestly:
   the gate's local NOOP rule (`gate.ts:80`) fires only on cosine ≥ 0.89
   AND a title-Jaccard match — near-identical text. The classifier screen
-  reaches into the 0.30–0.89 uncertain band and (per Q4) keyword mode,
+  reaches into the 0.30–0.89 uncertain band and (Q4 CONFIRMED: the screen
+  engages in keyword mode too — the highest-volume generative population)
   exactly where update/supersede shapes live, which is why the question
-  is duplicate-only and why Q8 asks whether YES should ever be terminal.
+  is duplicate-only; Q8 ruled (a): a confident YES IS terminal wherever
+  the screen runs, guarded by the explicit floor, the duplicate-only
+  wording, and the §6 receipts.
   A settled NOOP is dropped with a receipt (§6) — the gate's local drops
   (`apply.ts:176`) carry none, and neither does a resolved NOOP
   (`apply.ts:190`).
 - Confident NO and uncertain band → fall through to the generative resolve
-  (§5) — Open question Q1 decides whether confident NO may instead be a
-  terminal ADD.
+  (§5). Q1 ruled **(b) fall through** — a terminal ADD was REJECTED: "a
+  false negative (confident NO on an actual duplicate) leads to silent
+  data duplication; letting the generative path double-check limits our
+  downside risk" (ruling msg `1574134804725760061`).
 - Misroute accounting, stated plainly: a wrong NOOP drops a live fact
   (data loss — this is why the floor is explicit and required); a wrong
   ADD creates an additive duplicate the next pass can reconcile; the
@@ -208,7 +219,10 @@ is preserved by construction.
 - Classifier unavailable (`classify` absent) or throwing mid-pass: the
   prologue is ALL-OR-NOTHING — any absent classifier or throw means
   `settled` is empty (no partial results are kept), the pass warns ONCE
-  (scope per Q5), and ALL candidates fall through to the generative
+  (Q5 CONFIRMED: once per PROCESS via the `warnOnce` shared set — stricter
+  than the roadmap's per-pass wording, owner's choice "keeps the logs
+  honest without turning into unreadable spam"), and ALL candidates fall
+  through to the generative
   batch; roadmap wording
   (`docs/ROADMAP.md:274-276`) requires exactly this fallthrough.
 
@@ -245,12 +259,15 @@ pass-level DiagnosticBuffer in `ops/index.ts` (the same buffer
 `runResolve`'s overflow skips are buffered into, `resolve.ts:100-103`).
 `LibrarianResult` (`librarian/types.ts:109-116`) gains nothing —
 step 10 added NO pass-result counters, so a counter
-addition here would be new public surface and is NOT proposed by default;
-whether the owner wants counters on top of the receipts is Q6b. No
+addition here would be new public surface and is RULED OUT (Q6b, ruling
+msg `1574134804725760061`: "No to a and b — the existing
+fact_deduplicated receipt with the reason: 'classifier' flag provides the
+exact audit trail needed without bloating the public LibrarianResult
+surface"). No
 `writer` change —
 `apply.ts` applies `ResolvedOp`s identically regardless of who resolved
 them (unlike backfill, ops apply has no `'classifier'` writer stamp today;
-adding one is Q6a, default: don't).
+Q6a ruled: don't add one).
 
 ### 7. Compatibility lock
 
@@ -286,69 +303,46 @@ The generative prompt builder (`buildOpsResolvePrompt`) is untouched.
   (`legacy.ts` grep-verified); extending the gate/resolve split to legacy
   is not a roadmap step.
 - **A `'choice'` question over the four ops** (ADD/UPDATE/SUPERSEDE/NOOP
-  as classifier options) — rejected as recommendation: a small binary
+  as classifier options) — rejected: a small binary
   model answering "same fact?" is the question it can actually answer;
   op selection between UPDATE/SUPERSEDE needs generative context (valid_from
-  semantics). Owner may overrule via Q1's menu.
+  semantics).
 - **Screening inside `gateCandidates`** — rejected: the gate is pure/local
   and runs for every candidate; the classifier screen belongs to the
   resolve site where the ambiguous set is already known and the ops
   receipts are scoped.
 
-## Open questions — OWNER RULINGS REQUIRED before plan dispatch
+## Open questions — ALL RESOLVED (owner rulings 2026-11-22, msg `1574134804725760061`)
 
-1. **Confident-"different" handling.** When the classifier answers a
-   confident NO ("not the same fact") on the screened neighbour: (a)
-   terminal **ADD** — savings on the novel side too, risk is an additive
-   duplicate only; or (b) **fall through to generative** (recommended) —
-   savings only on the duplicate side, but UPDATE/SUPERSEDE remain
-   reachable for candidates a binary screen would have misfiled as novel.
-2. **Posture.** Inherit step-10 posture A — `'auto'` requires the explicit
-   `minConfidence.resolve` floor; missing/out-of-domain → warnOnce + site
-   resolves `'llm'` (recommended: yes; note resolve's wrong-NOOP mode is
-   data loss, the strongest posture-A case yet)?
-3. **Neighbour coverage.** Screen against `neighbours[0]` only (best
-   score — recommended; one binary answer per candidate) or against all k
-   neighbours (k binary answers per candidate, cost k× the calls, catches
-   duplicates ranked below the best)? Note (Opus review M2): in vector
-   mode `neighbours[0]` is cosine-ranked, in keyword mode it is
-   keyword-relevance-ranked — "best" means a different thing per mode.
-4. **Keyword mode.** Gate rule 4 routes EVERY keyword-mode candidate with
-   neighbours to ambiguous (`gate.ts:77`) — engage the classifier screen
-   there too (recommended: yes; the screen reads no scores itself, though
-   which neighbour is `neighbours[0]` is mode-ranked per Q3's note) or
-   vector-mode only?
-5. **Unavailable-classifier warning scope.** Warn once per process
-   (`warnOnce` shared-set precedent) or once per pass? Recommended: once
-   per process, naming the missing thing (`classify` or the floor key).
-   Note (Opus review m5): per-process is STRICTER than the roadmap's
-   "the pass warns once" wording (`docs/ROADMAP.md:274-276`) — ruling
-   here settles which contract the host sees.
-6. **Receipts depth.** (a) Writer stamp: add a `'classifier'`-style
-   provenance stamp on classifier-settled ops in ops receipts
-   (recommended: no — detail marker §6 suffices; ops apply has no writer
-   dimension today), or keep backfill-style parity? (b) Pass counters:
-   add `resolved_classified` / `resolved_fallthrough` counters to
-   `LibrarianResult` (NEW PUBLIC SURFACE — `librarian/types.ts:109-116`
-   today carries only `processedThrough`/`factsWritten`/`budgetStop`;
-   step 10 added none) or keep diagnostics-only receipts (recommended)?
-   Roadmap's auditability line (`docs/ROADMAP.md:197-199`) is the argument
-   for counters.
-7. **Floor domain.** `minConfidence.resolve` valid domain: (a) **[0.5, 1]**
-   (RECOMMENDED — the step-10 `isEdgesFloor` precedent,
-   `engineDefaults.ts:221-222`; resolution's wrong-NOOP mode is data loss,
-   so a sub-0.5 binary confidence is a coin toss) or (b) finite [0, 1]
-   (the S1-0 typing-chain domain, `engineDefaults.ts:193-219`)? Either
-   way: invalid warns once and is treated as unset.
-8. **Is a classifier YES ever terminal?** The M1 mitigation is strict
-   duplicate-only wording + the floor, but YES still drops the candidate.
-   (a) YES → terminal NOOP wherever the screen runs (recommended: the
-   savings case, guarded by floor + duplicate-only question + §6
-   receipts); (b) YES terminal only in vector mode, where cosine evidence
-   corroborates, and fall-through in keyword mode; (c) YES never terminal
-   — the screen only annotates diagnostics and every candidate still
-   resolves generatively (savings collapse to zero; listed for
-   completeness).
+Kurt: "As recommended across the board… Consider this your formal ruling.
+Lock the spec, generate the Tier-3 plan, and proceed to the implementer
+wave."
+
+1. Confident-NO handling → **(b) fall through to generative.** "A false
+   negative (confident NO on an actual duplicate) leads to silent data
+   duplication; letting the generative path double-check limits our
+   downside risk."
+2. Posture → **Yes, Posture A** — explicit `minConfidence.resolve` floor
+   required under `'auto'`. "Matches the strict boundary precedent set in
+   Step-10 and prevents silent, unconfigured graph alterations."
+3. Neighbour coverage → **Best neighbour only** (`neighbours[0]`).
+   "Keeps the token spend linearly bounded while still capturing the vast
+   majority of deduplication hits."
+4. Keyword mode → **Engage.** "Essential. Since keyword mode is the
+   highest-volume generative path, skipping the screen here would leave
+   too much money on the table."
+5. Warning scope → **Once per process.** "Keeps the logs honest without
+   turning into unreadable spam."
+6. Receipts depth → **(a) No writer stamp; (b) no `LibrarianResult`
+   counters.** "The existing fact_deduplicated receipt with the
+   reason: 'classifier' flag provides the exact audit trail needed
+   without bloating the public LibrarianResult surface."
+7. Floor domain → **[0.5, 1].** "A sub-0.5 confidence on a binary
+   deduplication check is a literal coin toss. Wrong-NOOPs destroy data;
+   the floor must protect against this."
+8. YES terminality → **(a) Terminal NOOP wherever the screen runs.** "With
+   the explicit floor, the duplicate-only wording, and the receipts in
+   place, a confident YES is rigorous enough to act on terminally."
 
 ## Files touched
 
@@ -380,11 +374,12 @@ The generative prompt builder (`buildOpsResolvePrompt`) is untouched.
    value warns once and treated as unset; `classify` present without the
    key changes nothing.
 3. Floor (§3): `minConfidence.resolve` read only under `'auto'`; missing
-   under `'auto'` → warnOnce + `'llm'` (posture A, per Q2 ruling); invalid
-   (NaN, out of the Q7 domain) treated as unset with the chain continuing;
-   domain endpoints valid per the Q7 ruling (`??` not `||`).
+   under `'auto'` → warnOnce + `'llm'` (posture A, CONFIRMED); invalid
+   (NaN, out of [0.5, 1]) treated as unset with the chain continuing;
+   endpoints `0.5` and `1` valid (`??` not `||`).
 4. Screen (§4): confident YES ≥ floor → NOOP on the aliased neighbour;
-   NO/certainty-band answers follow the Q1 ruling; abstain-shaped answers
+   NO/certainty-band answers fall through to generative (CONFIRMED);
+   abstain-shaped answers
    (malformed/missing probability) are rejected untrusted and fall through;
    per-candidate scoping holds (a YES for candidate A's n1 never settles
    candidate B); an update-shaped pair (same entity, new content) does NOT
@@ -397,8 +392,8 @@ The generative prompt builder (`buildOpsResolvePrompt`) is untouched.
 6. Receipts (§6): a classifier-settled NOOP emits EXACTLY ONE existing
    `fact_deduplicated` diagnostic with `detail.reason: 'classifier'`
    (via `ops/index.ts`'s pass-level DiagnosticBuffer); zero NEW diagnostic
-   codes and zero `LibrarianResult` surface change asserted (counters only
-   if Q6b rules for them); ops apply applies settled `ResolvedOp`s
+   codes and zero `LibrarianResult` surface change asserted (both RULED
+   OUT); ops apply applies settled `ResolvedOp`s
    identically.
 7. Red-first TDD throughout; full core suite green (baseline at
    `206936cc` — re-measure at lane open; step 10 landed at 255 files /
