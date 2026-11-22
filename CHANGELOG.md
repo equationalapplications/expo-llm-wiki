@@ -1,3 +1,16 @@
+## [9.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.11.0...v9.12.0) (2026-11-22)
+
+### Features
+
+* **core:** step-10 wave 1 — edges site, resolvers, config tests ([06b282b](https://github.com/equationalapplications/expo-llm-wiki/commit/06b282b6c100c49c9eb015f35a253729c8a07619))
+* **core:** step-10 wave 2 — exports, edge-screen plumbing, compat pins, question map ([dd4c0a4](https://github.com/equationalapplications/expo-llm-wiki/commit/dd4c0a49fd6a41066b5e105b70afe0d01b0ef812))
+* **core:** step-10 wave 3 — band scoring, retry-once, escalation gate (tasks 9-12) ([849c94e](https://github.com/equationalapplications/expo-llm-wiki/commit/849c94e4675727c67e91d924fadf06abe86a5c2c))
+
+### Bug Fixes
+
+* **core:** CodeRabbit close-out — prototype-free candidate map, committed counters on off-branch ([f5abac6](https://github.com/equationalapplications/expo-llm-wiki/commit/f5abac69f51c2ce59144f94f82a427cb08671c5b))
+* **core:** step-10 close-out — retarget-race guard, warn scope, trims ([9bff529](https://github.com/equationalapplications/expo-llm-wiki/commit/9bff5293694e91bd6b5e61de884d1569a7ab9e87))
+
 ## [9.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.10.0...v9.11.0) (2026-11-22)
 
 ### Features
