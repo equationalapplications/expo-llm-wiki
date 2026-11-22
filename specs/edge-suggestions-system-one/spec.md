@@ -40,7 +40,7 @@ and fenced `edges (PR 3)` out of S1-0 (`spec.md:265-272`). No
   `OntologyService.resolveEdges`
   (`packages/core/src/services/OntologyService.ts:157-212` —
   `type_not_in_manifest`, `target_not_found`, `target_type_mismatch`,
-  `no_source_type`), drops surfaced as `edge_drop` diagnostics; persistence
+  `no_source_type`), drops surfaced as `edge_dropped` diagnostics; persistence
   is additive via `addIgnoreDuplicate` (`OntologyService.ts:214-237`).
 - Other edge-producing sites (ingest `IngestionService.ts:217-218`,
   `:876`, `:953-963`; librarian ops `extract.ts:271` → `apply.ts:108-240`;
@@ -87,31 +87,52 @@ via the existing `warnOnce` helper), so the default `true` applies.
 
 ### 3. The gate wires into the generative backfill apply path only
 
-In `_applyOntologyBackfillBatch`, resolve the gate once per pass (passed in
-from `doRunOntologyBackfill`, beside the typing-chain resolution at
-`MaintenanceService.ts:2165`). When gated off, the classification's
+In `_applyOntologyBackfillBatch`, resolve the gate once per pass in
+`doRunOntologyBackfill` (beside the typing-chain resolution at
+`MaintenanceService.ts:2165`) and plumb it EXPLICITLY —
+`_applyOntologyBackfillBatch` has two callers, the generative one at
+`:2379` (`writer 'llm'`) and
+the classifier one at `:2573-2579` (`writer 'classifier'`), so a defaulted
+parameter would silently gate or ungate the wrong path. The gate rides
+`runOpts` (whose required fields are asserted at `:2269-2279`): add the
+field at BOTH `_runGenerativeBackfill` call sites — the first pass
+(`:2231-2238`) and the escalation leg (`:2201-2209`) — or a gated-off
+escalated fact would still write edges. No `doRunOntologyBackfill` direct
+call exists. (The classifier caller passes no edge gate under the current
+boolean design; its role may change with open question B1/2's ruling.)
+When gated off, the classification's
 `edges` field is treated as absent at the `validateAndNormalizeFact` call
 (`MaintenanceService.ts:2734` — pass `edges: undefined` instead of the
 cast), so `pendingEdges` never gains entries (`:2719`, `:2779-2781`),
 `resolveAndPersistEdges` is never reached for that fact (`:2786-2790`), and
-no `edge_drop` diagnostics fire for suppressed edges (nothing was
+no `edge_dropped` diagnostics fire for suppressed edges (nothing was
 validated). Everything downstream — typing, receipts, counters — is
 untouched. The classifier path (`MaintenanceService.ts:2469`, no edges) is
 unaffected by construction.
 
 ### 4. Suppression receipts
 
-When the gate is off and a classification carried a non-empty `edges` array,
-emit one `edge_suggestion_suppressed` diagnostic per fact — content-free:
+When the gate is off and a classification carried a proposed-edges payload —
+`Array.isArray(classification.edges) && classification.edges.length > 0`
+(the field is typed `unknown` at the parse site, `:2344`) — emit one
+`edge_suggestion_suppressed` diagnostic per fact — content-free:
 `{ factId }` only — riding the existing diagnostic buffer pattern
-(`MaintenanceService.ts:2746-2755` door-receipt precedent). The receipt
-fires on the model's suggestion, independently of the fact's subsequent
-typing outcome: a gated-off fact whose `okf_type` fails validation (the
-`!normalized.okf_type` continue at `:2754-2757`) or that is omitted as
-concurrently typed (`:2763-2766`) still receipts the suppression — the
-receipt region executes before both continue paths. When the gate is on,
-or the model supplied no edges, no receipt fires. New code added to
-`WikiDiagnosticCode` with a fixed severity (S1-0 §7 pattern). Both
+(`MaintenanceService.ts:2746-2755` door-receipt precedent). A non-array
+`edges` value is invalid input, not a suppressed suggestion: it takes no
+receipt and flows to the existing `edge_dropped` validation path unchanged.
+The receipt fires on the model's suggestion, independently of the fact's
+subsequent typing outcome: a gated-off fact whose `okf_type` fails
+validation (the `!normalized.okf_type` continue at `:2754-2757`) or that is
+omitted as concurrently typed (`:2763-2766`) still receipts the suppression
+— the receipt region executes before both continue paths. The earlier
+unknown-or-duplicate-id continue (`:2723-2726`) comes BEFORE the receipt
+region and gets no receipt: a classification whose fact cannot be matched
+dropped nothing that existed. When the gate is on, or the model supplied no
+edges payload, no receipt fires. New code `edge_suggestion_suppressed`
+added to `WikiDiagnosticCode` with fixed severity `'info'` (a config-driven
+omission notice, not a failure) and the fixed message template
+`'A model-suggested edge was suppressed by the systemOne.edges gate.'`
+(S1-0 §7 pattern). Both
 `SEVERITY` and `MESSAGE` in `packages/core/src/utils/diagnostics.ts` are
 exhaustive `Record<WikiDiagnosticCode, …>` maps (`diagnostics.ts:18`,
 `:73`), so the new code requires an entry in **both** (fixed message
@@ -223,13 +244,13 @@ Vitest, beside the existing backfill tests:
 1. Resolver: unset/undefined → `true`; explicit `false` → `false`; explicit
    `true` → `true`; non-boolean warns once and resolves `true`.
 2. Gated off: a classification carrying valid edges produces no
-   `pendingEdges`, no persisted edges, no `edge_drop` diagnostics, and one
+   `pendingEdges`, no persisted edges, no `edge_dropped` diagnostics, and one
    `edge_suggestion_suppressed { factId }` receipt; typing and
    `node_type_assigned` receipts unchanged.
 3. Gated off, no edges supplied: no suppression receipt (receipt fires only
    when the model proposed edges).
 4. Gated on / unset: byte-identical to the pre-PR baseline — same persisted
-   edges, same `edge_drop` diagnostics, no new receipts.
+   edges, same `edge_dropped` diagnostics, no new receipts.
 5. Escalation: under `onLowConfidence: 'llm'` with the gate off, escalated
    facts typed by the generative step propose no edges and receipt the
    suppression (open question 4's recommended behavior, pinned as the
@@ -250,3 +271,6 @@ Vitest, beside the existing backfill tests:
 10. Vocabulary: `ontologyReceiptVocabulary.test.ts` extends both its code
    list and its severity assertions with `edge_suggestion_suppressed`
    (fixed message template present — REQ-DIAG-03).
+11. Gated off, unmatched classification: a classification whose `id` matches
+    no batch fact (the `:2723-2726` continue) emits NO suppression receipt —
+    the receipt region is never reached for it (§4 ordering pin).
