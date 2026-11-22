@@ -14,6 +14,7 @@ import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { formatConfigValue, resolveLibrarianStrategy, resolveMaintenanceMode, resolveShortlistK, resolveSystemOneTyping, resolveTypingMinConfidence, warnOnce } from '../utils/engineDefaults';
 import { resolveContextBudget, resolveMaxPromptChars } from '../config/context';
+import { ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError, WikiBusyError } from '../types';
 import { WikiExternalDeletionError } from '../types';
@@ -48,7 +49,8 @@ import { FUZZY_THRESHOLD, MIN_TOKENS_TO_QUALIFY } from './librarian/constants';
 import { runLibrarianStrategy, type LibrarianContext, type LibrarianResult } from './librarian';
 
 export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
-export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
+// Moved to `utils/contextCaps` (specs/backfill-cap-context-budget change 1); re-exported to preserve the public surface.
+export { ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
