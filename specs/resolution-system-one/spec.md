@@ -1,6 +1,6 @@
 # Spec — Step 11: Resolution from System-One
 
-Status: **Approved by owner** — rulings 2026-11-22, Discord msg
+Status: **Implemented (PR #461)** — owner rulings 2026-11-22, Discord msg
 `1574134804725760061` ("As recommended across the board… Consider this your
 formal ruling. Lock the spec, generate the Tier-3 plan, and proceed to the
 implementer wave."). All 8 open questions resolved as recommended (see
@@ -256,7 +256,7 @@ would otherwise be unauditable — the data-loss outcome the roadmap's
 "receipts and counters make these moves auditable" line
 (`docs/ROADMAP.md:197-199`) exists to prevent. Emission goes through the
 pass-level DiagnosticBuffer in `ops/index.ts` (the same buffer
-`runResolve`'s overflow skips are buffered into, `resolve.ts:100-103`).
+`runResolve`'s overflow skips are buffered into, `resolve.ts:199-203`).
 `LibrarianResult` (`librarian/types.ts:109-116`) gains nothing —
 step 10 added NO pass-result counters, so a counter
 addition here would be new public surface and is RULED OUT (Q6b, ruling
