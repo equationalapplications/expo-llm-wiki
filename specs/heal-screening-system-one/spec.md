@@ -467,16 +467,18 @@ hosts under the §5 emission condition (PENDING open question 8 — if
 OQ8 resolves that receipts fire in EVERY mode, default hosts DO gain
 `heal_deleted`/`heal_downgraded` receipts, and this claim narrows to
 "no receipts beyond the OQ8-mandated ones"); the `HealResult` shape
-gains the additive OPTIONAL §6 fields on every host. Test-churn budget: because the new fields are optional, existing
+gains the additive OPTIONAL §6 fields on every host.
+
+Test-churn budget: because the new fields are optional, existing
 `HealResult` literals (in-repo and host mocks) keep compiling
 unchanged; the `toEqual` churn on in-repo assertions that compare whole
 result objects REMAINS and must be updated in the same PR. No
 `BREAKING CHANGE` footer either way — that determination needs a
 ruling (per AGENTS.md).
-The
-`minConfidence.healScreen` key present with NO `healScreen: 'auto'` is
-dead surface by construction only under `'llm'` — but unlike the edges
-"dead config" footgun, the `'auto'` consumer exists in the same PR
+
+A `minConfidence.healScreen` key present with NO
+`healScreen: 'auto'` has no effect — but unlike the edges "dead
+config" footgun, the `'auto'` consumer exists in the same PR
 (§3), so setting both keys is the one-step engagement. Capability alone
 never switches paths (REQ-COMPAT-01.5, `types.ts:812`). Engaging the
 screen requires the host to set BOTH `systemOne.healScreen: 'auto'`
@@ -589,7 +591,7 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    (`orphanAfterDays`, `staleInferredAfterDays`, `types.ts:360-361`)
    whose ids are already fully enumerated in the §6 changed-id lists
    (`allDowngraded`/`allDeleted` unions,
-   (`MaintenanceService.ts:2085-2086`), so receipting them would add
+   `MaintenanceService.ts:2085-2086`), so receipting them would add
    diagnostic surface (a second receipt per SQL-passed fact, quantity
    unmeasured) for facts the host's own clock decided; the receipts'
    job is making MODEL moves auditable against the forget-ruling
@@ -616,8 +618,8 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    `MaintenanceService.ts:2005-2018`); re-LLMing the same below-floor
    fact every run re-opens the per-run cost and queue-starvation
    concerns the stamp exists to bound, and the withhold is already
-   visible via its `'below_floor'` receipt. Grounds: `:2019-2023`,
-   `:89`, §4 as amended.
+   visible via its `'below_floor'` receipt. Grounds:
+   `MaintenanceService.ts:2019-2023`, `:89`, §4 as amended.
 6. Should the `{id, confidence}` response schema go to ALL hosts (single
    `HEAL_SYSTEM_PROMPT`, parse normalizes in every mode) or be
    mode-conditional (`'llm'` hosts keep today's prompt text)?
