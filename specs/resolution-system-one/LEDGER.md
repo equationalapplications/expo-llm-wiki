@@ -11,11 +11,11 @@ lane worktree** (code-identical to `206936cc`; lane commits are docs-only).
 - [x] 2. Config surface: `'resolve'` site member and `resolve` key — evidence: commit `aa0db68c` (RED not type-observable: tsconfig `include: ["src"]` excludes tests — controller-accepted deviation, noted by implementer)
 - [x] 3. Mode resolver `resolveSystemOneResolve` — evidence: commit `aa0db68c`; RED 4×TypeError → GREEN (systemOneConfig.test.ts 54 passing)
 - [x] 4. Floor resolver `resolveResolveMinConfidence` — evidence: commit `aa0db68c`; RED 5×TypeError → GREEN (engineDefaults.test.ts 19 passing)
-- [ ] 5. The prologue `screenResolveCandidates` (D3, D5 RESOLVED — unheld) — evidence: <commit, test run, or log link>
-- [ ] 6. Wire the prologue into `runResolve` (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
-- [ ] 7. Receipt emission loop in `ops/index.ts` (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
+- [x] 5. The prologue `screenResolveCandidates` (D3, D5 applied) — evidence: commit `11a11b4b`; RED 16 failed → GREEN opsResolve 25/25; budget-exhaustion → budgetStop verified at prologue AND runResolve level (extra coverage)
+- [x] 6. Wire the prologue into `runResolve` (D2 applied) — evidence: commit `11a11b4b`; byte-identity cases green (no key / llm / classify-without-key = no LLM args change, zero classifier calls); classifierSettled recorded; deviation ACCEPTED: no duplicate no-floor warnOnce (resolver already warns once per process)
+- [x] 7. Receipt emission loop in `ops/index.ts` (D2 applied) — evidence: commit `11a11b4b`; RED 0 receipts vs expected 1 → GREEN; loop after overflowSkipped, before budgetStop check
 - [x] 8. Public exports — evidence: commit `aa0db68c`; exactly 2 added lines; `screenResolveCandidates` asserted absent from index
-- [ ] 9. Pass-level tests (D2 RESOLVED — unheld) — evidence: <commit, test run, or log link>
+- [x] 9. Pass-level tests (D2 applied) — evidence: commit `11a11b4b`; new `__tests__/opsResolveSystemOne.test.ts` 9/9; zero-new-codes fixed-list assertion; pass-result keys audited; keyword-mode screen case green
 - [ ] 10. Invariant audit — evidence: <commit, test run, or log link>
 - [ ] 11. Suite health — evidence: <commit, test run, or log link>
 - [ ] 12. Cleanup commit (D1 RESOLVED — roadmap mark lands in this PR) — evidence: <commit, test run, or log link>
