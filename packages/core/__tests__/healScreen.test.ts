@@ -174,6 +174,34 @@ describe('screen seam (§4)', () => {
   });
 });
 
+describe('withheld delete plus paired restatement (§4 disclosure, item 13)', () => {
+  it('restatement is deduped against the surviving fact; X stays live, no row inserted', async () => {
+    const { db, wiki, diags } = await make(
+      {
+        downgraded: [],
+        deleted: [{ id: 'f1', confidence: 0.4 }],
+        newFacts: [{ title: 'Alice prefers dark roast coffee', body: 'restated', tags: [], confidence: 'inferred' }],
+      },
+      AUTO(0.7),
+      ['f1'],
+    );
+    await db.runAsync(`UPDATE ${PREFIX}entries SET title = ? WHERE id = 'f1'`, ['Alice prefers dark roast coffee']);
+    const before = (await db.getAllAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PREFIX}entries`))[0].n;
+    const del = vi.spyOn(EntryRepository.prototype, 'softDeleteByIds');
+    const r = await wiki.runHeal('e1');
+    expect(del.mock.calls[0][0]).not.toContain('f1');
+    expect(r.deletedIds).toEqual([]);
+    expect((await live(db, 'f1')).deleted_at).toBeNull();
+    const rc = receipts(diags);
+    expect(rc).toHaveLength(1);
+    expect(rc[0].code).toBe('heal_deleted');
+    expect(rc[0].detail).toMatchObject({ factId: 'f1', reason: 'below_floor' });
+    expect(diags.filter((d) => d.code === 'fact_deduplicated')).toHaveLength(1);
+    const after = (await db.getAllAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${PREFIX}entries`))[0].n;
+    expect(after).toBe(before);
+  });
+});
+
 describe('receipts and id lists (§5, §6)', () => {
   it("'auto' + floor 0.7, verdicts 0.8/0.9: applied receipts, lists carry ids", async () => {
     const { wiki, diags } = await make({ downgraded: [{ id: 'f1', confidence: 0.8 }], deleted: [{ id: 'f2', confidence: 0.9 }], newFacts: [] }, AUTO(0.7));

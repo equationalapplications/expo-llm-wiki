@@ -99,9 +99,27 @@ createWiki(db, {
 | `systemOne.minConfidence.typing` | `0.5` | Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Wins over `ontology.classifyMinConfidence` |
 | `systemOne.edges` | `'llm'` | Requires `systemOne.typing: 'auto'`; otherwise inert. Edge-suggestion mode for the ontology backfill: `'auto'` has `llmProvider.classify` screen per-fact edge questions; `'llm'` leaves edges to `generateText`. Under `'auto'` an explicit `systemOne.minConfidence.edges` is required — if it is missing, a one-time warning is logged and edges resolve `'llm'`. Uncertain or invalid edge answers fall through to the generative step |
 | `systemOne.minConfidence.edges` | none (required under `edges: 'auto'`) | Confidence floor for classifier edge answers. Finite, in [0.5, 1]; missing or out-of-domain warns once and the site resolves `'llm'`. A confident "yes" (`p > 0.5` and `p ≥ floor`) applies the edge; a confident "no" (`p < 0.5` and `1 − p ≥ floor`) is terminal; anything else, including `p = 0.5`, falls through to the generative step |
+| `systemOne.healScreen` | `'llm'` | Heal screen mode: `'auto'` withholds model-directed heal deletes and downgrades whose reported `confidence` is below `systemOne.minConfidence.healScreen`. Both keys are required to engage; without the floor, heal resolves `'llm'` and applies every admitted verdict. No `'off'` mode |
+| `systemOne.minConfidence.healScreen` | none (required under `healScreen: 'auto'`) | Confidence floor for heal verdicts. Finite, in [0.5, 1]; no default floor. A verdict with no valid `confidence` is applied and counted as unscreened. A withheld verdict leaves the fact unchanged and emits a `heal_deleted` / `heal_downgraded` receipt with reason `'below_floor'` |
 | `systemOne.onLowConfidence` | `'leave'` | `'llm'` escalates classifier low-confidence and abstain outcomes to the generative step of the same pass. A cost/quality setting, not a safety mechanism — it cannot catch a confidently wrong classifier. No-op when typing resolves `'llm'` |
 
 Invalid values for these keys warn once (distinct `[core-llm-wiki] systemOne:` prefix) and are treated as unset.
+
+### Heal clocks and auditability
+
+Heal's moves are auditable only while your retention clocks keep the evidence. These are the knobs a host sets:
+
+- `orphanAfterDays`: unset means 30 days (not disabled); `null` disables the orphan pass.
+- `staleInferredAfterDays`: unset means 60 days (not disabled); `null` disables the stale-inferred pass.
+- `pruneEventsAfter` and `pruneRetainSoftDeletedFor`: how long receipt diagnostics and soft-deleted rows survive. Guidance, not a requirement: to keep a `'below_floor'` receipt auditable across the 7-day heal recheck window (`HEAL_RECHECK_MS`), keep `pruneEventsAfter` at 7 days or more. Retention itself remains host policy.
+- `pruneSupersededAfter`: the superseded-history clock. It defaults to `null`, which keeps history forever.
+- `event_retention_held`: the diagnostic emitted when retention holds a write.
+
+Heal may forget when the host runs it (owner ruling, 2026-11-20). Auditability of heal is bounded by your retention clocks: set `pruneEventsAfter` and `pruneRetainSoftDeletedFor` long enough to cover your audit window, or heal's moves (and their receipts) forget themselves.
+
+A `prompts.healSystemPrompt` override replaces the default prompt, including its `{ "id", "confidence" }` entry schema. If your override still returns bare id strings, the screen cannot gate those verdicts: they are applied and a one-time warning names `healSystemPrompt`.
+
+Withheld delete plus restatement: if heal deletes a fact and restates it in `newFacts`, and the delete is withheld as `'below_floor'`, the fact stays live and the restatement is skipped as a duplicate (`fact_deduplicated`). The correction is dropped; the `'below_floor'` receipt plus the dedupe diagnostic make that auditable.
 
 ## Prompts
 

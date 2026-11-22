@@ -423,7 +423,7 @@ export interface WikiConfig {
    * System-One config surface (specs/system-one-config §1): typing mode,
    * per-site confidence floor, and low-confidence routing. Resolution chains
    * live in `utils/engineDefaults.ts` (`resolveSystemOneTyping`,
-   * `resolveTypingMinConfidence`).
+   * `resolveTypingMinConfidence`, `resolveSystemOneHealScreen`, `resolveHealScreenMinConfidence`).
    */
   systemOne?: SystemOneConfig;
   /** Default node cap for traverseGraph(), unless overridden per-call. Default 20. */

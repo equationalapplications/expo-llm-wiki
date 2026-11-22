@@ -1706,6 +1706,15 @@ export class MaintenanceService {
    * `result.remaining > 0` for convergence — see {@link HealResult.remaining}
    * for what convergence means here, and for the no-progress flags
    * (`searchUnavailable`, `budgetStop`) a loop must also stop on.
+   *
+   * Heal screen (`systemOne.healScreen: 'auto'` + `minConfidence.healScreen`):
+   * a model-directed delete or downgrade whose valid `confidence` is below the
+   * floor is withheld from every reader (apply, sync, removals, counts, id
+   * lists); a missing or invalid confidence is applied unscreened. Each
+   * model-directed move emits a `heal_deleted` / `heal_downgraded` receipt
+   * after commit (`applied`, `applied_unscreened`, or `below_floor`), in every
+   * mode. A withheld delete paired with a restating `newFact` leaves the fact
+   * live and the restatement is skipped as `fact_deduplicated`.
    */
   async doRunHeal(
     entityId: string,

@@ -42,11 +42,11 @@ Wave 2
 - [x] T2.3 Mode/floor resolution + applied-set seam. `healScreen.test.ts` `screen seam` describe; full vitest run passes
 - [x] T2.4 Receipts + changed-id lists + `toEqual` churn. Churned files: `__tests__/healBounding.test.ts` (the no-candidates `toEqual` gained `downgradedIds: [], deletedIds: []`). Keyword-outage early-return test added. Wave-2 vitest: files 256 / tests 3045 passed (baseline 3024 after wave 1 + 21 new); `pnpm -r typecheck` clean. G-fence git diff NOT run by the implementer (git diff needs approval in this rung): controller to run.
 
-Wave 3
-- [ ] T3.1 Withheld delete + paired restate test
-- [ ] T3.2 Clock-set docs + doc test
-- [ ] T3.3 Docstrings, `types.ts:403-409`, ROADMAP Done line, spec Status
-- [ ] T3.4 Bench AFTER + PR-body table
+Wave 3 exit G-full: vitest files 257 / tests 3054 passed (wave 2: 256 / 3045; +1 file, +9 tests = 1 scenario + 8 doc cases); `pnpm -r typecheck` 0 errors
+- [x] T3.1 Withheld delete + paired restate test. `healScreen.test.ts` describe `withheld delete plus paired restatement`; `healScreen.test.ts` 22/22 passed
+- [x] T3.2 Clock-set docs + doc test. Docs: `reference/configuration.md` (new `### Heal clocks and auditability` + two `systemOne` rows), `guides/maintenance.md` (Heal paragraph). Doc test `packages/core/__tests__/healScreenDocs.test.ts` (8 cases). `pnpm --filter ./apps/docs build`: 55 pages built
+- [ ] T3.3 Docstrings, `types.ts` resolver list, ROADMAP Done line, spec Status. Done: `doRunHeal` header, `types.ts:425-426` one added clause (pin `:403-409` had drifted to 422-427). NOT done: ROADMAP Done line (needs merge date + PR number, which do not exist yet) and spec Status flip (controller cleanup commit after PR exists)
+- [ ] T3.4 Bench AFTER + PR-body table. Not run: needs `--yes` spend approval from the controller
 
 Wave 4 (gated on PR #461 resolving)
 - [ ] T4.1 Rebase onto post-#461 `main`
