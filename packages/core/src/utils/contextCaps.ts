@@ -1,7 +1,8 @@
 /**
- * Leaf constant module for the context-budget caps (specs/context-budget T3).
+ * Leaf constant module for the context-budget caps (specs/context-budget T3;
+ * the ontology-backfill cap joined via specs/backfill-cap-context-budget).
  *
- * The five cap values moved here from their service modules because the
+ * The per-op cap values moved here from their service modules because the
  * resolver (`config/context.ts`) must read them without a load-order cycle
  * (`MaintenanceService` → `librarian` → `ops/*` → `config/context` →
  * `MaintenanceService`) and `OPS_RESOLVE_MAX_PROMPT_CHARS` was not exported
