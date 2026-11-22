@@ -17,6 +17,7 @@ describe('heal screen docs (spec §7, item 11)', () => {
 
   it('carries the heal-may-forget ruling line', () => {
     expect(doc).toContain('Heal may forget when the host runs it');
-    expect(doc).toContain('or heal\'s moves (and their receipts) forget themselves');
+    expect(doc).toContain("or heal's moves forget themselves");
+    expect(doc).toContain('not written to the event table');
   });
 });

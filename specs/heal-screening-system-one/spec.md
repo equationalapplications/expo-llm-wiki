@@ -426,16 +426,19 @@ today (pins §7):
   (`MaintenanceService.ts:1736`); `null` disables the pass. Unset does
   NOT mean disabled.
 - `pruneEventsAfter` (`types.ts:350`) / `pruneRetainSoftDeletedFor`
-  (`types.ts:351`) — the event and soft-delete retention clocks: a
-  receipt diagnostic (`heal_deleted`/`heal_downgraded` are diagnostics)
-  and a soft-deleted row are both retained only as long as these knobs
-  allow. Guidance, not a requirement: to keep a `'below_floor'`
-  receipt auditable across the full `HEAL_RECHECK_MS` window (7 days,
-  `MaintenanceService.ts:89`), a host's `pruneEventsAfter` should be
-  at least 7 days — the relationship is disclosed here; retention
-  itself remains host policy (`specs/expire/spec.md:151-152`);
-  `event_retention_held` (`types.ts:942`) is the visibility hook when
-  retention holds a write.
+  (`types.ts:351`) — the event and soft-delete retention clocks.
+  AS-LANDED CORRECTION (2026-11-22, CodeRabbit review): the guidance below
+  about keeping `pruneEventsAfter` ≥ 7 days for receipt auditability is
+  SUPERSEDED — heal receipts reach only the host's `onDiagnostic` hook
+  (`DiagnosticBuffer.flush` → `emitDiagnostic`,
+  `utils/diagnostics.ts:245-249`); they are NOT event-table rows, so
+  `pruneEventsAfter` does not retain them. Receipt persistence is the
+  host's diagnostic-storage choice. Original (superseded) guidance: to
+  keep a `'below_floor'` receipt auditable across the full
+  `HEAL_RECHECK_MS` window (7 days, `MaintenanceService.ts:89`), a host's
+  `pruneEventsAfter` should be at least 7 days; retention itself remains
+  host policy (`specs/expire/spec.md:151-152`); `event_retention_held`
+  (`types.ts:942`) is the visibility hook when retention holds a write.
 - `pruneSupersededAfter` (`types.ts:352-357`, default null = keep
   history forever) — the superseded-history clock.
 

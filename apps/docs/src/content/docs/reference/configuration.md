@@ -111,15 +111,15 @@ Heal's moves are auditable only while your retention clocks keep the evidence. T
 
 - `orphanAfterDays`: unset means 30 days (not disabled); `null` disables the orphan pass.
 - `staleInferredAfterDays`: unset means 60 days (not disabled); `null` disables the stale-inferred pass.
-- `pruneEventsAfter` and `pruneRetainSoftDeletedFor`: how long receipt diagnostics and soft-deleted rows survive. Guidance, not a requirement: to keep a `'below_floor'` receipt auditable across the 7-day heal recheck window (`HEAL_RECHECK_MS`), keep `pruneEventsAfter` at 7 days or more. Retention itself remains host policy.
+- `pruneEventsAfter` and `pruneRetainSoftDeletedFor`: how long event rows and soft-deleted rows survive. Heal receipts (`heal_deleted`, `heal_downgraded`) are delivered only through your `onDiagnostic` hook and are not written to the event table, so `pruneEventsAfter` does not affect them — receipt persistence depends on how your host stores diagnostics. Retention itself remains host policy.
 - `pruneSupersededAfter`: the superseded-history clock. It defaults to `null`, which keeps history forever.
 - `event_retention_held`: the diagnostic emitted when retention holds a write.
 
-Heal may forget when the host runs it (owner ruling, 2026-11-20). Auditability of heal is bounded by your retention clocks: set `pruneEventsAfter` and `pruneRetainSoftDeletedFor` long enough to cover your audit window, or heal's moves (and their receipts) forget themselves.
+Heal may forget when the host runs it (owner ruling, 2026-11-20). Auditability of heal is bounded by your retention clocks and by how your host persists diagnostics: set `pruneEventsAfter` and `pruneRetainSoftDeletedFor` long enough to cover your audit window, or heal's moves forget themselves.
 
 A `prompts.healSystemPrompt` override replaces the default prompt, including its `{ "id", "confidence" }` entry schema. If your override still returns bare id strings, the screen cannot gate those verdicts: they are applied and a one-time warning names `healSystemPrompt`.
 
-Withheld delete plus restatement: if heal deletes a fact and restates it in `newFacts`, and the delete is withheld as `'below_floor'`, the fact stays live and the restatement is skipped as a duplicate (`fact_deduplicated`). The correction is dropped; the `'below_floor'` receipt plus the dedupe diagnostic make that auditable.
+Withheld delete plus restatement: if heal deletes a fact and restates it in `newFacts`, and the delete is withheld as `'below_floor'`, the fact stays live and the restatement may be skipped as a duplicate (`fact_deduplicated`) — the fuzzy dedupe runs only when both titles carry enough tokens to qualify, so a short-titled fact's restatement is not checked against it. When the dedupe does fire, the correction is dropped; the `'below_floor'` receipt plus the dedupe diagnostic make that auditable.
 
 ## Prompts
 

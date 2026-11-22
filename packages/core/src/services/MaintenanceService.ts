@@ -2046,6 +2046,9 @@ export class MaintenanceService {
           for (const existing of healFactsForDedupe) {
             // The query already restricts to librarian_inferred, so the
             // projected { id, title } rows carry everything the check needs.
+            // Note: a fact whose title has fewer than MIN_TOKENS_TO_QUALIFY
+            // tokens bypasses this check entirely (short titles are never
+            // dedupe-skipped) — the docs disclose this.
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
               if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {

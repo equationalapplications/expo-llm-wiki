@@ -82,8 +82,8 @@ model-directed deletes and downgrades below the floor. Independently of the scre
 every model-directed move emits a
 `heal_deleted` or `heal_downgraded` receipt. `HealResult` carries `deletedIds` and `downgradedIds`.
 Heal may forget when the host runs it (owner ruling, 2026-11-20): auditability is bounded by your
-retention clocks. Keep `pruneEventsAfter` at 7 days or more so `'below_floor'` receipts outlive the
-heal recheck window, and see
+retention clocks and by how your host persists diagnostics — heal receipts arrive only through
+`onDiagnostic` and are not event-table rows, so `pruneEventsAfter` does not retain them. See
 [Heal clocks and auditability](/expo-llm-wiki/reference/configuration/#heal-clocks-and-auditability)
 for the full clock set, the `healSystemPrompt` caveat, and the withheld-delete/restatement case.
 
