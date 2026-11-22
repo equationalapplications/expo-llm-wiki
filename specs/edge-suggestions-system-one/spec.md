@@ -1,7 +1,9 @@
 # Spec — Step 10: Edge suggestions from System-One
 
-Status: Draft 2026-11-22 — pending owner approval; owner ruling 2026-11-22
-msg 1574082000854188136 (reply '1' to the presented menu): **classifier-first** —
+Status: Approved by owner 2026-11-22 (Discord thread, msg `1574101104528986284`);
+all six open questions resolved — see Open questions (each carries its ruling).
+Implementation pending. Earlier owner ruling 2026-11-22 msg
+1574082000854188136 (reply '1' to the presented menu): **classifier-first** —
 the small classifier starts proposing/screening edges, gated by a confidence
 floor (`minConfidence.edges`, the exact shape S1-0 reserved) applied to the
 classifier's confidence in its per-edge ANSWER (directional, §3), with
@@ -109,7 +111,9 @@ Add to `SystemOneConfig` (`systemOne.ts:14-31`, beside `typing`):
 /**
  * Edge mode for ontology backfill. `'llm'` (default) keeps edge proposal
  * on the generative path exactly as today. `'auto'` engages the classifier
- * edge screen (§4) when the classifier step runs; answers at or above the
+ * edge screen (§4) when the classifier step runs AND an explicit
+ * `minConfidence.edges` floor is set (§3 — missing floor under `'auto'`
+ * warns once and the site resolves `'llm'`); answers at or above the
  * floor apply the edge, confident "no" answers are terminal, and facts
  * whose edge answers land in the uncertain band fall through to the
  * generative step of the same pass (§3, §5). There is no `'off'`: this PR
@@ -123,7 +127,12 @@ Resolution: `resolveSystemOneEdges(config)` in `engineDefaults.ts`, returning
 value warns once via the existing `warnOnce` helper
 (`engineDefaults.ts:89-93`) and is treated as unset — the S1-0 §2
 treated-as-unset contract, mirroring `resolveSystemOneTyping`
-(`engineDefaults.ts:122-152`). Rationale for reusing typing's exact
+(`engineDefaults.ts:122-152`). Posture A (owner ruling 2026-11-22, msg
+`1574101104528986284`): resolving `'auto'` alone does NOT engage the
+classifier screen — the site additionally requires the explicit
+`minConfidence.edges` floor (§3); missing floor → warnOnce naming the key
+and the site resolves `'llm'` (no classifier screen, generative edges
+unchanged). Rationale for reusing typing's exact
 vocabulary: capability alone never switches paths (`types.ts:808-815`),
 default `'llm'` keeps every host without the key byte-identical (§8), and
 one shared mental model covers both sites. No call option — edge mode is a
@@ -132,11 +141,19 @@ config-level stance, not per-call tuning. No `'off'`: see §7.
 ### 3. Floor `minConfidence.edges`
 
 Add `resolveEdgesMinConfidence(config)` in `engineDefaults.ts`:
-`systemOne.minConfidence.edges` → default `0.5` (same default constant
-discipline as typing, `engineDefaults.ts:174`); valid only in **[0.5, 1]**
+**posture A, per owner ruling (2026-11-22, msg 1574101104528986284): the
+key `systemOne.minConfidence.edges` is REQUIRED whenever `edges` resolves
+`'auto'`** — there is NO default floor (the default `'llm'` mode never
+reads one); a missing floor under `'auto'` warns once via the existing
+`warnOnce` helper (`engineDefaults.ts:89-93`), naming the key, and the
+site resolves `'llm'` (generative edges as today; no classifier screen) —
+because a 0.5 confidence on a binary classification is a coin toss and
+applied edges are permanent graph structures; the explicit floor protects
+graph integrity; valid only in **[0.5, 1]**
 — a deliberate divergence from `isConfidenceFloor`'s [0, 1] typing
-validator, see the Floor DOMAIN paragraph below; a present value outside
-[0.5, 1] warns once and is treated as unset). Floor semantics: the floor applies to the classifier's per-edge answer
+validator, see the Floor DOMAIN paragraph below; a missing value (when
+`'auto'`) or a present value outside [0.5, 1] warns once and the site
+resolves `'llm'`). Floor semantics: the floor applies to the classifier's per-edge answer
 CONFIDENCE, defined DIRECTIONALLY on the binary answer `{probability}`
 (`types.ts:832`; `p` is P(edge)) — mirroring typing's floor on the
 classifier's confidence in its answer (`:2538` uses strict `<`, so accept
@@ -162,26 +179,28 @@ Floor DOMAIN: the edges floor is valid only in **[0.5, 1]**. This
 deliberately diverges from the typing validator `isConfidenceFloor`
 (`engineDefaults.ts:112-113`, which accepts [0, 1]): below 0.5 the bands
 INVERT — "accept" would stop meaning "more likely yes than no", and a
-"confident no" zone could not exist. `resolveEdgesMinConfidence`
-therefore validates `[0.5, 1]`: a present value outside that range
-(including `0`) warns once via the existing `warnOnce` helper
-(`engineDefaults.ts:89`) and is TREATED AS UNSET — the S1-0 §2
-treated-as-unset contract, not a throw — and the default `0.5` applies
-(default constant discipline as typing, `engineDefaults.ts:174`;
-resolver shape mirrors `resolveTypingMinConfidence`,
+"confident no" zone could not exist — which is exactly why the domain
+cannot widen to [0, 1]. `resolveEdgesMinConfidence` therefore validates
+`[0.5, 1]`: a MISSING value (whenever `edges` resolves `'auto'`) or a
+present value outside that range (including `0`) warns once via the
+existing `warnOnce` helper (`engineDefaults.ts:89`) — naming the key —
+and the SITE RESOLVES `'llm'` (generative edges as today, no classifier
+screen; the S1-0 §2 warn-and-fallback contract applied at the site level,
+not a throw, and NOT a fallback to a default floor — there is NO default
+floor; resolver shape mirrors `resolveTypingMinConfidence`,
 `engineDefaults.ts:182`, minus the legacy chain). There is no legacy
 `ontology.*` chain for edges — none exists to preserve. This is the
 consumer the `'edges'` union member was reserved for; the old "dead
 config" footgun (a set `minConfidence.edges` with no reader) does not
 exist in this design.
 
-Default-reachability disclosure, stated plainly: with the default floor
-`0.5`, the fallthrough band is reachable only via answers at EXACTLY
-`p = 0.5` or invalid answers. The common uncertain case under a
-well-calibrated binary classifier is an answer NEAR 0 or 1, which the
-directional rule classifies confidently; the band exists for genuinely
-torn answers. Hosts who want a wider fallthrough band raise the floor.
-Disclosed plainly: this narrowness holds under ANY chosen default
+Default-reachability disclosure, stated plainly: the fallthrough band's
+width is set by the host's own floor. Under ANY explicit floor, a
+well-calibrated binary classifier's common uncertain case is an answer
+NEAR 0 or 1, which the directional rule classifies confidently; the band
+exists for genuinely torn answers. A host who wants a wider fallthrough
+band raises their floor. Disclosed plainly: this narrowness holds under
+ANY chosen floor
 (open question 5) — it is by construction, not a calibration claim —
 and the stakes are one-way: an edge is PERMANENT once applied
 (`addIgnoreDuplicate`, `OntologyService.ts:214-237`) and backfill only
@@ -538,7 +557,14 @@ path. Capability alone never switches paths (REQ-COMPAT-01.5,
 `types.ts:812`). This spec adds no call options, no prompt changes, no
 counter fields, and no scheduler changes. Engaging classifier edges requires
 the host to set BOTH `systemOne.typing: 'auto'` (so the classifier step
-runs at all, `MaintenanceService.ts:2167`) and `systemOne.edges: 'auto'`.
+runs at all, `MaintenanceService.ts:2167`) and `systemOne.edges: 'auto'`,
+PLUS an explicit `systemOne.minConfidence.edges` floor in [0.5, 1]
+(§3, posture A per the 2026-11-22 ruling) — a host that sets
+`edges: 'auto'` without a floor gets a one-time `warnOnce` naming the key
+and the site resolves `'llm'` (no classifier screen; generative edges
+exactly as today — no behavior loss vs. pre-PR), while hosts with no
+`systemOne` keys at all are byte-identical (default `'llm'` never reads a
+floor).
 Under `'llm'` (or any path with no edge questions in flight) the
 overflow retry is NEVER reached — requests without edge questions
 overflow exactly as today (§4, byte-identical). Disclosed: with edge
@@ -610,12 +636,20 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
   a separate channel from per-fact edges; this PR does not touch the
   backfill `ontology_updates` path.
 
-## Open questions for the owner
+## Open questions — ALL RESOLVED (owner rulings 2026-11-22)
+
+All six questions below were resolved by the owner's formal spec approval
+of 2026-11-22 (Discord thread, msg `1574101104528986284`); every
+recommendation was adopted. Questions and recommendations are kept for the
+record; each carries its ruling.
 
 1. Scope: does the classifier edge screen cover only the backfill site, or
    also ingest/librarian fact-edges? **Recommendation: backfill only** —
    the §10 fence and "runs first among the site conversions" both point
    there; the other sites are later conversions with their own specs.
+   **RULING (2026-11-22, msg 1574101104528986284): backfill site only,
+   strictly fenced — ingest/librarian edge conversions get their own spec
+   cycles.**
 2. Cost posture: with `edges: 'auto'`, only TARGET-side filtering happens
    pre-call — the pre-call screen keeps (edge-definition, candidate) pairs
    whose `target_type` the candidate's `okf_type` satisfies (§4; only
@@ -640,6 +674,9 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    added questions make the classify call overflow more likely, and the
    retry trades one extra classify call for typing continuity —
    revisit with data.
+   **RULING (2026-11-22, msg 1574101104528986284): no cost cap this PR —
+   overflow retry is the circuit breaker; wait for telemetry before
+   capping the question map.**
 3. `edges: 'auto'` when the classifier step never runs — typing resolves
    `'llm'`, the classify method is absent, or the manifest is
    sentinel-reserved/over-cap (`MaintenanceService.ts:2171-2175`):
@@ -648,6 +685,9 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    typing is generative? **Recommendation: inert** — one step, one pass,
    no second scheduling surface; a standalone screen is a later PR if
    hosts ask for it.
+   **RULING (2026-11-22, msg 1574101104528986284): confirmed inert —
+   `edges: 'auto'` + typing `'llm'` runs no standalone classifier edge
+   pass.**
 4. Per-fact fallthrough granularity (§5): a fact with any uncertain-band or
    invalid edge answer has BOTH its edges and its typing re-decided by the
    generative step. Confirm, or prefer per-edge fallthrough (classifier
@@ -657,6 +697,8 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
    **Recommendation: per-fact** — it is the step-11 wording, it reuses the
    escalation machinery verbatim, and per-edge would double the surface
    for a marginal recall gain.
+   **RULING (2026-11-22, msg 1574101104528986284): confirmed per-fact —
+   the generative step evaluates typing and edges holistically.**
 5. Default floor posture for `minConfidence.edges`: TWO postures, owner
    pick. Context, stated plainly: a default of `0.5` makes the gate as
    weak as possible — under the directional rule ANY `p > 0.5` applies
@@ -679,12 +721,22 @@ The classifier invariant "No edges are proposed" is no longer unconditional:
        unbenchmarked, so no number is asserted to be more accurate; a
        higher default merely narrows the applied band by construction,
        §3).
+   **RULING (2026-11-22, msg 1574101104528986284): posture (a) ADOPTED —
+   an explicit `minConfidence.edges` is REQUIRED whenever `edges: 'auto'`
+   is set; missing floor warns once and the site resolves `'llm'`; there
+   is NO default floor.** Rationale, quoted: a 0.5 confidence on a binary
+   classification is a coin toss, and applied edges are permanent graph
+   structures — the explicit floor protects graph integrity. This is now
+   THE DESIGN (§3).
 6. Escalated-typing facts (classifier abstain/low-confidence under
    `onLowConfidence: 'llm'`): their edge answers, though asked in the same
    call, are discarded and their edges come from the generative step.
    **Recommendation: confirm** — those facts fall through wholesale
    already (`:2547-2549`); honoring classifier edges for them would split
    a fact's writer, violating §5's one-writer rule.
+   **RULING (2026-11-22, msg 1574101104528986284): confirmed —
+   escalated-typing facts have their classifier edge answers discarded
+   entirely; no mixed-provenance facts.**
 
 ## Files touched
 
@@ -746,10 +798,15 @@ carried forward and re-pointed at the classifier-first design:
 
 1. Resolvers: `resolveSystemOneEdges` unset → `'llm'`; `'auto'`/`'llm'`
    pass through; invalid value warns once and resolves `'llm'`.
-   `resolveEdgesMinConfidence` unset → `0.5`; configured `0` or any value
-   outside [0.5, 1] warns once, is TREATED AS UNSET, and resolves `0.5`
-   (the edges floor deliberately does NOT reuse `isConfidenceFloor`'s
-   [0, 1] domain — §3); values in [0.5, 1] pass through.
+   `resolveEdgesMinConfidence` (posture A, §3): with `edges: 'auto'` and
+   NO configured floor → warns ONCE (naming the key
+   `systemOne.minConfidence.edges`) and the site resolves `'llm'` —
+   there is NO default floor (the default `'llm'` mode never reads one);
+   configured `0` or any value outside [0.5, 1] behaves identically:
+   warns once and the site resolves `'llm'` (no classifier screen, no
+   fallback to a default — the edges floor deliberately does NOT reuse
+   `isConfidenceFloor`'s [0, 1] domain — §3); explicit `0.5` (the
+   inclusive domain lower bound) is VALID and passes through as `0.5`;
 2. Classifier edge accepted: `typing: 'auto'` + `edges: 'auto'`,
    classifier answers typing + binary edge answers with a confident "yes"
    (`p > 0.5 && p ≥ floor`); the converted
@@ -759,7 +816,8 @@ carried forward and re-pointed at the classifier-first design:
    step's `edgesAdded` is nonzero.
 3. Uncertain-band fallthrough: an edge answer that is neither a confident
    "yes" (`p > 0.5 && p ≥ floor`) nor a confident "no"
-   (`p < 0.5 && 1−p ≥ floor`) — e.g. `p = 0.5` under the default floor —
+   (`p < 0.5 && 1−p ≥ floor`) — e.g. `p = 0.5` under an explicitly
+   configured floor `0.5` —
    sends the fact UN-stamped to the generative step of the
    same pass, which types and edges it; the merged result reports the
    summed `edgesAdded` (`MaintenanceService.ts:2215-2225`).
@@ -856,12 +914,15 @@ carried forward and re-pointed at the classifier-first design:
     last-typed win). In both shapes the pair never becomes a question
     and no `edge_dropped` is emitted for it (the pre-call screen
     composes with test 16's target_type filter; §4).
-18. Floor boundaries, directional (m1): an edge answer with `p = 0.5`
-    under the default floor falls through (neither band applies — accept
-    requires strict `p > 0.5`); a configured floor of `0.3` is REJECTED
-    (warn once, treated as unset, default `0.5` applies — [0.5, 1]
-    domain, §3); an answer at `p = 0.4` under floor `0.6` is a TERMINAL
-    confident-"no" (`1−0.4 = 0.6 ≥ 0.6`), not a fallthrough.
+18. Floor boundaries, directional (m1), with floors EXPLICITLY configured
+    (posture A — no default floor exists): an edge answer with `p = 0.5`
+    under an explicitly configured floor of `0.5` falls through (neither
+    band applies — accept requires strict `p > 0.5`); an answer at
+    `p = 0.4` under an explicitly configured floor `0.6` is a TERMINAL
+    confident-"no" (`1−0.4 = 0.6 ≥ 0.6`), not a fallthrough; and
+    `edges: 'auto'` with NO floor (or an out-of-domain floor, e.g. `0.3`)
+    warns once and the site resolves `'llm'` — the boundary cases run
+    only when a valid floor is explicitly present ([0.5, 1] domain, §3).
 19. Edge answers vs typing outcome (MAJOR 4): under
     `onLowConfidence: 'leave'` (default), a fact with
     low_confidence typing and an uncertain-band edge answer is STAMPED
