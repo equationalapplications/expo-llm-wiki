@@ -46,7 +46,7 @@ Wave 3 exit G-full: vitest files 257 / tests 3054 passed (wave 2: 256 / 3045; +1
 - [x] T3.1 Withheld delete + paired restate test. `healScreen.test.ts` describe `withheld delete plus paired restatement`; `healScreen.test.ts` 22/22 passed
 - [x] T3.2 Clock-set docs + doc test. Docs: `reference/configuration.md` (new `### Heal clocks and auditability` + two `systemOne` rows), `guides/maintenance.md` (Heal paragraph). Doc test `packages/core/__tests__/healScreenDocs.test.ts` (8 cases). `pnpm --filter ./apps/docs build`: 55 pages built
 - [ ] T3.3 Docstrings, `types.ts` resolver list, ROADMAP Done line, spec Status. Done: `doRunHeal` header, `types.ts:425-426` one added clause (pin `:403-409` had drifted to 422-427). NOT done: ROADMAP Done line (needs merge date + PR number, which do not exist yet) and spec Status flip (controller cleanup commit after PR exists)
-- [ ] T3.4 Bench AFTER + PR-body table. Not run: needs `--yes` spend approval from the controller
+- [x] T3.4 Bench AFTER + PR-body table. Free tier only (controller declined `--yes` spend both passes): `HEAL_SYSTEM_PROMPT` 505 → 664 chars (+159, +31.5%; sha pair `61c54728`→`80565aad`); supersession dry-run unchanged (25 scenarios / 150k estimate). Artifacts: `.sdd/step12/bench-after.json`, `.sdd/step12/pr-body.md`. Live heal-call runs not measured — PR body states this plainly and makes no accuracy claim (INTENT rule 11).
 
 Wave 4 (gated on PR #461 resolving)
 - [ ] T4.1 Rebase onto post-#461 `main`
