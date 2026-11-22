@@ -115,7 +115,7 @@ Heal's moves are auditable only while your retention clocks keep the evidence. T
 - `pruneSupersededAfter`: the superseded-history clock. It defaults to `null`, which keeps history forever.
 - `event_retention_held`: the diagnostic emitted when retention holds a write.
 
-Heal may forget when the host runs it (owner ruling, 2026-11-20). Auditability of heal is bounded by your retention clocks and by how your host persists diagnostics: set `pruneEventsAfter` and `pruneRetainSoftDeletedFor` long enough to cover your audit window, or heal's moves forget themselves.
+Heal may forget when the host runs it (owner ruling, 2026-11-20). Auditability of heal is bounded by your retention clocks and by how your host persists diagnostics: `pruneRetainSoftDeletedFor` keeps the soft-deleted rows heal's moves leave behind, `pruneEventsAfter` keeps the events heal reviewed (not heal's moves or receipts), and receipts survive only as long as your `onDiagnostic` sink stores them.
 
 A `prompts.healSystemPrompt` override replaces the default prompt, including its `{ "id", "confidence" }` entry schema. If your override still returns bare id strings, the screen cannot gate those verdicts: they are applied and a one-time warning names `healSystemPrompt`.
 

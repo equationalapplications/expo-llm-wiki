@@ -352,8 +352,12 @@ same way.
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
-visible. Today heal and the librarian report how many facts they forget
-or rewrite, not which; per-fact pass reports are planned. Today forget,
+visible. Today the librarian reports how many facts it forgets or
+rewrites, not which (per-fact librarian pass reports are planned);
+heal reports which: every model-directed move emits a per-fact
+receipt (`heal_deleted` / `heal_downgraded`, with `applied`,
+`applied_unscreened`, or `below_floor` reasons) and `HealResult`
+carries the changed-id lists. Today forget,
 prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
 canary-reproducible), which is why `erase()` exists and claims
@@ -462,6 +466,14 @@ break the erasure promise through the export door.
   agent gets the engine's best effort, while a host that wants human
   review will be able to build it from what the engine reports. Rule 12's
   four host verbs did not name these edits.
+- 2026-11-22 — Rule 12's promised per-fact pass-report sentence ships
+  with PR #463 (step 12): heal now emits a `heal_deleted` /
+  `heal_downgraded` receipt for every model-directed move (reasons
+  `applied`, `applied_unscreened`, `below_floor`) and returns the
+  changed-id lists on `HealResult`; rule 12's "today" line is updated
+  accordingly. Receipt persistence is the host's `onDiagnostic` sink,
+  not the event table (see PR #463's docs). The librarian's per-fact
+  pass report remains planned (step 13).
 - 2026-11-17 — Rules 12 and 13 are added, and the glossary gains
   Superseded, Forgotten, Gone and Erased. Owner spec stop A–H for
   issue #401 (forget must erase, `specs/forget-erasure/`): the owner

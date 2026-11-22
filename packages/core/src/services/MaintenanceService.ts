@@ -1732,8 +1732,6 @@ export class MaintenanceService {
     const batchSize = options?.batchSize ?? HEAL_BATCH_SIZE;
     const trigger: WikiDiagnosticTrigger = options?.trigger ?? 'call';
     const diagBase = { entityId, operation: 'heal' as const, trigger };
-    // Screening is engaged iff a floor resolves (resolved 'auto' + valid floor).
-    const healFloor = resolveHealScreenMinConfidence(this.options.config);
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error('Invalid batchSize: must be an integer >= 1');
     }
@@ -1742,6 +1740,11 @@ export class MaintenanceService {
     if (!Number.isInteger(bodyTruncationChars) || bodyTruncationChars < 1) {
       throw new Error('Invalid bodyTruncationChars: must be an integer >= 1');
     }
+
+    // Screening is engaged iff a floor resolves (resolved 'auto' + valid floor).
+    // Resolved after argument validation so a misconfigured call rejects before
+    // the warn-once can fire.
+    const healFloor = resolveHealScreenMinConfidence(this.options.config);
 
     const now = Date.now();
     const recheckCutoff = now - HEAL_RECHECK_MS;
@@ -1971,8 +1974,8 @@ export class MaintenanceService {
     // downstream reader (apply, sync, removals, counts, id lists). Missing
     // confidence applies (unscreened); below-floor is withheld. With no floor
     // the applied sets equal the guard sets exactly.
-    const withheldDowngraded = new Map<string, number | undefined>();
-    const withheldDeleted = new Map<string, number | undefined>();
+    const withheldDowngraded = new Map<string, number>();
+    const withheldDeleted = new Map<string, number>();
     let appliedDowngraded = safeDowngraded;
     let appliedDeleted = safeDeleted;
     if (healFloor !== undefined) {
@@ -2127,7 +2130,7 @@ export class MaintenanceService {
       code: 'heal_downgraded' | 'heal_deleted',
       applied: string[],
       confidences: Map<string, number>,
-      withheld: Map<string, number | undefined>,
+      withheld: Map<string, number>,
     ): void => {
       for (const factId of applied) {
         if (healFloor !== undefined && !confidences.has(factId)) {
@@ -2140,7 +2143,7 @@ export class MaintenanceService {
         diagBuffer.push({
           ...diagBase,
           code,
-          detail: { factId, reason: 'below_floor', ...(confidence !== undefined ? { confidence } : {}) },
+          detail: { factId, reason: 'below_floor', confidence },
         });
       }
     };

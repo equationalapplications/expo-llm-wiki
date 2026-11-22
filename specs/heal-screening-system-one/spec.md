@@ -10,9 +10,11 @@ open questions ruled as recommended. Draft 2026-11-22.
 > extension. Also, `HealResult` carries BOTH the counts and the id lists
 > (`deletedIds` / `downgradedIds`) side by side, notwithstanding §6's
 > "becomes" phrasing; both are populated by `doRunHeal` today.
-Base: branch `tessera/session1-laneA` @ `206936cc`. Every pin below re-verified
-live against this worktree (`.sdd/step12/pins-recon.md` is the pin report;
-line numbers match it except where this spec quotes the live file directly).
+Base: branch `tessera/session1-laneA` @ `206936cc`. Every pin below was
+re-verified live against this worktree at draft time; the controller's pin
+report is session-local (`.sdd/step12/pins-recon.md`, not tracked in the PR) —
+treat this spec's own citations as authoritative. Line numbers shifted with
+the step-11 merge and this PR's waves; symbol names are stable.
 Repo: expo-llm-wiki. Product rule: hosts bring their own models; core stays
 unopinionated about providers.
 
