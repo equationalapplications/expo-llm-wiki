@@ -314,6 +314,28 @@ describe('runOntologyBackfill', () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it('candidate sections: an invalid shortlistK throws at entry in classifier mode, before any typing is stamped', async () => {
+    const db = openTestDatabase();
+    const generateText = vi.fn<any>();
+    const classify = vi.fn(async () => ({
+      answers: { okf_type: { kind: 'choice', choice: 'person', confidence: 0.9, probabilities: { person: 0.9 } } },
+    }));
+    const wiki = createWiki(db, {
+      llmProvider: { generateText, classify },
+      config: { systemOne: { typing: 'auto', onLowConfidence: 'llm' }, ontology: { shortlistK: 1.5 } },
+    } as any);
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    await seedEntry(db, { id: 'fact_draft', title: 'Untyped Node' });
+    await expect(wiki.runOntologyBackfill('e1', { classifier: 'auto' })).rejects.toThrow(/shortlistK/);
+    expect(classify).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+    const typed = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries WHERE okf_type IS NOT NULL`);
+    expect(typed).toHaveLength(0);
+    const stamped = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries WHERE ontology_checked_at IS NOT NULL`);
+    expect(stamped).toHaveLength(0);
+  });
+
   it('candidate sections: runBatched still splits an oversized batch with sections present', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     await seedEntry(db, { id: 'fact_typed', title: 'Ada', okfType: 'person' });

@@ -163,7 +163,7 @@ export function buildCandidateSections(
     if (!rows || rows.length === 0) continue;
     sections.push(
       [
-        `CANDIDATE TARGETS for fact ${JSON.stringify(fact.id)}: typed nodes in this memory that may relate to it:`,
+        `CANDIDATE TARGETS for fact ${JSON.stringify(fact.id)}: typed nodes in this memory, ranked by title overlap:`,
         ...rows.map(formatCatalogLine),
       ].join('\n'),
     );

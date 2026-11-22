@@ -2121,6 +2121,10 @@ export class MaintenanceService {
       // a call-option typo is a caller bug, thrown not defaulted.
       throw new TypeError(`Invalid classifier option: ${JSON.stringify(options.classifier)} — must be 'auto' or 'llm'`);
     }
+    // Validated at entry like `classifier` (specs/backfill-shortlist-wiring §3):
+    // a bad `ontology.shortlistK` must throw before any typing or cooldown stamp
+    // is committed, whatever typing path or ontology mode the pass takes.
+    const shortlistK = resolveShortlistK(this.options.config);
     const trigger = options?.trigger ?? 'call';
 
     const now = Date.now();
@@ -2195,6 +2199,7 @@ export class MaintenanceService {
             trigger,
             batchSize: escalated.length,
             recheckCutoff,
+            shortlistK,
           });
           // Counter-merge: `scanned` is counted once by the classifier step
           // (escalated facts were already attempted there); the generative
@@ -2222,6 +2227,7 @@ export class MaintenanceService {
       meter: options?.meter,
       trigger,
       recheckCutoff,
+      shortlistK,
     });
   }
 
@@ -2253,9 +2259,13 @@ export class MaintenanceService {
   private async _runGenerativeBackfill(
     entityId: string,
     candidates: WikiFact[],
-    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number },
+    runOpts: { promptOverride?: string; meter?: UsageMeter; trigger: WikiDiagnosticTrigger; batchSize?: number; recheckCutoff: number; shortlistK: number },
   ): Promise<OntologyBackfillResult> {
     const batchSize = runOpts.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
+    const shortlistK = runOpts.shortlistK;
+    if (shortlistK === undefined) {
+      throw new Error('_runGenerativeBackfill: runOpts.shortlistK is required (resolved at doRunOntologyBackfill entry)');
+    }
 
     const ontologyService = this.ontologyService!;
     const now = Date.now();
@@ -2276,10 +2286,9 @@ export class MaintenanceService {
     // Facts typed in an earlier batch of the same pass are accepted targets
     // but are not listed (the rows are not re-read per batch). The wording
     // stays non-exclusive: same-batch targets remain valid. k is resolved
-    // once per pass and fails fast on a bad `ontology.shortlistK`. Shipped
-    // unbenchmarked (INTENT.md rule 11): no accuracy claim.
+    // once per pass at doRunOntologyBackfill entry (a bad `ontology.shortlistK`
+    // throws there). Shipped unbenchmarked (INTENT.md rule 11): no accuracy claim.
     const shortlistRows = await this.entryRepo.findShortlistRowsByEntityId(entityId);
-    const shortlistK = resolveShortlistK(this.options.config);
 
     // Payload guard: cap the full serialized prompt (system + user — manifest,
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
@@ -2293,6 +2302,10 @@ export class MaintenanceService {
     // halving) do not re-score the whole pool.
     const shortlistScorer = createShortlistScorer(shortlistRows);
     const shortlistCache = new Map<string, ReturnType<typeof buildShortlist>>();
+    // Note: when the prompt override carries `{{facts}}`/ontology placeholders,
+    // PromptService discards the candidate sections built here. The scoring is
+    // cheap and cached per pass (scorer + shortlistCache), so no guard is
+    // worth the divergence risk.
     const buildPrompt = (facts: WikiFact[]) => {
       const rowsByFact = new Map<string, ReturnType<typeof buildShortlist>>();
       for (const f of facts) {
