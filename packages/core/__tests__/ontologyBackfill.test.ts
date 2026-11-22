@@ -144,6 +144,23 @@ describe('EntryRepository — backfill methods', () => {
     ]);
   });
 
+  it('findShortlistRowsByEntityId returns live typed facts with body', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    const repo = makeRepo(db);
+    await seedEntry(db, { id: 's1', title: 'Alpha', body: 'Alpha body text', okfType: 'person' });
+    await seedEntry(db, { id: 's2', title: 'Beta', body: 'untyped body' });
+    await seedEntry(db, { id: 's3', title: 'Gone', body: 'deleted body', okfType: 'person', deletedAt: 5 });
+    const rows = await repo.findShortlistRowsByEntityId('e1');
+    expect(rows).toEqual([
+      { id: 's1', title: 'Alpha', okf_type: 'person', body: 'Alpha body text' },
+    ]);
+    // the title index keeps its original three-column shape
+    expect(await repo.findTitleIndexByEntityId('e1')).toEqual([
+      { id: 's1', title: 'Alpha', okf_type: 'person' },
+    ]);
+  });
+
   it('markOntologyChecked skips soft-deleted facts', async () => {
     const db = openTestDatabase();
     await setupDatabase(db, PREFIX);
