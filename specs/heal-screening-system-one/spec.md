@@ -1,6 +1,8 @@
 # Spec — Step 12: Heal screening from System-One
 
-Status: Draft 2026-11-22 — pending owner approval
+Status: Approved by owner 2026-11-22 (Discord thread `1570840529388965951`,
+msg `1574148740716175392`); all eight open questions resolved — see Open
+questions (each carries its ruling). Draft 2026-11-22.
 Base: branch `tessera/session1-laneA` @ `206936cc`. Every pin below re-verified
 live against this worktree (`.sdd/step12/pins-recon.md` is the pin report;
 line numbers match it except where this spec quotes the live file directly).
@@ -234,7 +236,7 @@ APPLIED sets only.
   discard rule; `newFacts` confidence is the existing
   `certain|inferred|tentative` enum (`prompts.ts:46`), not a number.
 - Screen plumbing (in the widened parse of open question 1, per its
-  recommendation (a)):
+  ruling (a)):
   1. Confidence validation AND the `Map<string, number>` carrier are
      built AT PARSE TIME: a finite number in [0, 1] is a confidence;
      a non-numeric value, NaN, a negative number, or a value > 1 counts
@@ -274,10 +276,11 @@ APPLIED sets only.
     same `heal_checked` cooldown stamp as applied ids —
     `MaintenanceService.ts:2019-2023` excludes only `call_error` and
     unattempted ids from the stamp — meaning it is NOT re-reviewed for
-    `HEAL_RECHECK_MS` = 7 days (`:89`). Whether withheld ids should skip
-    the stamp is open question 5. Either way, no generative fallthrough
-    machinery is needed — there is no alternative engine for heal to fall
-    through TO. The withheld move is receipted
+    `HEAL_RECHECK_MS` = 7 days (`:89`). Withheld ids KEEP the stamp —
+    open question 5 ruling (owner, 2026-11-22): skipping the stamp would
+    re-evaluate the same fact every run, an unbounded cost. No generative
+    fallthrough machinery is needed — there is no alternative engine for
+    heal to fall through TO. The withheld move is receipted
     (`detail.reason: 'below_floor'`, §5) so the host sees what heal chose
     not to do.
   - Missing confidence (open question 1 migration) → apply as today,
@@ -295,8 +298,10 @@ APPLIED sets only.
   `'below_floor'` receipt plus the dedupe diagnostic together tell the
   story) but the delete↔restate pairing is IMPLICIT — the response
   contract carries no explicit pairing, so the host must reconstruct it
-  from receipts. Whether a restate whose paired delete is withheld
-  should also be withheld is open question 7 (recommendation: defer).
+  from receipts. A restate whose paired delete is withheld is NOT also
+  withheld — open question 7 ruling (owner, 2026-11-22): defer; the blast
+  radius is tight this cycle, and this is revisited only if telemetry
+  shows paired restates of withheld deletes causing drift.
 - Mode/floor plumbing is explicit, never defaulted: resolved ONCE at
   `doRunHeal` entry beside `diagBase` (`MaintenanceService.ts:1723`),
   then used at the guard/apply seam. No change to
@@ -315,8 +320,8 @@ compliance, not problems; contrast `heal_skipped: 'warn'`,
 are the only exhaustive maps in the file). Suggested messages:
 `heal_deleted: 'Heal soft-deleted a fact (or withheld the delete below the confidence floor).'`
 `heal_downgraded: 'Heal downgraded a fact to tentative (or withheld the downgrade below the confidence floor).'`
-(These messages and the `detail` shapes below assume open question 1
-resolves (a); adjust if it resolves (b).)
+(These messages and the `detail` shapes below are written for open
+question 1's ruling (a), adopted 2026-11-22.)
 
 Emission mirrors the `heal_skipped` per-fact pattern
 (`MaintenanceService.ts:2030-2033`): per-fact, through `diagBase` /
@@ -330,18 +335,21 @@ corresponds to a committed move. Shape mirrors
 `reason`, `factId`, and omits unknown locators rather than sending
 nulls:
 
-- APPLIED (under resolved `'auto'` only — PENDING open question 8:
-  should receipts fire in EVERY mode?) model-directed delete →
-  `heal_deleted`, `detail: { factId, reason: 'applied' }`.
-- APPLIED (under resolved `'auto'` only — PENDING open question 8)
-  model-directed downgrade →
-  `heal_downgraded`, `detail: { factId, reason: 'applied' }`.
-- WITHHELD (below floor, under resolved `'auto'` only — PENDING open
-  question 8) → same code as
+Receipts fire in EVERY mode (open question 8 ruling, owner 2026-11-22):
+default `'llm'` hosts emit `heal_deleted`/`heal_downgraded` receipts for
+model-directed moves too — honest reporting is a universal mandate, and
+default hosts are not blinded. Only the `'below_floor'` and
+`'applied_unscreened'` outcomes can arise under resolved `'auto'`
+(the floor is what creates them).
+
+- APPLIED model-directed delete → `heal_deleted`,
+  `detail: { factId, reason: 'applied' }`.
+- APPLIED model-directed downgrade → `heal_downgraded`,
+  `detail: { factId, reason: 'applied' }`.
+- WITHHELD (below floor, under resolved `'auto'`) → same code as
   the action, `detail: { factId, reason: 'below_floor', confidence }`
-  (confidence included when the model declared one; this detail shape
-  also assumes open question 1 resolves (a) — adjust if it resolves
-  (b)). A missing-confidence verdict that fires under `'auto'` — whether
+  (confidence included when the model declared one). A missing-confidence
+  verdict that fires under `'auto'` — whether
   the schema omitted confidence (wire-compat migration) or the model
   declared an invalid confidence (§4 confidence validation) — is
   receipted as a DISTINCT ungated reason: same code,
@@ -453,21 +461,17 @@ No edge code is added or changed here.
 With no `systemOne` keys (or `healScreen` resolving `'llm'`):
 `resolveSystemOneHealScreen` returns `'llm'`, no floor is read, every
 admitted verdict applies exactly as today, and the parse/apply logic is
-identical. Whether the DEFAULT PATH is byte-identical is conditional on
-open question 6: under OQ6's RECOMMENDATION (the `{id, confidence}`
-schema prompt goes to ALL hosts), a default `'llm'` host gets the same
-parse and apply logic but DIFFERENT PROMPT TEXT — the model is asked
-for confidence, which facts it chooses to act on can change as a
-result, and that prompt's token cost is unmeasured and disclosed here —
-so default hosts are parity-of-logic, not parity-of-prompt; only under
-OQ6's alternative (mode-conditional prompt, `'llm'` hosts keep
-today's text) is the default path byte-identical. The zero-new-
-diagnostics claim is scoped the same way: no receipts fire on default
-hosts under the §5 emission condition (PENDING open question 8 — if
-OQ8 resolves that receipts fire in EVERY mode, default hosts DO gain
-`heal_deleted`/`heal_downgraded` receipts, and this claim narrows to
-"no receipts beyond the OQ8-mandated ones"); the `HealResult` shape
-gains the additive OPTIONAL §6 fields on every host.
+identical. Prompt parity: per open question 6's ruling (owner,
+2026-11-22), the `{id, confidence}` schema prompt goes to ALL hosts —
+the prompt schema changes for EVERY host, default `'llm'` hosts
+included (same parse/apply logic everywhere; the added schema line's
+token cost is unmeasured and disclosed here; covered by test 14's
+baseline). Default hosts are parity-of-logic, not parity-of-prompt.
+Diagnostics: default `'llm'` hosts DO gain `heal_deleted`/
+`heal_downgraded` receipts (info severity) for model-directed moves —
+open question 8's ruling makes receipts fire in EVERY mode
+(open question 2's audit surface, unconditionally). The `HealResult`
+shape gains the additive OPTIONAL §6 fields on every host.
 
 Test-churn budget: because the new fields are optional, existing
 `HealResult` literals (in-repo and host mocks) keep compiling
@@ -485,7 +489,7 @@ screen requires the host to set BOTH `systemOne.healScreen: 'auto'`
 AND an explicit `systemOne.minConfidence.healScreen` in [0.5, 1] — a
 host that sets only `'auto'` gets a one-time `warnOnce` naming the key
 and ungated heal exactly as pre-PR (no behavior loss). Disclosed by
-design: under open question 1 recommendation (a)'s wire-compat rule, an
+design: under open question 1 ruling (a)'s wire-compat rule, an
 engaged `'auto'` host whose model still emits the old bare-string schema
 gets behaviour identical to `'llm'` — every verdict lacks
 confidence, so each applies as today plus the one-time `warnOnce` —
@@ -545,7 +549,12 @@ state. The `warnOnce` text must name `healSystemPrompt`.
   degraded/skipped reconciliation (`:2057-2062`), `deliverHealRemovals`
   semantics, or the scheduler.
 
-## Open questions
+## Open questions — ALL RESOLVED (owner rulings 2026-11-22)
+
+All eight questions were resolved by owner rulings on 2026-11-22
+(Discord thread `1570840529388965951`, msg `1574148740716175392`); every
+ruling matched the recommendation stated below. Each question carries
+its ruling; the recommendations are kept for the reasoning.
 
 1. What does `'healScreen: 'auto'` floor ON — the heal response carries
    no confidence today (`prompts.ts:44-45` are bare fact-ID string
@@ -573,6 +582,10 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    normalization is required under ANY resolution of open question 6.
    Grounds: `prompts.ts:41-48`, `MaintenanceService.ts:1861-1870`,
    `docs/ROADMAP.md:280-288`.
+   **Ruling (owner, 2026-11-22):** (a) — extend `HEAL_SYSTEM_PROMPT` so
+   `downgraded`/`deleted` entries become `{ id, confidence }` objects,
+   parsed backward-compatibly: bare strings parse as missing confidence
+   → apply as today plus a one-time `warnOnce` naming the migration.
 2. Where receipts land — diagnostics only, `HealResult` fields only, or
    both. **Recommendation: both, different jobs** — the per-fact
    diagnostics (§5) are the streaming audit trail hosts already consume
@@ -585,6 +598,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    field exists anywhere yet), edge-suggestions spec §6 (its receipts
    stayed diagnostic-level, but edges had no result object to extend —
    heal does).
+   **Ruling (owner, 2026-11-22):** Both — the per-fact diagnostics are
+   the streaming audit trail; the `HealResult` `downgradedIds`/
+   `deletedIds` are the run-scoped answer.
 3. Do the deterministic SQL passes get `heal_deleted`/`heal_downgraded`
    receipts too, or only model-directed actions? **Recommendation:
    model-directed only** — the SQL passes are host-policy arithmetic
@@ -597,6 +613,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    job is making MODEL moves auditable against the forget-ruling
    (`docs/ROADMAP.md:282-286`). A host wanting SQL-pass visibility has
    the id lists. Grounds: pins §1, §7.
+   **Ruling (owner, 2026-11-22):** Model-directed only — SQL passes
+   (orphan/stale) get NO receipts; their ids are already in the
+   changed-id lists.
 4. Exact changed-id list shape — one flat array, grouped
    deleted/downgraded arrays, or a richer per-id record (id + source
    pass + applied/below-floor)? **Recommendation: two flat string
@@ -609,6 +628,8 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    already carry (`detail.reason`), and ImportExportService's `removedIds`
    precedent (pins §5) is a flat array. Grounds: `MaintenanceService.ts:2085-2086`,
    `types.ts:211-249`, pins §5.
+   **Ruling (owner, 2026-11-22):** Two flat arrays:
+   `downgradedIds: string[]` and `deletedIds: string[]`.
 
 5. Should withheld (below-floor) ids skip the `heal_checked` cooldown
    stamp so the next heal pass re-reviews them, or keep the stamp (7-day
@@ -620,6 +641,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    concerns the stamp exists to bound, and the withhold is already
    visible via its `'below_floor'` receipt. Grounds:
    `MaintenanceService.ts:2019-2023`, `:89`, §4 as amended.
+   **Ruling (owner, 2026-11-22):** Keep the 7-day `heal_checked`
+   cooldown stamp for withheld ids, disclosed. Skipping the stamp would
+   re-evaluate the same fact every run (owner's cost-bound rationale).
 6. Should the `{id, confidence}` response schema go to ALL hosts (single
    `HEAL_SYSTEM_PROMPT`, parse normalizes in every mode) or be
    mode-conditional (`'llm'` hosts keep today's prompt text)?
@@ -631,6 +655,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    it does not currently see (`PromptService.ts:282` resolves with no
    config knowledge). Grounds: `PromptService.ts:282`, `:424`,
    `types.ts:45`.
+   **Ruling (owner, 2026-11-22):** ALL hosts — single prompt, the
+   normalizing parse runs in every mode; no mode-conditional prompt
+   text.
 7. Should a restate whose paired delete is withheld (below floor) ALSO
    be withheld, so the drop disclosed in §4 cannot happen?
    **Recommendation: defer.** The response contract carries no explicit
@@ -642,6 +669,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    `fact_deduplicated` diagnostic), and the roadmap sentence does not
    demand pairing. Grounds: `MaintenanceService.ts:1951-1952`,
    `:1937-1946`, `prompts.ts:44-46`, §7.
+   **Ruling (owner, 2026-11-22):** Defer pair-withhold — tight blast
+   radius this cycle; revisit only if telemetry shows paired restates
+   of withheld deletes causing drift.
 8. Should the `heal_deleted`/`heal_downgraded` receipts (§5) fire in
    EVERY mode (the default `'llm'` included) or only under resolved
    `'auto'`? **Recommendation: every mode.** The roadmap's
@@ -655,6 +685,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    consume diagnostics). The codes are SEVERITY `info`
    (`diagnostics.ts`), so the noise cost is bounded. Grounds:
    `docs/ROADMAP.md:280-288`, §5 as amended by earlier folds, OQ2.
+   **Ruling (owner, 2026-11-22):** EVERY mode — receipts fire on
+   default `'llm'` hosts too; honest reporting is a universal mandate,
+   and default hosts are not blinded.
 
 ## Files touched
 
@@ -682,12 +715,12 @@ state. The `warnOnce` text must name `healSystemPrompt`.
 - `packages/core/src/utils/diagnostics.ts` — SEVERITY + MESSAGE entries
   for both new codes (both exhaustive maps, §5).
 - `packages/core/src/prompts.ts` — `HEAL_SYSTEM_PROMPT` response schema
-  (open question 1 recommendation (a) only). `PromptService.ts` itself
+  (open question 1 ruling (a)). `PromptService.ts` itself
   is NOT modified: the `healSystemPrompt` override chain
   (`types.ts:45`) — runtime override → global override →
   `HEAL_SYSTEM_PROMPT` (`PromptService.ts:282`, `:424`) — is used as-is
-  (§8; open question 6 covers whether the schema line is
-  mode-conditional).
+  (§8; open question 6's ruling puts the schema line in the prompt for
+  ALL hosts, no mode-conditional template).
 - `packages/core/src/index.ts` — export the two new resolvers beside the
   S1-0/edges resolvers (L29-32; both lanes touch, pins §9.5).
 - `packages/core/__tests__/` — test plan below; the
@@ -747,21 +780,20 @@ lands second, pins §8), plus a new
    `:2085-2086`).
 5. Wire compat: a provider answering the OLD bare-string schema under
    `'auto'` → verdicts apply as today (no silent discard), one-time
-   `warnOnce` names the contract migration (open question 1
-   recommendation), and EACH old-schema verdict produces an
-   `'applied_unscreened'` receipt (§5, per §4's outcome rule) —
-   conditional on open question 1 resolving (a),
-   evaporates under (b); under `'llm'` no warning and behaviour
+   `warnOnce` names the contract migration (open question 1 ruling (a)),
+   and EACH old-schema verdict produces an
+   `'applied_unscreened'` receipt (§5, per §4's outcome rule); under
+   `'llm'` no warning and behaviour
    identical modulo the additive §6 `HealResult` fields.
-6. Default mode: no `systemOne` keys at all — parse/apply logic
-   identical to pre-PR except the additive §6 `HealResult` fields
-   (prompt-text parity itself is conditional on open question 6, §8):
-   no floor read, no new diagnostics under the §5 emission condition
-   (PENDING open question 8: under an every-mode OQ8 resolution this
-   test instead asserts exactly the `heal_deleted`/`heal_downgraded`
-   receipts fire), `deletedIds`/`downgradedIds` still
-   populated (they exist under `'llm'` too — surfacing is unconditional,
-   §6) and match `deleted`/`downgraded` counts.
+6. Default mode — receipts fire in every mode (open question 8 ruling):
+   no `systemOne` keys at all — parse/apply logic identical to pre-PR
+   except the additive §6 `HealResult` fields and the §5 receipts
+   (prompt text itself changes for ALL hosts per open question 6's
+   ruling, §8): no floor read, and the `heal_deleted`/
+   `heal_downgraded` applied-receipts DO fire for model-directed moves
+   (info severity, `'applied'` reasons), `deletedIds`/`downgradedIds`
+   still populated (they exist under `'llm'` too — surfacing is
+   unconditional, §6) and match `deleted`/`downgraded` counts.
 7. Floor boundaries: verdict confidence exactly equal to the floor
    APPLIES (`≥` is inclusive, §3); `0.999` vs floor `1` withholds.
 8. Per-fact volume pin: a pass with N model-directed moves emits exactly
@@ -796,7 +828,7 @@ lands second, pins §8), plus a new
     payload, and no new fact row is inserted.
 14. INTENT rule 11: the plan stage publishes a measured before/after
     baseline from the bench harness for the heal lane — including the
-    default-path prompt change if open question 6 resolves per its
-    recommendation (schema prompt to ALL hosts changes the prompt a
-    default `'llm'` host sends, §8; token cost must be measured, not
+    default-path prompt change (open question 6's ruling puts the
+    `{id, confidence}` schema prompt to ALL hosts, so a default `'llm'`
+    host's prompt changes, §8; token cost must be measured, not
     claimed); this spec itself claims no unmeasured numbers.
