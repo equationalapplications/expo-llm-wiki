@@ -363,7 +363,24 @@ describe('invalid and missing answers, edge-site diagnostics (task 10)', () => {
     expect(site[0].detail).toMatchObject({ factId: 'f_ada', reason: 'edge_answers_missing' });
   });
 
-  it.todo('D4: edge-site detail carries site: "edge_screen" and asked/uncertain/invalid/missing counts (blocked: WikiDiagnosticDetail is closed, types.ts frozen)');
+  it('D4 (spec §6 as amended): edge-site diagnostics carry detail.reason markers; no site key, no counts', async () => {
+    const reasonFor = async (answer: number | 'bad' | 'missing') => {
+      const { wiki, diagnostics } = await makeWikiWith(classifyWith(answer), AUTO_EDGES);
+      await wiki.runOntologyBackfill('e1');
+      return edgeSite(diagnostics);
+    };
+    const uncertain = await reasonFor(0.5);
+    expect(uncertain.map((d) => d.detail?.reason)).toEqual(['edge_uncertain']);
+    const invalid = await reasonFor('bad');
+    expect(invalid.map((d) => d.detail?.reason)).toEqual(['edge_answer_invalid']);
+    const missing = await reasonFor('missing');
+    expect(missing.map((d) => d.detail?.reason)).toEqual(['edge_answers_missing']);
+    for (const d of [...uncertain, ...invalid, ...missing]) {
+      expect(Object.keys(d.detail ?? {})).not.toContain('site');
+      expect(Object.keys(d.detail ?? {}).filter((k) => /count|asked|uncertain$|invalid$|missing$/.test(k))).toEqual([]);
+    }
+    // The fourth marker, edge_screen_overflow_retry, is pinned by the overflow retry-once tests below.
+  });
 
   it('volume pin: five uncertain answers emit ONE classification_low_confidence; a malformed answer emits ONE classification_invalid', async () => {
     const run = async (bad: boolean) => {

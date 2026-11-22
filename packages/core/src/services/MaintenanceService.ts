@@ -2485,7 +2485,14 @@ export class MaintenanceService {
    * untyped fact over the effective manifest's node-type slugs plus the
    * reserved abstain sentinel. Accepted answers go through
    * `_applyOntologyBackfillBatch` exactly like LLM classifications. No edges
-   * are proposed. Abstains and low-confidence answers are cooldown-stamped
+   * are proposed unless `systemOne.edges` is `'auto'`; under `'auto'` the
+   * classifier screens per-fact edge questions against
+   * `systemOne.minConfidence.edges` (an explicit floor; missing → warn and
+   * `'llm'`). Confident "yes" answers (`p > 0.5 && p >= floor`) apply,
+   * confident "no" answers (`p < 0.5 && 1 - p >= floor`) are terminal, and
+   * everything else (including exactly `p = 0.5`) plus invalid edge answers
+   * fall through to the generative step. Edge outcomes are evaluated only for
+   * typing-ACCEPTED facts. Abstains and low-confidence answers are cooldown-stamped
    * omissions under `onLowConfidence: 'leave'`; under `'llm'` they are
    * returned un-stamped in `escalated` for the generative step. Always
    * returns the `OntologyBackfillResult` for its step plus escalation state.
