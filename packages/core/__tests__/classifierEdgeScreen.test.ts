@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { createWiki } from '../src/index';
 import { EntryRepository } from '../src/repositories/EntryRepository';
+import { OntologyService } from '../src/services/OntologyService';
 import type {
   ClassifyRequest,
   ClassifyResponse,
@@ -583,5 +584,62 @@ describe('escalation gate plumbing (task 12)', () => {
     expect(await edgeCount(db)).toBe(0);
     expect((await typeOf(db, 'f_ada'))!.okf_type).toBeNull();
     expect(edgeSite(diagnostics)).toEqual([]);
+  });
+});
+
+describe('CodeRabbit close-out', () => {
+  it('a candidate titled __proto__ keeps its confident-yes edge (prototype-free candidate-id map)', async () => {
+    const db = openTestDatabase();
+    const classify = vi.fn(async (r: ClassifyRequest): Promise<ClassifyResponse> => ({
+      answers: Object.fromEntries(Object.keys(r.questions).map((k) => [
+        k,
+        k === 'okf_type' ? choiceAnswer('person', 0.9) : { kind: 'binary' as const, probability: k.endsWith('f_proto') ? 0.95 : 0.02 },
+      ])),
+    }));
+    const generateText = vi.fn(async (_p: string) => JSON.stringify({ classifications: [] }));
+    const wiki = createWiki(db, { llmProvider: { generateText, classify }, config: AUTO_EDGES });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    const rows: Array<[string, string, number, string | null]> = [
+      ['f_ada', 'Ada', 100, null], ['f_proto', '__proto__', 200, 'place'], ['f_ldn', 'London', 300, 'place'],
+    ];
+    for (const [id, title, at, type] of rows) await seed(db, id, title, at, type);
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(edgeKeys(requestFor(classify, 'Ada')).sort()).toEqual(['edge:lives_in:f_ldn', 'edge:lives_in:f_proto']);
+    expect(result.edgesAdded).toBe(1);
+    const edges = await db.getAllAsync<Record<string, unknown>>(`SELECT * FROM ${PREFIX}edges WHERE entity_id = 'e1'`);
+    expect(edges).toHaveLength(1);
+    expect(JSON.stringify(edges[0])).toContain('f_proto');
+  });
+
+  it('ontology off after the classifier commit: committed typed/edgesAdded are reported, remaining 0', async () => {
+    const classify = vi.fn(async (r: ClassifyRequest): Promise<ClassifyResponse> => ({
+      answers: Object.fromEntries(Object.keys(r.questions).map((k) => [
+        k,
+        k === 'okf_type'
+          ? (r.state.startsWith('Ada') ? choiceAnswer('person', 0.9) : choiceAnswer('place', 0.1))
+          : { kind: 'binary' as const, probability: 0.95 },
+      ])),
+    }));
+    const db = openTestDatabase();
+    const generateText = vi.fn(async (_p: string) => JSON.stringify({ classifications: [] }));
+    const wiki = createWiki(db, { llmProvider: { generateText, classify }, config: { systemOne: { ...AUTO_EDGES.systemOne, onLowConfidence: 'llm' } } });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    const rows: Array<[string, string, number, string | null]> = [...ADA_ROWS, ['f_zzz', 'Zzz', 300, null]];
+    for (const [id, title, at, type] of rows) await seed(db, id, title, at, type);
+    const orig = OntologyService.prototype.getEffectiveState;
+    let committed = false;
+    vi.spyOn(OntologyService.prototype, 'getEffectiveState').mockImplementation(async function (this: OntologyService, entityId: string, tx?: SQLiteAdapter) {
+      const res = await orig.call(this, entityId, tx);
+      if (tx) { committed = true; return res; }
+      return committed ? { ...res, mode: 'off' as const } : res;
+    });
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(generateText).not.toHaveBeenCalled();
+    expect((await typeOf(db, 'f_ada'))!.okf_type).toBe('person');
+    expect(result.typed).toBe(1);
+    expect(result.edgesAdded).toBe(1);
+    expect(result.remaining).toBe(0);
   });
 });

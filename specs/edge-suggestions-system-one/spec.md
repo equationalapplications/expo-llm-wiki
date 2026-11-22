@@ -1,8 +1,9 @@
 # Spec — Step 10: Edge suggestions from System-One
 
-Status: Approved by owner 2026-11-22 (Discord thread, msg `1574101104528986284`);
+Status: Implemented 2026-11-22 (PR #459). Owner approval 2026-11-22
+(Discord thread, msg `1574101104528986284`);
 all six open questions resolved — see Open questions (each carries its ruling).
-Implemented 2026-11-22 (PR #459). Earlier owner ruling 2026-11-22 msg
+Earlier owner ruling 2026-11-22 msg
 1574082000854188136 (reply '1' to the presented menu): **classifier-first** —
 the small classifier starts proposing/screening edges, gated by a confidence
 floor (`minConfidence.edges`, the exact shape S1-0 reserved) applied to the

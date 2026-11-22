@@ -2210,11 +2210,23 @@ export class MaintenanceService {
           // generative LLM call in a disabled mode and stamp cooldowns on
           // facts that must stay eligible. Off-mode result shape matches the
           // mode==='off' early return: counters zeroed, remaining 0 so a host
-          // convergence loop terminates.
+          // convergence loop terminates. The classifier transaction already
+          // committed, so its counters are real and are reported; only the
+          // (never-run) generative leg contributes nothing.
           const { mode: liveMode } = await ontologyService.getEffectiveState(entityId);
           if (liveMode === 'off') {
             const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-            return { ...zeroed, remaining: 0, deferred: counts.deferred };
+            const committed = classifierRun.result;
+            return {
+              scanned: committed.scanned,
+              typed: committed.typed,
+              failedValidation: committed.failedValidation,
+              edgesAdded: committed.edgesAdded,
+              abstained: committed.abstained,
+              skipped: committed.skipped,
+              remaining: 0,
+              deferred: counts.deferred,
+            };
           }
           const escalated = classifierRun.escalated;
           const generative = await this._runGenerativeBackfill(entityId, escalated, {
@@ -2664,7 +2676,7 @@ export class MaintenanceService {
         // whose source_type does not match the chosen typing are discarded first.
         const floor = edgeMinConfidence;
         const edges: Array<{ edge_type: string; target_title: string }> = [];
-        const edgeCandidateIds: Record<string, string> = {};
+        const edgeCandidateIds = Object.create(null) as Record<string, string>;
         let evaluated = 0;
         let uncertain = 0;
         let invalid = 0;
