@@ -1,3 +1,10 @@
+## [9.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.10.0...v9.11.0) (2026-11-22)
+
+### Features
+
+* **core:** add the backfill op to the context-budget resolver (spec change 2, test item 3) ([72c0a62](https://github.com/equationalapplications/expo-llm-wiki/commit/72c0a628b7235a05940bb6f6caf9de18089e8997))
+* **core:** wire the backfill cap to the resolver at pass entry (spec changes 3-4, test items 4-5) ([8978d4c](https://github.com/equationalapplications/expo-llm-wiki/commit/8978d4cc58e0998a232e5f10ca8745b15dbbeee1))
+
 ## [9.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.9.0...v9.10.0) (2026-11-22)
 
 ### Features
