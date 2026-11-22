@@ -186,7 +186,16 @@ finds healthy, so absence-of-verdict already means no action.
 
 ### 4. Where the screen sits in `doRunHeal`
 
-The screen sits BETWEEN the mutable-ids guard and the transaction apply:
+The applied/withheld split happens IMMEDIATELY AFTER the guard sets
+`safeDowngraded`/`safeDeleted` are built
+(`MaintenanceService.ts:1910-1911`) and BEFORE `uniqueDeletedFactIds`
+is computed at `:1929` — and it must sit there: three downstream
+consumers read that derived list, not `safeDeleted` — the search sync
+(`:2044`), `deliverHealRemovals` (`:2049`), and the `allDeleted` union
+(`:2086`) — so screening inside the transaction apply would leak
+withheld ids into removals delivery, the search sync, and the
+changed-id lists. Every consumer downstream of the seam reads the
+APPLIED sets only.
 
 - In: the MODEL-DIRECTED sets only — `safeDowngraded`/`safeDeleted`
   (post-guard, `MaintenanceService.ts:1910-1911`), per-fact, before
@@ -206,18 +215,33 @@ The screen sits BETWEEN the mutable-ids guard and the transaction apply:
   that discards synthesized repairs would contradict the no-silent-
   discard rule; `newFacts` confidence is the existing
   `certain|inferred|tentative` enum (`prompts.ts:46`), not a number.
-- Screen plumbing between parse and guard (in the widened parse of the
-  §2 contract, per open question 1 recommendation (a)):
-  1. Confidence validation — a finite number in [0, 1] is a confidence;
+- Screen plumbing (in the widened parse of open question 1, per its
+  recommendation (a)):
+  1. Confidence validation AND the `Map<string, number>` carrier are
+     built AT PARSE TIME: a finite number in [0, 1] is a confidence;
      a non-numeric value, NaN, a negative number, or a value > 1 counts
      as MISSING and is receipted distinctly (see §5: the
-     `'applied_unscreened'` reason, not `'applied'`).
-  2. Carrier — the validated confidence rides a
-     `Map<string, number>` built alongside the parse output, BEFORE the
-     mutable-ids guard collapses verdicts into `Set<string>`s
-     (`MaintenanceService.ts:1889-1903`, unchanged by this PR).
+     `'applied_unscreened'` reason, not `'applied'`). The validated
+     confidence rides a `Map<string, number>` built alongside the parse
+     output, BEFORE the mutable-ids guard collapses verdicts into
+     `Set<string>`s (`MaintenanceService.ts:1889-1903`, unchanged by
+     this PR).
+  2. The floor comparison itself runs AFTER the guard sets
+     `safeDowngraded`/`safeDeleted` exist (`:1910-1911`) and BEFORE
+     `uniqueDeletedFactIds` is computed at `:1929` (the seam above).
+     There is no additional comparison site: parse-time validation and
+     the post-guard floor comparison are the only two steps.
   3. Duplicates — if the same id appears in multiple batch results, the
      LOWEST confidence wins (most conservative).
+  4. Receipt plumbing: `diagBuffer` is local to `doRunHeal`, created at
+     `MaintenanceService.ts:1912` (after the guard), and receipts are
+     pushed into it at the `heal_skipped`-pattern push point
+     (`:2030-2032`). Because screen outcomes (applied / withheld /
+     missing-confidence) are computed earlier — validation and carrier
+     at parse time, floor comparison at the seam — each verdict's
+     outcome is CARRIED from its computation point to the push point
+     (withheld ids in a withheld-set, applied ids implicit in the
+     applied sets); nothing is recomputed at push time.
 - Outcome rule per verdict, under resolved `'auto'`:
   - `confidence ≥ floor` → apply as today.
   - `confidence < floor` → WITHHOLD: a below-floor delete does not run,
@@ -234,8 +258,21 @@ The screen sits BETWEEN the mutable-ids guard and the transaction apply:
     through TO. The withheld move is receipted
     (`detail.reason: 'below_floor'`, §5) so the host sees what heal chose
     not to do.
-  - Missing confidence (§2 contract migration) → apply as today AND
-    warn once (open question 1 wire-compat; §2 contract migration).
+  - Missing confidence (open question 1 migration) → apply as today AND
+    warn once (open question 1 wire-compat; open question 1 migration).
+- Disclosed interaction — withheld delete plus paired restate: a
+  WITHHELD delete leaves fact X live, and the model's paired restatement
+  (a synthesized replacement fact) then matches X at Jaccard >= threshold
+  inside the transaction — dedupe reads `findInferredTitlesByEntityId`
+  AFTER `softDeleteByIds` runs (`MaintenanceService.ts:1951-1952`; the
+  ordering is load-bearing per the `#68` comment at `:1937-1946`) — so
+  the restatement is skipped as `fact_deduplicated` and the correction
+  is DROPPED while X survives. The outcome is auditable (the
+  `'below_floor'` receipt plus the dedupe diagnostic together tell the
+  story) but the delete↔restate pairing is IMPLICIT — the response
+  contract carries no explicit pairing, so the host must reconstruct it
+  from receipts. Whether a restate whose paired delete is withheld
+  should also be withheld is open question 7 (recommendation: defer).
 - Mode/floor plumbing is explicit, never defaulted: resolved ONCE at
   `doRunHeal` entry beside `diagBase` (`MaintenanceService.ts:1723`),
   then used at the guard/apply seam. No change to
@@ -259,11 +296,12 @@ resolves (a); adjust if it resolves (b).)
 
 Emission mirrors the `heal_skipped` per-fact pattern
 (`MaintenanceService.ts:2030-2033`): per-fact, through `diagBase` /
-`diagBuffer`, flushed once at `:2033`'s flush point. Receipts are
-buffered in `diagBuffer` and flush only AFTER the transaction commits
-(`MaintenanceService.ts:2030-2033`) — a thrown transaction emits NO
-receipts (the rollback also discards its buffered diagnostics), so a
-receipt always corresponds to a committed move. Shape mirrors
+`diagBuffer`. Receipts are buffered in `diagBuffer` and flush only at
+the `:2033` flush point — which is UNREACHABLE when the transaction
+throws: `diagBuffer` is local to `doRunHeal` (created at `:1912`,
+after the guard), and a thrown transaction propagates past the flush —
+so a rolled-back pass emits NO receipts, and a receipt always
+corresponds to a committed move. Shape mirrors
 `edgeDropDiagnostic` (`diagnostics.ts:271-289`) — `detail` carries
 `reason`, `factId`, and omits unknown locators rather than sending
 nulls:
@@ -292,14 +330,30 @@ which keeps the diagnostic surface proportional to model-driven risk.
 
 ### 6. Changed-id lists on `HealResult`
 
-`HealResult` (`types.ts:211-249`) gains two additive fields, populated
-from the sets that already exist at `MaintenanceService.ts:2085-2086`:
+`HealResult` (`types.ts:211-249`) gains two additive OPTIONAL fields,
+populated from the sets that already exist at
+`MaintenanceService.ts:2085-2086`:
 
 ```ts
-/** Every fact id this heal run left at reduced confidence (stale-inferred SQL pass plus model-directed downgrades, deduped) — the ids behind `downgraded`. */
-downgradedIds: string[];
-/** Every fact id this heal run soft-deleted (orphan SQL pass plus model-directed deletes, deduped) — the ids behind `deleted`. */
-deletedIds: string[];
+/**
+ * Every fact id this heal run left at reduced confidence (stale-inferred
+ * SQL pass plus model-directed downgrades, deduped) — the ids behind
+ * `downgraded`. Optional so existing `HealResult` literals (host mocks)
+ * keep compiling; `doRunHeal` always populates it today. NOT disjoint
+ * with `deletedIds`: a fact both downgraded and deleted in one pass
+ * appears in BOTH lists (union-not-sum semantics,
+ * `MaintenanceService.ts:2082-2086`) — hosts must not treat the lists
+ * as disjoint.
+ */
+downgradedIds?: string[];
+/**
+ * Every fact id this heal run soft-deleted (orphan SQL pass plus
+ * model-directed deletes, deduped) — the ids behind `deleted`. Optional
+ * so existing `HealResult` literals (host mocks) keep compiling;
+ * `doRunHeal` always populates it today. NOT disjoint with
+ * `downgradedIds` (see above).
+ */
+deletedIds?: string[];
 ```
 
 `downgraded: allDowngraded.size` /
@@ -357,7 +411,11 @@ is where a replaces link will eventually attach. That link is PR 6's
 edge work, NOT this step's: this spec only guarantees that the delete
 half of a restate now carries a `heal_deleted` receipt and lands in
 `deletedIds`, so the future replaces-link construction has an auditable
-input. No edge code is added or changed here.
+input — and, when the delete half is WITHHELD, that the interaction
+disclosed in §4 holds: fact X stays live, the paired restatement is
+deduped away (`fact_deduplicated`) and the correction is dropped, made
+auditable by the `'below_floor'` receipt plus the dedupe diagnostic.
+No edge code is added or changed here.
 
 ### 8. Compatibility lock
 
@@ -365,9 +423,13 @@ With no `systemOne` keys (or `healScreen` resolving `'llm'`):
 `resolveSystemOneHealScreen` returns `'llm'`, no floor is read, every
 admitted verdict applies exactly as today, no receipts fire (zero new
 diagnostics on default hosts), and behavior is behaviourally identical;
-the `HealResult` shape gains the additive §6 fields on every host.
-Test-churn budget: existing `toEqual` assertions on `HealResult` will
-break against the new fields and must be updated in the same PR.
+the `HealResult` shape gains the additive OPTIONAL §6 fields on every
+host. Test-churn budget: because the new fields are optional, existing
+`HealResult` literals (in-repo and host mocks) keep compiling
+unchanged; the `toEqual` churn on in-repo assertions that compare whole
+result objects REMAINS and must be updated in the same PR. No
+`BREAKING CHANGE` footer either way — that determination needs a
+ruling (per AGENTS.md).
 The
 `minConfidence.healScreen` key present with NO `healScreen: 'auto'` is
 dead surface by construction only under `'llm'` — but unlike the edges
@@ -419,7 +481,8 @@ state. The `warnOnce` text must name `healSystemPrompt`.
 - A classifier path for heal (mirroring edges' `callClassify`). Rejected:
   heal reviews full fact dumps against recent events — a one-shot
   per-fact classify call cannot express the relational judgment heal
-  makes, and it would double provider cost for no second opinion (heal
+  makes, and it would add provider cost (a second full generative call
+  per pass) for no second opinion (heal
   IS the generative path; there is nothing to fall through to).
 - An `'off'` mode. Rejected for the same reasons as edges: discard path,
   suppression receipts, third resolver branch, no ruling asks for it.
@@ -483,8 +546,9 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    (`orphanAfterDays`, `staleInferredAfterDays`, `types.ts:360-361`)
    whose ids are already fully enumerated in the §6 changed-id lists
    (`allDowngraded`/`allDeleted` unions,
-   `MaintenanceService.ts:2085-2086`), so receipting them would double
-   the surface for facts the host's own clock decided; the receipts'
+   (`MaintenanceService.ts:2085-2086`), so receipting them would add
+   diagnostic surface (a second receipt per SQL-passed fact, quantity
+   unmeasured) for facts the host's own clock decided; the receipts'
    job is making MODEL moves auditable against the forget-ruling
    (`docs/ROADMAP.md:282-286`). A host wanting SQL-pass visibility has
    the id lists. Grounds: pins §1, §7.
@@ -515,12 +579,24 @@ state. The `warnOnce` text must name `healSystemPrompt`.
    `HEAL_SYSTEM_PROMPT`, parse normalizes in every mode) or be
    mode-conditional (`'llm'` hosts keep today's prompt text)?
    **Recommendation: all hosts** — one code path, the normalization
-   parse is required in every mode regardless (§8 wire-compat
-   requirement), the token delta is one schema line, and a
+   parse is required in every mode regardless (open question 1
+   wire-compat requirement), the prompt addition is one schema line
+   (its token cost is unmeasured and not claimed here), and a
    mode-conditional template couples PromptService to systemOne config
    it does not currently see (`PromptService.ts:282` resolves with no
    config knowledge). Grounds: `PromptService.ts:282`, `:424`,
    `types.ts:45`.
+7. Should a restate whose paired delete is withheld (below floor) ALSO
+   be withheld, so the drop disclosed in §4 cannot happen?
+   **Recommendation: defer.** The response contract carries no explicit
+   delete↔restate pairing — `downgraded`/`deleted` are id lists and
+   `newFacts` is a separate array (`prompts.ts:44-46`) — so
+   pair-withhold would need a new contract field or a title-similarity
+   heuristic at the seam. The §4 disclosure plus receipts make the
+   outcome auditable today (the `'below_floor'` receipt plus the
+   `fact_deduplicated` diagnostic), and the roadmap sentence does not
+   demand pairing. Grounds: `MaintenanceService.ts:1951-1952`,
+   `:1937-1946`, `prompts.ts:44-46`, §7.
 
 ## Files touched
 
@@ -535,10 +611,11 @@ state. The `warnOnce` text must name `healSystemPrompt`.
   throughout (engineDefaults L120 comment contract).
 - `packages/core/src/services/MaintenanceService.ts` — resolve mode+floor
   once at `doRunHeal` entry (beside `:1723`); per-fact screen at the
-  guard/apply seam (`:1889-1911` → apply at `:1947-1949`); receipt emission
+  guard/apply seam (`:1889-1911` → seam before `:1929`, apply at
+  `:1947-1949`); receipt emission
   through `diagBase`/`diagBuffer` (§5); `downgradedIds`/`deletedIds`
   surfacing at `:2085-2093` (§6); heal response parse widened
-  (§2 contract, per open question 1); heal-region docstrings (§9).
+  (per open question 1); heal-region docstrings (§9).
   ONLY the heal region (L1710-2100) plus the shared import line
   (pins §9.4).
 - `packages/core/src/types.ts` — two `WikiDiagnosticCode` members
@@ -595,8 +672,10 @@ lands second, pins §8), plus a new
 3. Below-floor withhold: a delete verdict below the floor does NOT run
    `softDeleteByIds` — the fact is untouched, a `heal_deleted`
    diagnostic with `detail.reason: 'below_floor'` and `detail.confidence`
-   fires, and the id is absent from `deletedIds`; same for a
-   below-floor downgrade.
+   fires, the id is absent from `deletedIds`, and the id is ABSENT from
+   the `deliverHealRemovals` payload (`:2049` reads the derived
+   `uniqueDeletedFactIds` list, which the seam (§4) excludes withheld
+   ids from); same for a below-floor downgrade.
 4. Deterministic SQL passes never gated: with the screen `'auto'` and a
    floor of `1` (verdicts with confidence strictly below 1.0 withheld —
    the comparison is inclusive `≥`, so a confidence-1.0 verdict applies;
@@ -631,7 +710,22 @@ lands second, pins §8), plus a new
 11. Retention-clock doc test (light): the doc build/configuration
     reference contains the §7 clock set (or a snapshot test of the doc
     section), pinning that the consolidation ships with the code.
-12. Transaction rollback: a heal pass whose transaction throws emits
-    ZERO `heal_deleted`/`heal_downgraded` receipts — `diagBuffer` flush
-    happens only after commit (`MaintenanceService.ts:2030-2033`, §5);
+12. Transaction rollback: a heal pass whose transaction throws (the
+    throw is injected BEFORE the `:2033` flush point) emits ZERO
+    `heal_deleted`/`heal_downgraded` receipts — the flush at `:2033`
+    is unreachable when the transaction throws (`diagBuffer` is local,
+    created at `:1912`, and the throw propagates past the flush, §5);
     assert the diagnostics list is empty after a rolled-back pass.
+13. Withheld delete plus paired restate (§4 disclosure, open question
+    7 scenario): with the screen `'auto'`, a delete verdict below the
+    floor on fact X plus a model restatement whose Jaccard similarity
+    to X is at/above the dedupe threshold — `softDeleteByIds` does NOT
+    include X, dedupe reads `findInferredTitlesByEntityId` after the
+    delete pass (`:1951-1952`) so the restatement is skipped as
+    `fact_deduplicated` while X SURVIVES, a `'below_floor'`
+    `heal_deleted` receipt and the dedupe diagnostic both fire, X is
+    absent from `deletedIds` and from the `deliverHealRemovals`
+    payload, and no new fact row is inserted.
+14. INTENT rule 11: the plan stage publishes a measured before/after
+    baseline from the bench harness for the heal lane; this spec
+    itself claims no unmeasured numbers.
