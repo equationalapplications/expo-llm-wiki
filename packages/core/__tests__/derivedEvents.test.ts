@@ -195,3 +195,157 @@ describe('tests 7-9: forget({ eventId }) matches derived_events', () => {
     expect(await t.live('b')).toBe(1);
   });
 });
+
+// ---- ops librarian writers (tests 2-6, 10) -------------------------------
+
+import { vi } from 'vitest';
+import type { WikiDiagnostic } from '../src/types';
+import { ofCode } from './helpers/diagnosticsHarness';
+
+type Resp = (p: { systemPrompt: string; userPrompt: string }) => unknown | Promise<unknown>;
+const embedFn = async (t: string) => [/seattle/i.test(t) ? 1 : 0, /san francisco/i.test(t) ? 1 : 0, /lives|moved/i.test(t) ? 1 : 0, 0.5];
+
+function mkOps(responses: Resp[]) {
+  const db = openTestDatabase();
+  const diagnostics: WikiDiagnostic[] = [];
+  let i = 0;
+  const generateText = vi.fn(async (p: { systemPrompt: string; userPrompt: string }) => JSON.stringify(await responses[i++](p)));
+  const wiki = new WikiMemory(db, {
+    llmProvider: { generateText, embed: embedFn },
+    config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } },
+    onDiagnostic: (d) => diagnostics.push(d),
+  } as any);
+  return { db, wiki, generateText, diagnostics };
+}
+
+const CAND = (source_event?: string) => ({
+  title: 'User is a senior engineer at Acme', body: 'Staff engineer since 2020', tags: [], confidence: 'certain',
+  ...(source_event === undefined ? {} : { source_event }),
+});
+const UPD = { ops: [{ item: 0, op: 'UPDATE', target: 'n1', title: 'User is a principal engineer at Acme', body: 'Principal engineer since 2020' }] };
+
+async function seedTarget(
+  t: ReturnType<typeof mkOps>,
+  opts: { source_type?: string; pointer?: string | null; derived?: string | null } = {},
+) {
+  await t.wiki.setup();
+  await t.db.runAsync(
+    `INSERT INTO ${P}entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at, source_pointer, derived_events)
+     VALUES ('acme','u','User works at Acme','Engineer since 2020',?, 'certain',1,1,?,?)`,
+    [opts.source_type ?? 'librarian_inferred', opts.pointer ?? null, opts.derived ?? null],
+  );
+  await t.wiki.runReembed();
+  await t.db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','promoted',100)`);
+}
+const rowOf = (db: any, id: string) => db.getFirstAsync(`SELECT * FROM ${P}entries WHERE id = ?`, [id]) as Promise<any>;
+
+describe('tests 2-4: UPDATE in place records the contributing event', () => {
+  it('test 2: pointer and created_at unchanged, updated_at advanced, derived_events = [E2]', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }) });
+    await t.wiki.runLibrarian('u');
+    const row = await rowOf(t.db, 'acme');
+    expect(row.title).toBe('User is a principal engineer at Acme');
+    expect(JSON.parse(row.derived_events)).toEqual(['evt_1']);
+    expect(JSON.parse(row.source_pointer).event_id).toBe('evt_0');
+    expect(row.created_at).toBe(1);
+    expect(row.updated_at).toBeGreaterThan(1);
+    expect((await t.db.getAllAsync(`SELECT id FROM ${P}entries`)).length).toBe(1);
+    // The outbox is off here; the UPSERT payload is covered by test 13.
+  });
+
+  it('test 3: a merge from an event already listed, or from the pointer\'s own event, adds nothing', async () => {
+    const a = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(a, { pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_1"]' });
+    await a.wiki.runLibrarian('u');
+    expect(JSON.parse((await rowOf(a.db, 'acme')).derived_events)).toEqual(['evt_1']);
+
+    const b = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(b, { pointer: JSON.stringify({ event_id: 'evt_1' }) });
+    await b.wiki.runLibrarian('u');
+    expect((await rowOf(b.db, 'acme')).derived_events).toBeNull();
+    expect((await rowOf(b.db, 'acme')).title).toBe('User is a principal engineer at Acme');
+  });
+
+  it('test 4: an unresolved candidate merged in place leaves the list alone and emits source_pointer_unresolved with factId = the target', async () => {
+    const t = mkOps([() => ({ facts: [CAND()], tasks: [] }), () => UPD]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_7"]' });
+    await t.wiki.runLibrarian('u');
+    const row = await rowOf(t.db, 'acme');
+    expect(JSON.parse(row.derived_events)).toEqual(['evt_7']);
+    const d = ofCode(t.diagnostics, 'source_pointer_unresolved');
+    expect(d).toHaveLength(1);
+    expect((d[0] as any).detail).toMatchObject({ factId: 'acme', itemIndex: 0, reason: 'missing' });
+  });
+});
+
+describe('tests 5-6: UPDATE-as-SUPERSEDE inherits; plain SUPERSEDE does not', () => {
+  it('test 5: replacement lists the target\'s pointer event and list, minus its own pointer event', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { source_type: 'user_stated', pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_3"]' });
+    await t.wiki.runLibrarian('u');
+    const old = await rowOf(t.db, 'acme');
+    expect(old.superseded_by).not.toBeNull();
+    const repl = await rowOf(t.db, old.superseded_by);
+    expect(JSON.parse(repl.derived_events)).toEqual(['evt_0', 'evt_3']);
+    expect(JSON.parse(repl.source_pointer).event_id).toBe('evt_1');
+  });
+
+  it('test 5b: the replacement\'s own pointer event is excluded from its list', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { source_type: 'user_stated', pointer: JSON.stringify({ event_id: 'evt_1' }), derived: '["evt_3"]' });
+    await t.wiki.runLibrarian('u');
+    const repl = await rowOf(t.db, (await rowOf(t.db, 'acme')).superseded_by);
+    expect(JSON.parse(repl.derived_events)).toEqual(['evt_3']);
+  });
+
+  it('test 6: a plain SUPERSEDE writes no list on the replacement; the target keeps its own', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] })]);
+    await seedTarget(t, { source_type: 'user_stated', pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_3"]' });
+    await t.wiki.runLibrarian('u');
+    const old = await rowOf(t.db, 'acme');
+    const repl = await rowOf(t.db, old.superseded_by);
+    expect(repl.derived_events).toBeNull();
+    expect(JSON.parse(old.derived_events)).toEqual(['evt_3']);
+  });
+});
+
+describe('test 10: apply-time re-check', () => {
+  it('a candidate whose source event is deleted mid-pass is dropped whole with source_event_gone; the watermark still advances', async () => {
+    let t!: ReturnType<typeof mkOps>;
+    t = mkOps([
+      async () => {
+        await t.db.runAsync(`DELETE FROM ${P}events WHERE id = 'evt_1'`);
+        return { facts: [CAND('e1')], tasks: [] };
+      },
+      () => UPD,
+    ]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }) });
+    await t.wiki.runLibrarian('u');
+    const row = await rowOf(t.db, 'acme');
+    expect(row.title).toBe('User works at Acme');
+    expect(row.derived_events).toBeNull();
+    expect((await t.db.getAllAsync(`SELECT id FROM ${P}entries`)).length).toBe(1);
+    const d = ofCode(t.diagnostics, 'source_event_gone');
+    expect(d).toHaveLength(1);
+    expect((d[0] as any).detail).toEqual({ itemIndex: 0, sourceRef: 'evt_1' });
+    expect(await (t.wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 100, id: 'evt_1' });
+  });
+
+  it('an ADD candidate from a gone event is dropped too; an unresolved candidate is not', async () => {
+    let t!: ReturnType<typeof mkOps>;
+    t = mkOps([
+      async () => {
+        await t.db.runAsync(`DELETE FROM ${P}events WHERE id = 'evt_1'`);
+        return { facts: [CAND('e1'), { title: 'User has a dog named Rex', body: 'b', tags: [], confidence: 'certain' }], tasks: [] };
+      },
+      () => ({ ops: [{ item: 0, op: 'NOOP' }, { item: 1, op: 'ADD' }] }),
+    ]);
+    await t.wiki.setup();
+    await t.db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
+    await t.wiki.runLibrarian('u');
+    const titles = (await t.db.getAllAsync<any>(`SELECT title FROM ${P}entries`)).map((r) => r.title);
+    expect(titles).toEqual(['User has a dog named Rex']);
+    expect(ofCode(t.diagnostics, 'source_event_gone')).toHaveLength(1);
+  });
+});

@@ -988,6 +988,8 @@ export type WikiDiagnosticCode =
   | 'guidance_resolver_failed'
   | 'source_pointer_unresolved'
   | 'source_pointer_invalid'
+  | 'source_event_gone'
+  | 'derived_events_invalid'
   | 'source_store_source_too_large'
   | 'source_store_budget_exceeded'
   | 'source_store_hash_mismatch'
