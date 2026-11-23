@@ -110,6 +110,20 @@ describe('reopen()', () => {
     expect(await wiki.reopen('e1', 'old')).toEqual({ valid_to: null });
   });
 
+  it('a REAL (non-integer) or TEXT prior restores null', async () => {
+    await supersedeThenForget('future');
+    await db.runAsync(`UPDATE llm_wiki_entries SET prior_valid_to = ? WHERE id = 'old'`, [1.5e12 + 0.5]);
+    expect(await wiki.reopen('e1', 'old')).toEqual({ valid_to: null });
+  });
+
+  it('a TEXT prior restores null', async () => {
+    await insert('t1');
+    const { newId } = await wiki.supersede('e1', 't1', { title: 'n', body: 'b' }, { validFrom: 5_000 });
+    await wiki.forget('e1', { entryId: newId });
+    await db.runAsync(`UPDATE llm_wiki_entries SET prior_valid_to = 'soon' WHERE id = 't1'`);
+    expect(await wiki.reopen('e1', 't1')).toEqual({ valid_to: null });
+  });
+
   it('chain A->B->C: B blocked while C live; forget C reopens B with its prior; forget B reopens A with F', async () => {
     await insert('A');
     await insert('B2');

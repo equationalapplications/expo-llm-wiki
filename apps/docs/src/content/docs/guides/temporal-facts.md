@@ -64,7 +64,9 @@ non-finite `at` throws a `TypeError`.
   future is allowed, and that supersede overwrites the scheduled end
   with the supersede time. The overwritten end is kept in the fact's
   `prior_valid_to` and reported as an `info` diagnostic,
-  `supersede_scheduled_end_replaced` (`detail.factId`, `detail.priorValidTo`);
+  `supersede_scheduled_end_replaced` (`detail.factId`, `detail.priorValidTo`). The outbox `UPDATE`
+  payload carries the new `prior_valid_to` key; see
+  [Upgrading to schema v18](/expo-llm-wiki/guides/prisma-outbox/#upgrading-to-schema-v18);
 - is an `immutable_document` fact (re-ingest the document instead),
 - belongs to another entity,
 - is already superseded, or

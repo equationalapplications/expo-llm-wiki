@@ -1108,7 +1108,7 @@ export class EntryRepository extends BaseRepository {
     }
   }
 
-  /** Spec §4: write any subset of the four temporal columns. Absent key = untouched; null = clear. */
+  /** Spec §4: write any subset of the five temporal columns. Absent key = untouched; null = clear. */
   async setTemporal(
     id: string,
     entityId: string,

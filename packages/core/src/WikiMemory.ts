@@ -1186,7 +1186,10 @@ export class WikiMemory {
    * End `oldId`'s validity and link it to its replacement (spec §4.3). One
    * transaction. Throws `WikiSupersedeError` for missing, foreign, already
    * superseded, already expired, immutable-document, or cyclic targets, and
-   * for an inverted or empty interval (`invalid_interval`).
+   * for an inverted or empty interval (`invalid_interval`). When the old
+   * fact carried a future `valid_to`, that scheduled end is overwritten but
+   * kept in `prior_valid_to` (restored by `reopen()`) and reported as the
+   * `supersede_scheduled_end_replaced` diagnostic.
    */
   async supersede(
     entityId: string,

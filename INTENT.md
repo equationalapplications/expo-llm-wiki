@@ -104,7 +104,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   the host chose to keep, not a forgotten row. Erase never shortens
   the host's chosen window for it; once that window ends, an aged
   superseded fact becomes forgotten like any other. `reopen()` returns a
-  replaced fact (not an archive) to live once its replacement is
+  replaced fact (not an archive) to live (or, if its restored scheduled
+  end has already passed, to an archive) once its replacement is
   forgotten or gone.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
   or through the chain or source paths), or one a heal pass removed.
@@ -337,6 +338,7 @@ between states; the engine's own maintenance can also move one, as
 described below: `supersede`/`expire` end a fact's validity (supersede names a
 replacement; `expire()` ends a fact's validity without a replacement —
 an archive, not a deletion); `reopen()` returns a superseded fact to live
+(or, if its restored scheduled end has already passed, to an archive)
 once its replacement is forgotten or gone (it undoes a supersession, not
 an `expire()` archive, and restores the scheduled end `supersede` replaced);
 `forget()` forgets it;
@@ -449,7 +451,8 @@ break the erasure promise through the export door.
 ## Amendments
 
 - 2026-11-23 — Rule 12's "Four host verbs" becomes five: `reopen()`
-  returns a superseded fact to live once its replacement is forgotten or
+  returns a superseded fact to live (or, if its restored scheduled end
+  has already passed, to an archive) once its replacement is forgotten or
   gone. It undoes a supersession only; an `expire()` archive is not
   reopened, and it restores the scheduled end `supersede` replaced (kept
   in the fact's `prior_valid_to`). The glossary's Superseded entry gains

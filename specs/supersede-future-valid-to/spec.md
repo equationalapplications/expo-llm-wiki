@@ -265,8 +265,8 @@ unchanged. `forget({ includeChain })` is unchanged.
 MINOR, `feat(core)`: new column (additive migration v18), new method,
 new diagnostic code, two new `WikiSupersedeReason` members (precedent:
 expire added two as MINOR). No `BREAKING CHANGE` footer. The
-`graphrag-core` pin bump rides the same PR as a `fix(graphrag-core)`
-commit. Curated Thoughts pins an exact core version and re-pins on
+`graphrag-core` pin bump rides the same PR (as landed: in the feat(core)
+commit 6114a7aa, not a separate fix(graphrag-core) commit). Curated Thoughts pins an exact core version and re-pins on
 upgrade; a CT build at pin 17 opened on a store already migrated to 18
 fails its startup check by design, as every prior bump did.
 
@@ -416,9 +416,10 @@ reason; 5 and 13 pin existing behavior and pass before and after.
 
 ## Schema coordination (owner ruling 2026-11-23)
 
-Three pending changes share ONE schema version, v18: PR #468 (#443,
-partial index; merges first and creates v18), this PR (#470), and PR #469
-(#450). Until #468 merges, this branch implements its column as v18 with
+Three pending changes share ONE schema version, v18, stacked #468 (#443,
+partial index; creates v18) then #470 (this PR) then #469 (#450), landing
+in a single push to main; fallback to v19 if a published release ever
+contains v18 first. Until #468 merges, this branch implements its column as v18 with
 the DDL in its own named, exported, idempotent helper
 (`addPriorValidToColumn`) that the v18 migration body calls, so that
 rebasing onto #468 reduces to adding one helper call to its v18 body. The
