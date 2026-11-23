@@ -63,3 +63,12 @@ describe('heal receipt vocabulary (heal-screening-system-one §5)', () => {
     );
   });
 });
+
+describe('librarian rule-12 receipt vocabulary (type-on-write §9)', () => {
+  it('librarian_rewritten and librarian_superseded are severity info with fixed content-free messages', () => {
+    expect(SEVERITY.librarian_rewritten).toBe('info');
+    expect(SEVERITY.librarian_superseded).toBe('info');
+    expect(MESSAGE.librarian_rewritten).toBe('The librarian rewrote an engine-inferred fact in place; the previous text was not kept.');
+    expect(MESSAGE.librarian_superseded).toBe('The librarian ended a fact’s validity with a replacement fact.');
+  });
+});

@@ -6,8 +6,10 @@
  * the `'edges'` member; the resolution step added the `'resolve'` member and
  * the heal-screen step added the `'healScreen'` member. Each landed as one
  * new line in
- * `SystemOneThresholdSite`, so sibling PRs merged cleanly. Nothing outside
- * that boundary belongs here.
+ * `SystemOneThresholdSite`, so sibling PRs merged cleanly. The type-on-write
+ * step landed the `typeOnWrite` key; it reuses the `'typing'` floor and added
+ * no `SystemOneThresholdSite` member. Nothing outside that boundary belongs
+ * here.
  */
 
 /** Sites a System-One threshold can apply to. Exactly four members today: `'typing'`, `'edges'`, `'resolve'` and `'healScreen'` (§10 fence). */
@@ -60,6 +62,19 @@ export interface SystemOneConfig {
    * configuration that can silently discard a model-directed heal action.
    */
   healScreen?: 'auto' | 'llm';
+  /**
+   * Write-time typing for the librarian (both strategies). `'llm'` (default)
+   * keeps today's write path exactly: the generative prompt carries the
+   * ontology block and the model types each fact inline, or leaves it for
+   * backfill. `'auto'` asks `llmProvider.classify` to type every fact the
+   * librarian is about to insert, inside the pass's own token meter, and the
+   * ontology block leaves the write prompt for that pass. Facts the
+   * classifier does not type are written untyped exactly as today and stay
+   * eligible for backfill. Engages only when a classifier is present and the
+   * manifest is representable. Facts typed this way carry no
+   * manifest-drawn edges. There is no `'off'`.
+   */
+  typeOnWrite?: 'auto' | 'llm';
   /** Per-site minimum confidence. Only the classifier path reads a floor. */
   minConfidence?: Partial<Record<SystemOneThresholdSite, number>>;
   /**

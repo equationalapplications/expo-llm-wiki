@@ -138,6 +138,18 @@ export interface OntologyPromptContext {
   ontologyModeInstructions: string;
 }
 
+/**
+ * The ontology prompt context for the WRITE builders (ingest, librarian, ops
+ * extract; specs/type-on-write §5). Same two fields as `OntologyPromptContext`
+ * plus a literal brand, so a write context and a backfill context are not
+ * interchangeable at compile time.
+ */
+export interface WriteOntologyPromptContext {
+  site: 'write';
+  ontologyManifest: string;
+  ontologyModeInstructions: string;
+}
+
 /** Result of a single ontology backfill run. Omissions (facts the model declined
  * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {
@@ -967,6 +979,8 @@ export type WikiDiagnosticCode =
   | 'llm_usage'
   | 'librarian_gate'
   | 'librarian_op_rejected'
+  | 'librarian_rewritten'
+  | 'librarian_superseded'
   | 'contradicts_document'
   | 'ontology_backfill_held'
   | 'resolve_failed'
@@ -1068,6 +1082,8 @@ export interface WikiDiagnosticDetail {
   to?: string;
   /** `node_type_folded` only: always `'normalize'`. */
   via?: 'normalize';
+  /** `librarian_superseded` only: the id of the fact that replaced `factId`. */
+  replacementId?: string;
   /** `node_type_assigned` only: the manifest slug the fact was typed with (≤ 64 chars). */
   okfType?: string;
   /** `node_type_assigned` only: which path typed the fact. */
@@ -1894,6 +1910,12 @@ export interface EntityMaintenanceReport {
   ontologyBackfillPasses: number;
   /** Facts that received an okf_type during this run's ontology-backfill passes. */
   typed: number;
+  /**
+   * Facts typed by the classifier at the librarian write door during this run
+   * (`systemOne.typeOnWrite: 'auto'`). Absent unless write-time typing engaged
+   * for at least one pass. Kept apart from `typed` (backfill): two writers, two counters.
+   */
+  typedOnWrite?: number;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: LockedMaintenanceJob[];
   /**

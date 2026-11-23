@@ -852,15 +852,15 @@ describe('ingestDocument — partial commit (issue #92)', () => {
         JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] }),
     };
     const wiki = await freshWiki(provider);
-    // Inject a buildPromptContext failure by spying on the real ontology
+    // Inject a buildWritePromptContext failure by spying on the real ontology
     // service instance. Spying preserves the prototype methods on the
     // underlying service — a plain object-spread replacement would expose
-    // only `buildPromptContext` and fail any future call that uses a
+    // only `buildWritePromptContext` and fail any future call that uses a
     // sibling method (e.g. `getEffectiveState`) with a TypeError instead of
     // the intended assertion.
     const svc = wiki.__testAccess.ingestionService as IngestionService;
     const ontologySpy = vi
-      .spyOn((svc as any).ontologyService, 'buildPromptContext')
+      .spyOn((svc as any).ontologyService, 'buildWritePromptContext')
       .mockRejectedValue(new Error('DB connection lost'));
     try {
       await expect(

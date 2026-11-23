@@ -360,8 +360,13 @@ same way.
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
-visible. Today heal and the librarian report how many facts they forget
-or rewrite, not which; per-fact pass reports are planned. Today forget,
+visible. Today heal reports which: every model-directed move emits a
+per-fact receipt (`heal_deleted` / `heal_downgraded`, with `applied`,
+`applied_unscreened`, or `below_floor` reasons) and `HealResult`
+carries the changed-id lists. The librarian also reports which: each
+fact it rewrites in place or supersedes emits a per-fact receipt
+(`librarian_rewritten` / `librarian_superseded`), by id and never by
+text. Today forget,
 prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
 canary-reproducible), which is why `erase()` exists and claims
@@ -475,6 +480,13 @@ break the erasure promise through the export door.
   erasing a replacement needs a verb that restores the predecessor with
   the engine's own outbox, search and cache handling, and rule 12
   enumerates the verbs, so a new verb is an amendment.
+- 2026-11-23 — Rule 12's "today" sentence changes: the librarian now
+  reports which facts it rewrites in place or supersedes, by id only, in
+  per-fact diagnostics (`librarian_rewritten`, `librarian_superseded`;
+  step 13, `specs/type-on-write/`). Why: the rule promised the librarian's
+  per-fact pass report would follow the engine's own destructive edits, and
+  step 13 ships it. No promise changes; the sentence stops saying the
+  report is only planned.
 - 2026-11-20 — Rule 11 is retitled "Benchmarks back claims and gate the
   native engine" and gains a paragraph: the engine runs whatever model
   the host hands it, puts no benchmark in front of that choice, and
@@ -494,6 +506,14 @@ break the erasure promise through the export door.
   agent gets the engine's best effort, while a host that wants human
   review will be able to build it from what the engine reports. Rule 12's
   four host verbs did not name these edits.
+- 2026-11-22 — Rule 12's promised per-fact pass-report sentence ships
+  with PR #463 (step 12): heal now emits a `heal_deleted` /
+  `heal_downgraded` receipt for every model-directed move (reasons
+  `applied`, `applied_unscreened`, `below_floor`) and returns the
+  changed-id lists on `HealResult`; rule 12's "today" line is updated
+  accordingly. Receipt persistence is the host's `onDiagnostic` sink,
+  not the event table (see PR #463's docs). The librarian's per-fact
+  pass report remains planned (step 13).
 - 2026-11-17 — Rules 12 and 13 are added, and the glossary gains
   Superseded, Forgotten, Gone and Erased. Owner spec stop A–H for
   issue #401 (forget must erase, `specs/forget-erasure/`): the owner

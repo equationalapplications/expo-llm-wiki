@@ -85,7 +85,7 @@ describe('ops pass with the System-One resolve screen', () => {
     expect(emitted).toContain('fact_deduplicated');
   });
 
-  it('the pass result carries only its pre-existing keys', async () => {
+  it('the pass result carries its pre-existing keys plus the internal rule-12 id lists (type-on-write §9), and no typing field', async () => {
     const { db, wiki, classify } = mk({
       config: AUTO,
       responses: [() => ({ facts: [FACT('User lives in San Francisco now')], tasks: [] })],
@@ -95,7 +95,7 @@ describe('ops pass with the System-One resolve screen', () => {
     const deps = (wiki.__testAccess.maintenanceService as any).librarianDeps();
     const res = await runOpsLibrarianPass(deps, { entityId: 'u', trigger: 'call' });
     expect(classify).toHaveBeenCalledTimes(1);
-    expect(Object.keys(res).sort()).toEqual(['factsWritten', 'processedThrough']);
+    expect(Object.keys(res).sort()).toEqual(['factsWritten', 'processedThrough', 'rewrittenIds', 'supersededIds']);
   });
 
   it('keyword mode: the screen engages (ruling Q4)', async () => {

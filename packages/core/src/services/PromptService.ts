@@ -20,6 +20,9 @@ export interface GuidanceDiagnostic {
   };
 }
 import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WikiInstructions } from '../types';
+
+/** Backfill builders accept the backfill context only: a write context (branded) is rejected. */
+type BackfillOntologyContext = OntologyPromptContext & { site?: never };
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_ANCHOR_BODY_CHARS,
@@ -155,10 +158,45 @@ export class PromptService {
     return out;
   }
 
-  private buildSystemPrompt(
+  /** Write-site variant (ingest, librarian, ops extract). Body identical to the backfill variant by design (specs/type-on-write §5). */
+  private buildWriteSystemPrompt(
     template: string,
     variables: Record<string, unknown>,
     ontologyContext: OntologyPromptContext | null | undefined,
+  ): string {
+    const hasOntologyPlaceholders = this.hasOntologyPlaceholders(template);
+    // Strip before hydration so variable values (document text) are never edited.
+    const effective = hasOntologyPlaceholders && ontologyContext == null
+      ? this.stripOntologyPlaceholders(template)
+      : template;
+
+    const shouldHydrate = Object.keys(variables).some((key) =>
+      new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`).test(effective),
+    ) || (ontologyContext != null && hasOntologyPlaceholders);
+
+    // Only the two prompt fields hydrate; the brand is never a template variable.
+    const hydrated = shouldHydrate
+      ? this.hydrate(effective, {
+        ...variables,
+        ...(ontologyContext
+          ? { ontologyManifest: ontologyContext.ontologyManifest, ontologyModeInstructions: ontologyContext.ontologyModeInstructions }
+          : {}),
+      })
+      : effective;
+
+    return hasOntologyPlaceholders ? hydrated : this.appendWriteOntology(hydrated, ontologyContext);
+  }
+
+  private appendWriteOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {
+    if (!ctx) return systemPrompt;
+    return `${systemPrompt}\n\n${ctx.ontologyModeInstructions}`;
+  }
+
+  /** Backfill-site variant. Body identical to the write variant by design (specs/type-on-write §5). */
+  private buildBackfillSystemPrompt(
+    template: string,
+    variables: Record<string, unknown>,
+    ontologyContext: BackfillOntologyContext | null | undefined,
   ): string {
     const hasOntologyPlaceholders = this.hasOntologyPlaceholders(template);
     // Strip before hydration so variable values (document text) are never edited.
@@ -174,10 +212,10 @@ export class PromptService {
       ? this.hydrate(effective, { ...variables, ...(ontologyContext ?? {}) })
       : effective;
 
-    return hasOntologyPlaceholders ? hydrated : this.appendOntology(hydrated, ontologyContext);
+    return hasOntologyPlaceholders ? hydrated : this.appendBackfillOntology(hydrated, ontologyContext);
   }
 
-  private appendOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {
+  private appendBackfillOntology(systemPrompt: string, ctx: BackfillOntologyContext | null | undefined): string {
     if (!ctx) return systemPrompt;
     return `${systemPrompt}\n\n${ctx.ontologyModeInstructions}`;
   }
@@ -192,12 +230,12 @@ export class PromptService {
     const hasDocumentChunk = /\{\{\s*documentChunk\s*\}\}/.test(template);
     if (hasDocumentChunk || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(template, { documentChunk }, ontologyContext), guidance), 'ingest'),
+        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(template, { documentChunk }, ontologyContext), guidance), 'ingest'),
         userPrompt: hasDocumentChunk ? 'Please extract the facts.' : `Document Chunk:\n${documentChunk}`,
       };
     }
     return {
-      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(template, ontologyContext), guidance), 'ingest'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendWriteOntology(template, ontologyContext), guidance), 'ingest'),
       userPrompt: `Document Chunk:\n${documentChunk}`,
     };
   }
@@ -222,7 +260,7 @@ export class PromptService {
       : {};
     if (hasEvents || hasCurrentFacts || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(template, { events, currentFacts }, ontologyContext), guidance), 'librarian'),
+        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(template, { events, currentFacts }, ontologyContext), guidance), 'librarian'),
         userPrompt: (hasEvents || hasCurrentFacts)
           ? 'Please synthesize the context.'
           : `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
@@ -230,7 +268,7 @@ export class PromptService {
       };
     }
     return {
-      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(template, ontologyContext), guidance), 'librarian'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendWriteOntology(template, ontologyContext), guidance), 'librarian'),
       userPrompt: `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
       ...corpusField,
     };
@@ -348,7 +386,7 @@ export class PromptService {
   buildOntologyBackfillPrompt(
     facts: unknown[],
     runtimeOverride?: string,
-    ontologyContext?: OntologyPromptContext | null,
+    ontologyContext?: BackfillOntologyContext | null,
     candidateSections?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT;
@@ -361,7 +399,7 @@ export class PromptService {
     // specs/backfill-shortlist-wiring/spec.md.
     if (hasFacts || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.buildSystemPrompt(template, { facts }, ontologyContext),
+        systemPrompt: this.buildBackfillSystemPrompt(template, { facts }, ontologyContext),
         userPrompt: hasFacts ? 'Please classify the facts.' : `Facts:\n${JSON.stringify(facts, null, 2)}`,
       };
     }
@@ -373,7 +411,7 @@ export class PromptService {
     // sections now ride in the user prompt after the Facts JSON.
     const factsBlock = `Facts:\n${JSON.stringify(facts, null, 2)}`;
     return {
-      systemPrompt: this.appendOntology(template, ontologyContext),
+      systemPrompt: this.appendBackfillOntology(template, ontologyContext),
       userPrompt: candidateSections !== undefined ? `${factsBlock}\n\n${candidateSections}` : factsBlock,
     };
   }
@@ -387,7 +425,7 @@ export class PromptService {
     const lines = events.map((l) => `${l.label} [${new Date(l.at).toISOString()}] (${l.event.event_type}) ${l.event.summary}`);
     const grounding = this.groundingFor('librarian');
     return {
-      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendWriteOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian'),
       userPrompt: `Events:\n${lines.join('\n')}`,
       // Corpus entries are one-per-batch-event in batch order (summaries are
       // TEXT NOT NULL, so the filter inside buildGroundingCorpus drops
@@ -411,18 +449,37 @@ export class PromptService {
    * ontology context, matching `buildHealPrompt`.
    */
   buildInstructionTemplates(
-    ontologyContext: OntologyPromptContext | null,
+    writeContext: OntologyPromptContext | null,
     librarianStrategy: 'legacy' | 'ops',
     guidance?: string,
+    /**
+     * The backfill context (specs/type-on-write §5). Omitted: derived from
+     * `writeContext`, which preserves the single-context behavior of this
+     * method before the split. `WikiMemory.getInstructions` passes it
+     * explicitly because an engaged entity's write context is `null` while
+     * its backfill prompt still carries the manifest.
+     */
+    backfillContext?: BackfillOntologyContext | null,
+    /**
+     * The ingest write context. Omitted: `writeContext`. `getInstructions`
+     * passes the un-engaged context here because write-time typing governs the
+     * librarian only (specs/type-on-write §5, step-14 seam).
+     */
+    ingestContext?: OntologyPromptContext | null,
   ): WikiInstructions {
     const o = this.globalOverrides;
+    const backfill: BackfillOntologyContext | null = backfillContext !== undefined
+      ? backfillContext
+      : writeContext
+        ? { ontologyManifest: writeContext.ontologyManifest, ontologyModeInstructions: writeContext.ontologyModeInstructions }
+        : null;
     return {
-      ingest: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'ingest'),
+      ingest: this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ingestContext !== undefined ? ingestContext : writeContext), guidance), 'ingest'),
       librarian: librarianStrategy === 'ops'
-        ? this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian')
-        : this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'librarian'),
+        ? this.appendGrounding(this.appendGuidance(this.appendWriteOntology(OPS_EXTRACT_SYSTEM_PROMPT, writeContext), guidance), 'librarian')
+        : this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(LIBRARIAN_SYSTEM_PROMPT, {}, writeContext), guidance), 'librarian'),
       heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
-      ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
+      ontologyBackfill: this.buildBackfillSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, backfill),
     };
   }
 }
