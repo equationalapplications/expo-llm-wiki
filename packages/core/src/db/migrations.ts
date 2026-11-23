@@ -444,8 +444,14 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 18,
-    description: 'prior_valid_to: record the scheduled end a supersede overwrote',
+    description: 'Partial index on entries(entity_id, deleted_at) for prune and tombstone probes; nullable prior_valid_to column recording the scheduled end a supersede overwrote',
     run: async (db, prefix) => {
+      // Shared v18 (owner ruling 2026-11-23): #443, #451 and #450 land in ONE
+      // schema version. This body only calls named, idempotent helpers, so a
+      // later PR appends one helper call here. Do not inline DDL. The three PRs
+      // land in ONE push to main (stacked; only the top PR merges). If a release
+      // ever ships v18 before they land, the rest go in v19 instead.
+      await createEntriesDeletedIndex(db, prefix);
       await addPriorValidToColumn(db, prefix);
     },
   },
@@ -462,6 +468,19 @@ export async function addPriorValidToColumn(db: SQLiteAdapter, prefix: string): 
   if (!cols.some((c) => c.name === 'prior_valid_to')) {
     await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN prior_valid_to INTEGER`);
   }
+}
+
+/**
+ * Partial index serving every `deleted_at IS NOT NULL` prune/tombstone probe
+ * (specs/prune-deleted-at-index). Created only by v18 and the fresh-store path,
+ * never by setupDatabase's every-open DDL, so the migration gate can defer its
+ * build out of a caller's `migrations: 'refuse'` open. Idempotent.
+ */
+export async function createEntriesDeletedIndex(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS ${prefix}entries_deleted_idx ON ${prefix}entries(entity_id, deleted_at) ` +
+      `WHERE deleted_at IS NOT NULL`,
+  );
 }
 
 /**
