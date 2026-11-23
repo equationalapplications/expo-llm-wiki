@@ -28,7 +28,8 @@ const preview = await wiki.forget('user-123', { sourceRef: 'doc.md' }, { dryRun:
 
 `forget()` **soft-deletes** facts and tasks and is idempotent: calling it again returns zero counts.
 (`clearAll` hard-deletes edges and, with `includeEvents`, events; there is nothing to soft-delete there.)
-Forgotten facts disappear from reads immediately.
+Forgotten facts disappear from reads immediately. If you forget a fact's replacement, `reopen()` restores the
+superseded predecessor (see [Temporal](/expo-llm-wiki/guides/temporal-facts/#reopen-a-superseded-fact)).
 
 ## Hard delete: prune
 

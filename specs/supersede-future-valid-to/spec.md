@@ -232,6 +232,14 @@ the four existing keys. `upsertForImport`'s SQL is untouched (the
 temporal columns are written by `setTemporal`, not by that statement).
 A pre-v18 dump imports with the column null, which is honest.
 
+**As-landed amendment (owner instruction 2026-11-23):** the write is
+presence-aware, following `source_pointer`'s pattern, so a pre-v18 dump
+never nulls a stored value: a key present (even null) is authoritative;
+an absent key clears the column only when the fact is not superseded
+(the column must be null there) and otherwise leaves the stored value
+untouched. (`exportDump` and OKF omit the key when null, as for the other
+optional temporal fields.)
+
 ### D6 — erasure and retention
 
 Nothing new. The column lives on the entries row: `runPrune` and
