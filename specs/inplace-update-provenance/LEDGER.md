@@ -1,6 +1,6 @@
 # In-place update provenance — ledger
 
-In flight: 7 dump export/import
+In flight: 9 docs, as-landed notes, INTENT amendment
 
 - [x] 1. Schema + v18 migration + Rust pin + helpers — evidence: d7807b4b; vitest derivedEvents/migrations/migration17/setupBudget/sourceRefNormalize pass; cargo test graphrag-core all ok
 - [x] 2. WikiFact field, mapper, upserts (presence flag), outbox — evidence: d7807b4b; vitest run __tests__/derivedEvents.test.ts (9 pass)
@@ -8,8 +8,8 @@ In flight: 7 dump export/import
 - [x] 4. UPDATE-in-place writer + unresolved-merge diagnostic — evidence: e4a16e6a; vitest run __tests__/derivedEvents.test.ts (20 pass) + opsLibrarian/sourcePointers/librarianLegacyParity/opsResolve/publicExports (73 pass)
 - [x] 5. UPDATE-as-SUPERSEDE inheritance — evidence: e4a16e6a; vitest run __tests__/derivedEvents.test.ts (20 pass) + opsLibrarian/sourcePointers/librarianLegacyParity/opsResolve/publicExports (73 pass)
 - [x] 6. Apply-time re-check + source_event_gone — evidence: e4a16e6a; vitest run __tests__/derivedEvents.test.ts (20 pass) + opsLibrarian/sourcePointers/librarianLegacyParity/opsResolve/publicExports (73 pass)
-- [ ] 7. Dump export/import + derived_events_invalid — evidence:
-- [ ] 8. OKF emit/parse — evidence:
+- [x] 7. Dump export/import + derived_events_invalid — evidence: 35b3c51b; vitest run __tests__/derivedEvents.test.ts __tests__/okfReimport.test.ts __tests__/sourcePointers.test.ts (50 pass)
+- [x] 8. OKF emit/parse — evidence: 35b3c51b; vitest run __tests__/derivedEvents.test.ts __tests__/okfReimport.test.ts __tests__/sourcePointers.test.ts (50 pass)
 - [ ] 9. Docs, as-landed notes, INTENT amendment — evidence:
 - [ ] 10. Full suite, typecheck, cargo, PR body — evidence:
 
