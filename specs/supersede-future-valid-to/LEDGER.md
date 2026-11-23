@@ -1,15 +1,15 @@
 # supersede/reopen — ledger
 
-In flight: 1
+In flight: nothing (implementation done; awaiting review loops)
 
-- [ ] 1. Migration v18 helper, schema, Rust pin — evidence:
-- [ ] 2. Repository plumbing + types — evidence:
-- [ ] 3. supersedeInTx records prior end — evidence:
-- [ ] 4. Diagnostic + emission — evidence:
-- [ ] 5. reopen() — evidence:
-- [ ] 6. Export/import/OKF — evidence:
-- [ ] 7. Docs — evidence:
-- [ ] 8. INTENT amendment — evidence:
-- [ ] 9. Full verification — evidence:
+- [x] 1. Migration v18 helper, schema, Rust pin — evidence: schema v18 helper commit; `vitest run __tests__/migration18.test.ts`, cargo test via lock green
+- [x] 2. Repository plumbing + types — evidence: commit 'supersede records the replaced end'
+- [x] 3. supersedeInTx records prior end — evidence: `vitest run __tests__/supersede.test.ts`
+- [x] 4. Diagnostic + emission — evidence: `vitest run __tests__/opsLibrarian.test.ts`
+- [x] 5. reopen() — evidence: `vitest run __tests__/reopen.test.ts` (18 tests)
+- [x] 6. Export/import/OKF — evidence: `vitest run __tests__/temporalRoundTrip.test.ts`
+- [x] 7. Docs — evidence: docs commit
+- [x] 8. INTENT amendment — evidence: INTENT rule 12 amendment 2026-11-23
+- [x] 9. Full verification — evidence: core suite 3127/3128 then fixed fixture; `pnpm -r typecheck` clean
 
 ## Discrepancies
