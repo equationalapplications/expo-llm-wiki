@@ -168,6 +168,7 @@ describe('ImportExportService', () => {
         expect.objectContaining({ source_type: 'immutable_document' }),
         mockDb,
         false,
+        false,
       );
     });
 
