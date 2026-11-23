@@ -1,6 +1,6 @@
 # Type on write — ledger
 
-In flight: task 10 (full verification)
+In flight: nothing (awaiting review loops)
 
 - [x] 1. Byte-identity fixtures on unmodified code — evidence: 4f50455d; `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/promptByteIdentity.test.ts` 2 passed
 - [x] 2. Opt-in key and resolver — evidence: d853c9cf; `vitest run __tests__/systemOneConfig.test.ts` 67 passed
@@ -11,6 +11,6 @@ In flight: task 10 (full verification)
 - [x] 7. Ops integration — evidence: 43b95731; `vitest run __tests__/typeOnWriteLibrarian.test.ts __tests__/typeOnWriteOps.test.ts` 39 + 11 passed; ops/librarian/ground/runPending/systemOne/classifier suites green
 - [x] 8. Counters, scheduler, getInstructions — evidence: f34ddd50; same commit; scheduler typedOnWrite, getInstructions, backfill interaction asserted in typeOnWriteOps.test.ts
 - [x] 9. Docs and INTENT rule 12 — evidence: 5115a3d0; `vitest run __tests__/typeOnWriteDocs.test.ts` 1 passed; docs pages and INTENT edited
-- [ ] 10. Full verification and PR body — evidence:
+- [x] 10. Full verification and PR body — evidence: c5670e1f; `pnpm --filter @equationalapplications/core-llm-wiki test` 265 files / 3181 tests passed; `pnpm -r typecheck`: core, okf, tools, mcp-server, react, schema-org clean; integration/expo fail only on unbuilt sibling dist (environmental)
 
 ## Discrepancies
