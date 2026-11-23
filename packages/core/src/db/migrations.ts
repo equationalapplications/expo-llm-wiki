@@ -442,7 +442,30 @@ export const MIGRATIONS: Migration[] = [
       // database today, so re-running v17 is trivially idempotent.
     },
   },
+  {
+    version: 18,
+    description: 'Partial index on entries(entity_id, deleted_at) for prune and tombstone probes',
+    run: async (db, prefix) => {
+      // Shared v18 (owner ruling 2026-11-23): #443, #451 and #450 land in ONE
+      // schema version. This body only calls named, idempotent helpers, so a
+      // later PR appends one helper call here. Do not inline DDL.
+      await createEntriesDeletedIndex(db, prefix);
+    },
+  },
 ];
+
+/**
+ * Partial index serving every `deleted_at IS NOT NULL` prune/tombstone probe
+ * (specs/prune-deleted-at-index). Created only by v18 and the fresh-store path,
+ * never by setupDatabase's every-open DDL, so the migration gate can defer its
+ * build out of a caller's `migrations: 'refuse'` open. Idempotent.
+ */
+export async function createEntriesDeletedIndex(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS ${prefix}entries_deleted_idx ON ${prefix}entries(entity_id, deleted_at) ` +
+      `WHERE deleted_at IS NOT NULL`,
+  );
+}
 
 /**
  * Partial index covering the legacy source_type probe. Created only by v14 and

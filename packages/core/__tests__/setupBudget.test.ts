@@ -63,8 +63,8 @@ describe('setupBudgetMs (#280 B1)', () => {
 });
 
 describe('schema v16 (specs/source-pointers)', () => {
-  it('CURRENT_SCHEMA_VERSION is 17', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(17);
+  it('CURRENT_SCHEMA_VERSION is 18', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(18);
   });
 
   it('a fresh FTS5 store gets the fts_pending indexes from init (v15 never runs on it)', async () => {
@@ -79,12 +79,12 @@ describe('schema v16 (specs/source-pointers)', () => {
     await db.runAsync(`UPDATE ${P}meta SET value = '15' WHERE key = 'schema_version'`);
     await expect(open(db).setup({ migrations: 'refuse' })).rejects.toMatchObject({
       name: 'WikiMigrationRequiredError',
-      pendingWork: { type: 'schema_migration', fromVersion: 15, toVersion: 17 },
+      pendingWork: { type: 'schema_migration', fromVersion: 15, toVersion: 18 },
     });
     const before = await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`);
     expect(before!.value).toBe('15');
     await open(db).setup();
-    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('17');
+    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('18');
     // v16 added the source_pointer column on a store that predates it.
     const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${P}entries)`);
     expect(cols.map((c) => c.name)).toContain('source_pointer');
@@ -95,7 +95,7 @@ describe('schema v16 (specs/source-pointers)', () => {
     await open(db, { indexStrategy: 'minisearch' }).setup();
     await db.runAsync(`UPDATE ${P}meta SET value = '15' WHERE key = 'schema_version'`);
     await open(db, { indexStrategy: 'minisearch' }).setup();
-    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('17');
+    expect((await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`))!.value).toBe('18');
     expect(await db.getFirstAsync(`SELECT name FROM sqlite_master WHERE name = '${P}fts_pending'`)).toBeNull();
   });
 });
