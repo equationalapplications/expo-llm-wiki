@@ -956,6 +956,8 @@ export type WikiDiagnosticCode =
   | 'llm_usage'
   | 'librarian_gate'
   | 'librarian_op_rejected'
+  | 'librarian_rewritten'
+  | 'librarian_superseded'
   | 'contradicts_document'
   | 'ontology_backfill_held'
   | 'resolve_failed'
@@ -1052,6 +1054,8 @@ export interface WikiDiagnosticDetail {
   to?: string;
   /** `node_type_folded` only: always `'normalize'`. */
   via?: 'normalize';
+  /** `librarian_superseded` only: the id of the fact that replaced `factId`. */
+  replacementId?: string;
   /** `node_type_assigned` only: the manifest slug the fact was typed with (≤ 64 chars). */
   okfType?: string;
   /** `node_type_assigned` only: which path typed the fact. */

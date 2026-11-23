@@ -87,7 +87,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
     return { processedThrough: null, factsWritten: 0, budgetStop: res.budgetStop };
   }
 
-  const { written, updatedIds } = await applyOps(deps, ctx, {
+  const { written, updatedIds, supersededIds } = await applyOps(deps, ctx, {
     gated,
     ops: res.ops,
     rejected: res.rejected,
@@ -119,5 +119,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   return {
     processedThrough: { at: last.created_at, id: last.id },
     factsWritten: written.length + updatedIds.length,
+    rewrittenIds: updatedIds,
+    supersededIds,
   };
 };

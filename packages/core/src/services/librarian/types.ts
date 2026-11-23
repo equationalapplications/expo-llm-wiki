@@ -113,6 +113,10 @@ export interface LibrarianResult {
   factsWritten: number;
   /** Set only when `callLlm` raised `WikiBudgetExhausted`. */
   budgetStop?: { requiredEstimate: number };
+  /** Ops only, internal: ids of existing facts the pass rewrote in place (type-on-write §9). */
+  rewrittenIds?: string[];
+  /** Ops only, internal: ids of facts the pass superseded (type-on-write §9). */
+  supersededIds?: string[];
 }
 
 /** The strategy contract. */
