@@ -2,13 +2,14 @@ import type { ExtractedFactEdge, ExtractedTask, OntologyUpdates, WikiFact, WikiS
 import { WikiSupersedeError } from '../../../types';
 import type { TitleIndexEntry } from '../../OntologyService';
 import { normalizeTitleKey, type EdgeDrop } from '../../../utils/ontology';
-import { edgeDropDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts, type DiagnosticBuffer } from '../../../utils/diagnostics';
+import { edgeDropDiagnostic, type DiagnosticBuffer } from '../../../utils/diagnostics';
 import { checkGrounding, groundingOutcome, type GroundingVerdict } from '../../../utils/grounding';
 import { generateId } from '../../../utils/ids';
 import { TemporalService } from '../../TemporalService';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import type { GatedCandidate } from './gate';
 import type { ResolvedOp } from './resolve';
+import { normalizeForWrite, type TypingCounters, type TypingOutcome } from '../../typing/typeOnWrite';
 
 export interface ApplyInput {
   gated: GatedCandidate[];
@@ -19,6 +20,8 @@ export interface ApplyInput {
   ontologyUpdates?: OntologyUpdates;
   groundingCorpus: string[] | null;
   diagnostics: DiagnosticBuffer;
+  /** Write-time typing outcomes keyed by candidate, and the pass counters `typed` is added to (type-on-write §4). Absent when not engaged. */
+  typing?: { outcomes: Map<GatedCandidate, TypingOutcome>; counters: TypingCounters };
 }
 
 export interface WrittenFact {
@@ -113,21 +116,13 @@ export async function applyOps(
       const title = overrides?.title ?? fact.title;
       const body = overrides?.body ?? fact.body;
       const id = generateId('fact_');
-      const drops: EdgeDrop[] = [];
-      const normalized = deps.ontologyService?.validateAndNormalizeFact(fact, manifest, { strict: false, drops })
-        ?? { okf_type: null, edges: [] };
-      // Model-door receipts (spec §4): never throws in any mode; suppressed at 'off'.
-      if (shouldEmitOntologyReceipt(mode)) {
-        for (const receipt of nodeTypeReceipts(
-          { entityId, operation: 'librarian', trigger },
-          id,
-          typeof fact.okf_type === 'string' ? fact.okf_type : '',
-          normalized.okf_type,
-          normalized.match,
-        )) {
-          input.diagnostics.push(receipt);
-        }
-      }
+      // Model-door receipts (spec §4) plus the type-on-write door (specs/type-on-write
+      // §4, §8): never throws in any mode; suppressed at 'off'.
+      const { normalized, drops, receipts: doorReceipts, typedByClassifier } = normalizeForWrite(
+        deps.ontologyService, fact, manifest, mode, input.typing?.outcomes.get(g), diagBase, id,
+      );
+      for (const receipt of doorReceipts) input.diagnostics.push(receipt);
+      if (typedByClassifier && input.typing) input.typing.counters.typed++;
       for (const d of drops) input.diagnostics.push(edgeDropDiagnostic(d, { ...diagBase, factId: id }));
       const gVerdict: GroundingVerdict | null = grounding
         ? checkGrounding(fact.evidence, input.groundingCorpus ?? [], grounding)

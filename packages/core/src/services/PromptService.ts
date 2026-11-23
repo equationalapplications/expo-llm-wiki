@@ -460,6 +460,12 @@ export class PromptService {
      * its backfill prompt still carries the manifest.
      */
     backfillContext?: BackfillOntologyContext | null,
+    /**
+     * The ingest write context. Omitted: `writeContext`. `getInstructions`
+     * passes the un-engaged context here because write-time typing governs the
+     * librarian only (specs/type-on-write §5, step-14 seam).
+     */
+    ingestContext?: WriteOntologyPromptContext | null,
   ): WikiInstructions {
     const o = this.globalOverrides;
     const backfill: BackfillOntologyContext | null = backfillContext !== undefined
@@ -468,7 +474,7 @@ export class PromptService {
         ? { ontologyManifest: writeContext.ontologyManifest, ontologyModeInstructions: writeContext.ontologyModeInstructions }
         : null;
     return {
-      ingest: this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, writeContext), guidance), 'ingest'),
+      ingest: this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ingestContext !== undefined ? ingestContext : writeContext), guidance), 'ingest'),
       librarian: librarianStrategy === 'ops'
         ? this.appendGrounding(this.appendGuidance(this.appendWriteOntology(OPS_EXTRACT_SYSTEM_PROMPT, writeContext), guidance), 'librarian')
         : this.appendGrounding(this.appendGuidance(this.buildWriteSystemPrompt(LIBRARIAN_SYSTEM_PROMPT, {}, writeContext), guidance), 'librarian'),

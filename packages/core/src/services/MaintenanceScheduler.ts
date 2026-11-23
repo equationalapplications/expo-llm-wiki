@@ -189,6 +189,7 @@ export class MaintenanceScheduler {
           if (!r.processedThrough) { st.librarian = false; continue; }
           st.report.librarianPasses++;
           st.report.factsWritten += r.factsWritten;
+          if (r.typing) st.report.typedOnWrite = (st.report.typedOnWrite ?? 0) + r.typing.typed;
           progressed = true;
           const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
           if ((await this.eventRepo.countAfter(entityId, wm)) === 0) st.librarian = false;

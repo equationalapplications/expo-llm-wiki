@@ -1891,6 +1891,12 @@ export interface EntityMaintenanceReport {
   ontologyBackfillPasses: number;
   /** Facts that received an okf_type during this run's ontology-backfill passes. */
   typed: number;
+  /**
+   * Facts typed by the classifier at the librarian write door during this run
+   * (`systemOne.typeOnWrite: 'auto'`). Absent unless write-time typing engaged
+   * for at least one pass. Kept apart from `typed` (backfill): two writers, two counters.
+   */
+  typedOnWrite?: number;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: LockedMaintenanceJob[];
   /**

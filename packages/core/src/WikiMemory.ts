@@ -1,3 +1,4 @@
+import { canEngageWriteTyping } from './services/typing/typeOnWrite';
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { emitDiagnostic } from './utils/diagnostics';
@@ -726,7 +727,14 @@ export class WikiMemory {
   async getInstructions(entityId: string): Promise<WikiInstructions> {
     assertEntityId(entityId);
     // Write builders get the write context, backfill its own (specs/type-on-write §5).
-    const writeContext = await this.ontologyService.buildWritePromptContext(entityId, { engaged: false });
+    // The librarian context reflects write-time typing engagement, so what the host
+    // reads is what the pass sends; ingest, heal and backfill are unchanged.
+    const state = await this.ontologyService.getEffectiveState(entityId);
+    const engaged = canEngageWriteTyping(this.options.config, this.options.llmProvider, state.mode, state.manifest);
+    const writeContext = await this.ontologyService.buildWritePromptContext(entityId, { engaged });
+    const ingestContext = engaged
+      ? await this.ontologyService.buildWritePromptContext(entityId, { engaged: false })
+      : writeContext;
     const backfillContext = await this.ontologyService.buildPromptContext(entityId);
     // Specs/librarian-guidance: same resolution as the write paths. A read
     // path that silently drops over-cap guidance would be the one place
@@ -741,7 +749,7 @@ export class WikiMemory {
         detail: diagnostic.detail,
       });
     }
-    return this.promptService.buildInstructionTemplates(writeContext, resolveLibrarianStrategy(this.options.config), guidance, backfillContext);
+    return this.promptService.buildInstructionTemplates(writeContext, resolveLibrarianStrategy(this.options.config), guidance, backfillContext, ingestContext);
   }
 
   /**

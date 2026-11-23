@@ -16,7 +16,7 @@ const choice = (c: string, confidence = 0.9): ClassifyResponse => ({
 const fact = (title: string, extra: Record<string, unknown> = {}) =>
   ({ title, body: 'b', tags: [], confidence: 'certain', source_event: 'e1', ...extra });
 
-export const STRATEGIES = ['legacy'] as const;
+export const STRATEGIES = ['legacy', 'ops'] as const;
 
 interface Opts {
   strategy: 'legacy' | 'ops';
