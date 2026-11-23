@@ -60,8 +60,9 @@ Schema v18 adds a nullable `prior_valid_to` column to facts. `supersede()` (incl
 `UPDATE` outbox payloads that include the key `prior_valid_to` (alongside `valid_to`, `superseded_by`
 and `superseded_at`). If your `mapEvent` spreads a payload into a Prisma `update`, add a
 `prior_valid_to` column (`BigInt?` or equivalent) to your model, or drop keys your schema doesn't know
-before the write. Otherwise Prisma throws `Unknown argument`. Other v18 changes are added to this note
-as they land.
+before the write. Otherwise Prisma throws `Unknown argument`. Schema v18 also adds a nullable `derived_events` column to facts (a JSON array of event ids). The
+librarian's in-place `UPDATE` payloads carry the key `derived_events`, so the same rule applies: add
+a `derived_events` column (`String?` or equivalent) or drop the key before the write.
 
 ## Config
 

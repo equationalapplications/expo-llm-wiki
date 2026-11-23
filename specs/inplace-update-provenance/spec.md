@@ -244,7 +244,9 @@ a new content-free diagnostic `source_event_gone` `{ itemIndex, sourceRef:
 id in `context_overflow_skipped`, `extract.ts:223`). As landed: the check is per-label by design: it tests only the candidates' own
 `sourceEventId`s (`IN (<those ids>)`), not every event of the batch, because a
 candidate is attributed only to the event it names and the engine cannot know
-which other batch events its text drew on. Candidates with an
+which other batch events its text drew on. With `systemOne.typeOnWrite` engaged, a candidate dropped by this re-check has
+already spent its classify call (counted in `typing.asked`; disclosed in
+`specs/type-on-write/` §3). Candidates with an
 unresolved pointer cannot be attributed and are not dropped; the spec and
 the guide say so. The watermark is unaffected: it is a `(created_at, id)`
 position, not a foreign key, and the batch's last event may legitimately

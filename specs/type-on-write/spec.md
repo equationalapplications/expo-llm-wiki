@@ -212,7 +212,10 @@ outcome per fact. It makes no database write.
   candidate on the UPDATE-in-place branch (`apply.ts:194-210`) is asked and
   its answer is unused when the existing row is updated instead of a new row
   inserted; at most one classify call per such candidate is spent for
-  nothing. For an ops SUPERSEDE, or an UPDATE applied as a supersede, the
+  nothing. A candidate that the apply-time source-event re-check later drops
+  (`source_event_gone`, `specs/inplace-update-provenance/` §3) has likewise
+  already spent its classify call (counted in `typing.asked`). For an ops
+  SUPERSEDE, or an UPDATE applied as a supersede, the
   classifier is asked about the candidate's raw text while the stored row may
   carry the merged `overrides` title/body. Disclosed; the alternative — reproducing `applyOps`'s branch logic
   before the transaction — is rejected as a drift hazard (Rejected
