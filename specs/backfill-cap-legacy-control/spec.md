@@ -1,6 +1,6 @@
 # Legacy-control runs for the backfill-cap B1/B2 tests
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Intent check:** Test-strength hardening only; no runtime behavior changes. Touches INTENT.md rule 11 (no accuracy or cost claims without a benchmark) only by not making any, and the "Spec first" and "Spec status honesty" change rules by carrying a Status line and amending the parent spec's test plan in the same PR. No rule is contradicted. Roadmap step 9 (`docs/ROADMAP.md:253`) owns the feature; this is its deferred follow-up (issue #456).
 
