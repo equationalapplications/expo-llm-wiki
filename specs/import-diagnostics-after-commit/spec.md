@@ -1,6 +1,6 @@
 # Import diagnostics are emitted only after the transaction commits
 
-**Status:** Draft. Issue #473. Not yet reviewed by the owner.
+**Status:** Reviewed (owner-approved as written 2026-11-23). Issue #473.
 **Date:** 2026-11-23
 **Intent check:** This is a honest-reporting fix (`INTENT.md` rule 6,
 "Honest reporting"). A diagnostic is a report to the host that something
