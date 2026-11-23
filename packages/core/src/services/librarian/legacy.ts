@@ -43,7 +43,7 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
       };
     });
 
-    const ontologyContext = await deps.ontologyService?.buildPromptContext(entityId) ?? null;
+    const ontologyContext = await deps.ontologyService?.buildWritePromptContext(entityId, { engaged: false }) ?? null;
 
     const promptEvents = events.reverse();
     const librarianGrounding = deps.promptService.groundingFor('librarian');

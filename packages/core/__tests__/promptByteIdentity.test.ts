@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PromptService } from '../src/services/PromptService';
-import { buildOntologyPromptAppendix } from '../src/prompts/ontology';
+import { buildOntologyPromptAppendix, buildWriteOntologyAppendix } from '../src/prompts/ontology';
 import { resolveGrounding } from '../src/utils/grounding';
 import { labelEvents } from '../src/services/librarian/ops/text';
 import type { OntologyMode } from '../src/types';
@@ -28,6 +28,7 @@ const PLAIN_OVERRIDE = 'Custom plain prompt with no placeholders.';
 
 const modes: Array<OntologyMode> = ['off', 'strict', 'emergent'];
 const ctxFor = (mode: OntologyMode) => (mode === 'off' ? null : buildOntologyPromptAppendix(mode, MANIFEST));
+const writeCtxFor = (mode: OntologyMode) => (mode === 'off' ? null : buildWriteOntologyAppendix(mode, MANIFEST));
 
 const events = [{ id: 'e1', entity_id: 'u', event_type: 'observation' as const, summary: 'Moved to Seattle in 2020', created_at: 1_700_000_000_000 }];
 const facts = [{ id: 'f1', title: 'Home', body: 'Lives in Seattle' }];
@@ -48,7 +49,7 @@ function record(): Record<string, string> {
         for (const [gi, guidance] of guidances.entries()) {
           const base = `${gname}|${oname}|${mode}|guid${gi}`;
           const ps = new PromptService(oname === 'none' ? undefined : { ingestSystemPrompt: override, ontologyBackfillSystemPrompt: override }, grounding);
-          const ctx = ctxFor(mode);
+          const ctx = writeCtxFor(mode);
           const ing = ps.buildIngestPrompt('Doc chunk text', override, ctx, guidance);
           put(`ingest|${base}|sys`, ing.systemPrompt); put(`ingest|${base}|user`, ing.userPrompt);
           const lib = ps.buildLibrarianPrompt(events, facts, override, ctx, guidance);
@@ -60,7 +61,7 @@ function record(): Record<string, string> {
             put(`opsExtract|${base}|corpus`, JSON.stringify(ops.groundingCorpus ?? null));
           }
           for (const strategy of ['legacy', 'ops'] as const) {
-            const t = ps.buildInstructionTemplates(ctx, strategy, guidance);
+            const t = ps.buildInstructionTemplates(ctx, strategy, guidance, ctxFor(mode));
             for (const k of Object.keys(t) as Array<keyof typeof t>) put(`templates|${strategy}|${base}|${k}`, t[k]);
           }
         }

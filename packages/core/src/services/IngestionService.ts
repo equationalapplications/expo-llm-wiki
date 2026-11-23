@@ -175,12 +175,12 @@ export class IngestionService {
       if (chunks.length === 0) return zeroChunkResult();
 
       // Hoist the ontology prompt context out of the per-chunk closure:
-      // `buildPromptContext(entityId)` depends only on entityId and reads
+      // `buildWritePromptContext(entityId, ...)` depends only on entityId and reads
       // the manifest ONCE; running it per chunk is N-1 wasted DB reads.
       // Hoisting also makes its DB-systemic nature structural — a fault
       // surfaces before any LLM tokens are spent, not buried under
       // `WikiIngestEmptyError` after the first LLM call. See spec §3.
-      const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+      const ontologyContext = await this.ontologyService?.buildWritePromptContext(entityId, { engaged: false }) ?? null;
       // Specs/librarian-guidance: guidance resolves here — once per ingest
       // call, next to the ontology hoist (after the duplicate-hash and
       // empty-chunk early returns, so a resolver never runs for an ingest

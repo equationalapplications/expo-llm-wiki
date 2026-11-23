@@ -59,6 +59,8 @@ export async function selectBatch(
   meter?: UsageMeter,
   guidance?: string,
   budget?: ContextBudget,
+  /** Write-time typing engaged for this pass (type-on-write §5): the manifest leaves the prompt. Same value as `runExtract`. */
+  engaged = false,
 ): Promise<{ batch: LabeledEvent[] } | { budgetStop: { requiredEstimate: number } }> {
   const events: WikiEvent[] = await deps.eventRepo.getAfter(entityId, wm, OPS_MAX_EVENTS_PER_PASS);
   if (events.length === 0) return { batch: [] };
@@ -74,7 +76,7 @@ export async function selectBatch(
   let batch = labelEvents(events.slice(0, n));
 
   if (meter && meter.budget !== undefined) {
-    const ontologyContext = (await deps.ontologyService?.buildPromptContext(entityId)) ?? null;
+    const ontologyContext = (await deps.ontologyService?.buildWritePromptContext(entityId, { engaged })) ?? null;
     for (;;) {
       const need = RESOLVE_RESERVE_FACTOR * estimatePrompt(deps.promptService.buildOpsExtractPrompt(batch, ontologyContext, guidance));
       if (meter.fits(need)) break;
@@ -85,7 +87,7 @@ export async function selectBatch(
   return { batch };
 }
 
-type OntologyCtx = Awaited<ReturnType<NonNullable<LibrarianDeps['ontologyService']>['buildPromptContext']>> | null;
+type OntologyCtx = Awaited<ReturnType<NonNullable<LibrarianDeps['ontologyService']>['buildWritePromptContext']>> | null;
 
 /** Split a summary into two halves at the whitespace boundary nearest the middle (hard split when none). */
 function splitSummary(summary: string): [string, string] {
@@ -259,8 +261,8 @@ async function extractWithOverflowRetry(
   }
 }
 
-export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
-  const ontologyContext = (await deps.ontologyService?.buildPromptContext(ctx.entityId)) ?? null;
+export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[], engaged = false): Promise<ExtractOutcome> {
+  const ontologyContext = (await deps.ontologyService?.buildWritePromptContext(ctx.entityId, { engaged })) ?? null;
   return extractWithOverflowRetry(deps, ctx, ontologyContext, batch, { checked: false });
 }
 

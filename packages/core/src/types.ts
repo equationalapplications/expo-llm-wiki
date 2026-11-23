@@ -138,6 +138,18 @@ export interface OntologyPromptContext {
   ontologyModeInstructions: string;
 }
 
+/**
+ * The ontology prompt context for the WRITE builders (ingest, librarian, ops
+ * extract; specs/type-on-write §5). Same two fields as `OntologyPromptContext`
+ * plus a literal brand, so a write context and a backfill context are not
+ * interchangeable at compile time.
+ */
+export interface WriteOntologyPromptContext {
+  site: 'write';
+  ontologyManifest: string;
+  ontologyModeInstructions: string;
+}
+
 /** Result of a single ontology backfill run. Omissions (facts the model declined
  * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {
