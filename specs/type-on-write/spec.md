@@ -252,8 +252,12 @@ not-yet-started fact `unattempted`; the step stops asking; the pass
 written; discarding them to signal the stop would re-pay the whole unit on
 the next pass (Rejected alternatives). The scheduler sees exhaustion at the
 next unit's pre-flight exactly as it does today
-(`MaintenanceScheduler.ts:184-188`). Rule 7 holds: no call ran past the
-meter.
+(`MaintenanceScheduler.ts:184-188`). The scheduler also stops the run as
+exhausted right after recording a pass whose `typing.unattempted > 0`. The
+meter is checked before each call and charged after, so with
+`chunkConcurrency` N up to N-1 in-flight classify calls can overshoot it
+(visible in `tokensUsed`); the classifier backfill has the same
+pre-existing pattern (follow-up issue #475).
 
 ### 4. How an accepted type reaches the row
 
@@ -370,9 +374,8 @@ equals today's; every prompt is byte-identical (Test plan 1).
   option, and no change to `tokenBudget`, `deadlineMs` or `jobs`.
 - **Stop reasons:** `budget_too_small` is classified on the librarian unit's
   `budgetStop.requiredEstimate` (`MaintenanceScheduler.ts:137-143`, `:184-188`),
-  which this step never sets (§3), so a typing-step exhaustion surfaces as
-  `budget_exhausted` at the next unit, exactly as a generative exhaustion
-  inside `applyOps`'s predecessors would. `deadlineMs` is checked between
+  which this step never sets (§3), so a typing-step exhaustion is surfaced by
+  the scheduler recording the pass and stopping the run as `budget_exhausted`. `deadlineMs` is checked between
   units and never interrupts one (`types.ts:1857`); the typing step adds
   awaited calls to the librarian unit, so a unit can run past the deadline
   by that much — the same contract heal and backfill already have.
@@ -721,8 +724,8 @@ recorded at lane open; the suite passes as a whole.
 8. **Budget.** A meter that admits extraction and resolution but exhausts
    during typing: the first facts are typed, the rest are written untyped,
    `typing.unattempted` counts them, `LibrarianResult.budgetStop` is
-   absent, the watermark advances, and the next scheduler unit reports
-   `budget_exhausted`. A meter that exhausts before extraction still returns
+   absent, the watermark advances, and the scheduler run reports
+   `stoppedReason: budget_exhausted` with `typedOnWrite` counting the typed facts. A meter that exhausts before extraction still returns
    `budgetStop` with nothing written (unchanged). `llm_usage` fires per
    classify call under `reportLlmUsage`, `estimated: true` when the
    provider reports no counts.

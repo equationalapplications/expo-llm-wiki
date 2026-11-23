@@ -95,7 +95,7 @@ replacement). Both are `info`, fire in every mode, and carry ids only, never tex
 With `systemOne.typeOnWrite: 'auto'` the librarian also makes one classify call per fact before it
 writes. Those calls draw from the same `tokenBudget` as the pass's other calls. If the budget runs
 out during typing, the pass still writes its facts, leaves the unasked ones untyped for the
-backfill, and the exhaustion shows up as `budget_exhausted` at the next unit. Like heal and
+backfill, and the run stops with `stoppedReason: 'budget_exhausted'`. Like heal and
 backfill, a librarian unit can run past `deadlineMs` by the length of its in-flight calls; the
 deadline is checked between units. The per-entity report gains `typedOnWrite`.
 
@@ -158,7 +158,7 @@ report.stoppedReason.reason; // 'complete' | 'deadline' | 'budget_exhausted' | '
 
 - `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on). An entity with only owed removals is listed only while at least one of its rows is outside backoff (never attempted, or last attempted longer ago than `min(2^attempts, 3600)` seconds). That doesn't make a loop over `getPendingMaintenance()` end on its own: each pass stops after 5 rejections in a row or one timeout, so the rows it didn't try keep the entity listed.
 - `runPendingMaintenance()` also delivers those owed removals first (the `'externalDeletions'` job). That work makes no model call and doesn't use the token budget. If you loop until nothing is pending, bound the iterations: a hook that keeps failing keeps removals pending, possibly for many passes.
-- The budget counts **text-generation tokens only**, not embedding calls. The counts come from
+- The budget counts **text-generation and classify tokens**, not embedding calls. It is checked before each call and charged after, so with `chunkConcurrency` above 1 up to N-1 in-flight calls can overshoot it (visible in `tokensUsed`; tracked in #475). The counts come from
   the provider when you implement `generateTextWithUsage`, and are estimated otherwise.
 - Entities share the budget fairly: each round runs one batch per entity.
 - A crash mid-batch loses nothing, because the librarian's watermark only advances after a commit.
