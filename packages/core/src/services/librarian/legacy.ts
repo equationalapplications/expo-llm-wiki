@@ -21,10 +21,15 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, factRejectionReason, taskRejectionReason } from '../../utils/pure';
 import { checkGrounding, groundingOutcome } from '../../utils/grounding';
 import { normalizeTitleKey, type EdgeDrop } from '../../utils/ontology';
-import { DiagnosticBuffer, edgeDropDiagnostic, shouldEmitOntologyReceipt, nodeTypeReceipts } from '../../utils/diagnostics';
+import { DiagnosticBuffer, edgeDropDiagnostic } from '../../utils/diagnostics';
 import { generateId } from '../../utils/ids';
 import { callLlm } from '../../utils/llmCall';
 import { WikiBudgetExhausted } from '../../utils/usage';
+import { resolveTypingMinConfidence } from '../../utils/engineDefaults';
+import {
+  canEngageWriteTyping, classifyFactsForWrite, emptyTypingCounters, normalizeForWrite, tallyTypingOutcome,
+  volunteeredTypeResolves, type TypingOutcome,
+} from '../typing/typeOnWrite';
 import { FUZZY_THRESHOLD, MIN_TOKENS_TO_QUALIFY } from './constants';
 import type { LibrarianStrategy, LibrarianResult, EventCursor, TitleIndexEntry } from './types';
 import type { ExtractedFact, ExtractedFactWithOntology, ExtractedTask, WikiFact, WikiTask, OntologyUpdates } from '../../types';
@@ -43,7 +48,13 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
       };
     });
 
-    const ontologyContext = await deps.ontologyService?.buildWritePromptContext(entityId, { engaged: false }) ?? null;
+    // Write-time typing (specs/type-on-write §2): resolved once per pass. When
+    // engaged, the ontology block leaves the write prompt and the host
+    // classifier types each fact before the transaction opens.
+    const typingState = deps.ontologyService ? await deps.ontologyService.getEffectiveState(entityId) : undefined;
+    const engaged = typingState !== undefined
+      && canEngageWriteTyping(deps.options.config, deps.options.llmProvider, typingState.mode, typingState.manifest);
+    const ontologyContext = await deps.ontologyService?.buildWritePromptContext(entityId, { engaged }) ?? null;
 
     const promptEvents = events.reverse();
     const librarianGrounding = deps.promptService.groundingFor('librarian');
@@ -100,6 +111,20 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
       if (valid) validTasks.push(valid);
       else diagBuffer.push({ ...diagBase, code: 'task_rejected', detail: { itemIndex, reason: taskRejectionReason(raw) } });
     });
+
+    // Typing step (§3): one classify call per valid fact whose own okf_type does
+    // not already resolve. No database write; model calls never run in the tx.
+    const typingCounters = engaged ? emptyTypingCounters() : undefined;
+    const typingOutcomes = new Map<ExtractedFact, TypingOutcome>();
+    if (engaged && typingState && typingCounters) {
+      const asked = validFacts.filter((f) => !volunteeredTypeResolves((f as ExtractedFactWithOntology).okf_type, typingState.manifest));
+      const outcomes = await classifyFactsForWrite(
+        deps.options,
+        { entityId, trigger, meter: ctx.meter, operation: 'librarian' },
+        asked, typingState.manifest, resolveTypingMinConfidence(deps.options.config),
+      );
+      asked.forEach((f, i) => { typingOutcomes.set(f, outcomes[i]); tallyTypingOutcome(typingCounters, outcomes[i]); });
+    }
 
     const now = Date.now();
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -162,22 +187,14 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
         const ontologyFact = fact as ExtractedFactWithOntology;
         const id = generateId('fact_');
-        const validationDrops: EdgeDrop[] = [];
-        const normalized = deps.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
-          ?? { okf_type: null, edges: [] };
+        // Model-door receipts (spec §4) and the type-on-write door (specs/type-on-write
+        // §4, §8): never throws in any mode; suppressed at 'off'.
+        const { normalized, drops: validationDrops, receipts: doorReceipts, typedByClassifier } = normalizeForWrite(
+          deps.ontologyService, ontologyFact, manifest, mode, typingOutcomes.get(fact), diagBase, id,
+        );
         for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
-        // Model-door receipts (spec §4): never throws in any mode; suppressed at 'off'.
-        if (shouldEmitOntologyReceipt(mode)) {
-          for (const receipt of nodeTypeReceipts(
-            { entityId, operation: 'librarian', trigger },
-            id,
-            ontologyFact.okf_type ?? '',
-            normalized.okf_type,
-            normalized.match,
-          )) {
-            diagBuffer.push(receipt);
-          }
-        }
+        for (const receipt of doorReceipts) diagBuffer.push(receipt);
+        if (typedByClassifier && typingCounters) typingCounters.typed++;
 
         const grounding = librarianGrounding
           ? groundingOutcome(checkGrounding(fact.evidence, librarianCorpus, librarianGrounding), now)
@@ -257,6 +274,6 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
     // alongside its id, so callers can advance checkpoints without re-querying.
     const processedThrough: EventCursor | null =
       events.length > 0 ? { at: events[events.length - 1].created_at, id: events[events.length - 1].id } : null;
-    const out: LibrarianResult = { processedThrough, factsWritten: insertedFacts.length };
+    const out: LibrarianResult = { processedThrough, factsWritten: insertedFacts.length, ...(typingCounters ? { typing: typingCounters } : {}) };
     return out;
   };

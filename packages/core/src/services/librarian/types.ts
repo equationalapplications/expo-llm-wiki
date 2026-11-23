@@ -113,6 +113,8 @@ export interface LibrarianResult {
   factsWritten: number;
   /** Set only when `callLlm` raised `WikiBudgetExhausted`. */
   budgetStop?: { requiredEstimate: number };
+  /** Present only when write-time typing engaged for the pass (type-on-write §8). */
+  typing?: import('../typing/typeOnWrite').TypingCounters;
   /** Ops only, internal: ids of existing facts the pass rewrote in place (type-on-write §9). */
   rewrittenIds?: string[];
   /** Ops only, internal: ids of facts the pass superseded (type-on-write §9). */

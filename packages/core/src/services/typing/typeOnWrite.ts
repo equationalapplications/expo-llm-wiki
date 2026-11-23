@@ -15,7 +15,9 @@ import { isReservedAbstainSlug, resolveNodeTypeMatch, ONTOLOGY_ABSTAIN_SENTINEL 
 import { withConcurrency } from '../../utils/pure';
 import { WikiBudgetExhausted, type UsageMeter } from '../../utils/usage';
 import { isContextOverflowError } from '../BoundedLlmCall';
-import type { WikiDiagnosticInput } from '../../utils/diagnostics';
+import { nodeTypeReceipts, shouldEmitOntologyReceipt, type WikiDiagnosticInput } from '../../utils/diagnostics';
+import type { EdgeDrop } from '../../utils/ontology';
+import type { ExtractedFactEdge, ExtractedFactWithOntology } from '../../types';
 
 /**
  * Upper bound on one classifier choice question (specs/system-one-config §5):
@@ -210,4 +212,92 @@ export function typingOutcomeReceipt(
     default:
       return null;
   }
+}
+
+/** The slice of `OntologyService` the write door needs; keeps this module free of a class import. */
+export interface WriteNormalizer {
+  validateAndNormalizeFact(
+    fact: ExtractedFactWithOntology,
+    manifest: OntologyManifest,
+    opts?: { strict?: boolean; entityId?: string; drops?: EdgeDrop[] },
+  ): {
+    okf_type: string | null;
+    edges: ExtractedFactEdge[];
+    match?: { raw: string; canonical: string; via: 'exact' | 'normalize' };
+  };
+}
+
+/**
+ * Normalize one inserted fact at the write door (specs/type-on-write §4, §8),
+ * shared by both strategies. The first normalization is today's, on the
+ * candidate's own `okf_type`. When it misses and the classifier accepted a
+ * type for the candidate, the row is normalized a second time with
+ * `{ okf_type: accepted, edges: [] }` against the in-transaction manifest
+ * (`edges: []`: edges the model volunteered without a type were already
+ * dropped by the first pass and are never revived, step-10 OQ6).
+ *
+ * Returns the normalization to store, the edge drops, the door receipts (all
+ * gated by `shouldEmitOntologyReceipt(mode)`), and whether the classifier's
+ * type reached the row.
+ */
+export function normalizeForWrite(
+  ontology: WriteNormalizer | undefined,
+  fact: ExtractedFactWithOntology,
+  manifest: OntologyManifest,
+  mode: OntologyMode,
+  outcome: TypingOutcome | undefined,
+  base: { entityId: string; operation: WikiDiagnosticOperation; trigger: WikiDiagnosticTrigger },
+  factId: string,
+): {
+  normalized: { okf_type: string | null; edges: ExtractedFactEdge[] };
+  drops: EdgeDrop[];
+  receipts: WikiDiagnosticInput[];
+  typedByClassifier: boolean;
+} {
+  const drops: EdgeDrop[] = [];
+  const receipts: WikiDiagnosticInput[] = [];
+  const emit = shouldEmitOntologyReceipt(mode);
+  let normalized: { okf_type: string | null; edges: ExtractedFactEdge[]; match?: { raw: string; canonical: string; via: 'exact' | 'normalize' } }
+    = ontology?.validateAndNormalizeFact(fact, manifest, { strict: false, drops }) ?? { okf_type: null, edges: [] };
+  if (emit) {
+    receipts.push(...nodeTypeReceipts(
+      base, factId, typeof fact.okf_type === 'string' ? fact.okf_type : '', normalized.okf_type, normalized.match,
+    ));
+  }
+  let typedByClassifier = false;
+  // In-transaction mode 'off' (a flip after the engagement check): a stored 'off'
+  // row keeps its manifest, so the slug would still resolve; the spec (§4) says
+  // the fact is stored untyped with no ontology receipts, so the classifier's
+  // type is not applied. (Spec §4's "the manifest is empty" does not match
+  // getEffectiveState; the observable outcome is what is implemented.)
+  if (!normalized.okf_type && outcome?.kind === 'accepted' && mode !== 'off') {
+    const second = ontology?.validateAndNormalizeFact(
+      { ...fact, okf_type: outcome.okfType, edges: [] }, manifest, { strict: false },
+    ) ?? { okf_type: null, edges: [] };
+    if (emit) {
+      // A slug that no longer resolves in-transaction surfaces as the door's own
+      // `node_type_dropped`; no new code path.
+      receipts.push(...nodeTypeReceipts(base, factId, outcome.okfType, second.okf_type, second.match));
+    }
+    normalized = { okf_type: second.okf_type, edges: [] };
+    if (second.okf_type) {
+      typedByClassifier = true;
+      if (emit) {
+        receipts.push({
+          ...base, code: 'node_type_assigned',
+          detail: { factId, okfType: second.okf_type, writer: 'classifier', confidence: outcome.confidence },
+        });
+      }
+    }
+  } else if (normalized.okf_type) {
+    // Generative-typed fact at the write door (OQ4): the audit's third leg.
+    if (emit) {
+      receipts.push({ ...base, code: 'node_type_assigned', detail: { factId, okfType: normalized.okf_type, writer: 'llm' } });
+    }
+  }
+  if (outcome && outcome.kind !== 'accepted' && emit) {
+    const r = typingOutcomeReceipt(base, factId, outcome);
+    if (r) receipts.push(r);
+  }
+  return { normalized, drops, receipts, typedByClassifier };
 }
