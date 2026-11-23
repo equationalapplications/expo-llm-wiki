@@ -1,8 +1,8 @@
 # Type on write — ledger
 
-In flight: task 1 (byte-identity fixtures)
+In flight: task 2 (opt-in key and resolver)
 
-- [ ] 1. Byte-identity fixtures on unmodified code — evidence:
+- [x] 1. Byte-identity fixtures on unmodified code — evidence: 4f50455d; `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/promptByteIdentity.test.ts` 2 passed
 - [ ] 2. Opt-in key and resolver — evidence:
 - [ ] 3. Rule-12 receipts — evidence:
 - [ ] 4. Template split — evidence:
