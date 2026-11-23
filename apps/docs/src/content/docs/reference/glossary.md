@@ -35,7 +35,7 @@ deletes all events only with `includeEvents: true`; plain erasure keeps them (se
 **Source pointer** — the provenance an ops librarian fact can carry: the event it came from
 (`event_id`) plus, when grounding permits, the verified quote. When the librarian merges new
 event text into an existing fact in place, the pointer is not re-attributed; the fact's
-`derived_events` list records the further events its wording rests on, and `forget({ eventId })`
+`derived_events` list records the further events its wording rests on (events the model attributed), and `forget({ eventId })`
 matches both.
 
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is

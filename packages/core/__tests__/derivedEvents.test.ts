@@ -519,3 +519,21 @@ describe('round-1 folds', () => {
     expect((await rowOf(t.db, 'acme')).superseded_by).toBeNull();
   });
 });
+
+describe('round-2 fold', () => {
+  it('two UPDATE candidates (E2, E3) in one pass against the same target both land: [E2, E3]', async () => {
+    const t = mkOps([
+      () => ({ facts: [CAND('e1'), { ...CAND('e2'), title: 'User leads the Acme platform team', body: 'Runs platform since 2022' }], tasks: [] }),
+      () => ({ ops: [
+        { item: 0, op: 'UPDATE', target: 'n1', title: 'User is a principal engineer at Acme', body: 'Principal since 2020' },
+        { item: 1, op: 'UPDATE', target: 'n1', title: 'User is a principal engineer leading platform at Acme', body: 'Principal, leads platform' },
+      ] }),
+    ]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }) });
+    await t.db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_2','u','observation','platform',110)`);
+    await t.wiki.runLibrarian('u');
+    const row = await rowOf(t.db, 'acme');
+    expect(row.title).toBe('User is a principal engineer leading platform at Acme');
+    expect(JSON.parse(row.derived_events)).toEqual(['evt_1', 'evt_2']);
+  });
+});

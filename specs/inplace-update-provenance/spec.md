@@ -32,9 +32,6 @@ superseded design, this block wins.
    same `apply.ts` branches; this spec defers to those. This spec keeps
    `source_event_gone` and `source_pointer_unresolved`. Test 2's receipt
    assertion and old Open question 5 are void.
-   **Answer: yes (default accepted 2026-11-23).**
-
-
 2. **One schema version, v18, three pending changes.** PR #468 (#443,
    partial index; merges first and creates v18), PR #470 (#451,
    `prior_valid_to`) and this PR share v18. This PR implements its column
@@ -42,14 +39,12 @@ superseded design, this block wins.
    (PRAGMA-guarded) helper (`addDerivedEventsColumn`) called from the v18
    migration body, so a later rebase reduces to adding one helper call.
    Rust `REQUIRED_SCHEMA_VERSION` 17 to 18 in this PR.
-   **Answer: no (default accepted 2026-11-23).**
-
-
+   Landing rule (orchestrator decision): `release.yml` auto-merges release PRs,
+   so the three v18 PRs land in ONE push to main, stacked #468 <- #470 <- #469;
+   this PR is never merged alone. If a published release ever contains v18
+   before all three land, the later changes go in v19.
 3. **Open question 7:** the follow-up issue for `forget-event-exclusion`
    is filed: [#472](https://github.com/equationalapplications/expo-llm-wiki/issues/472).
-   **Answer: yes, keep the re-check (default accepted 2026-11-23).**
-
-
 4. **Open question 6:** the INTENT dated amendment (glossary sentence plus
    a rule-12 note, no rule text change) lands in this PR, citing PR #469.
 
@@ -427,26 +422,27 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
     `publicExports.test.ts` updated.
 
 ## Open questions for Kurt
-   **Answer: reuse the list with the slug (default accepted 2026-11-23).**
-
-
 1. **Should `forget({ eventId })` delete facts that merely absorbed the
    event, by default?** Default: yes, same selector, no flag. Reason:
    D2 ruled the selector means "remove event X's traces from this entity",
    a merged fact is a trace, the engine cannot un-merge, and `dryRun`
    shows the count first.
+   **Answer: yes (default accepted 2026-11-23).**
 2. **Should a plain SUPERSEDE (no merged text) inherit the target's
    provenance?** Default: no. Reason: the replacement's text is the
    candidate's own extraction; the superseded target stays in the store
    with its own pointer and list and is matched directly.
+   **Answer: no (default accepted 2026-11-23).**
 3. **Keep the apply-time existence re-check (§3) in this PR?** Default:
    yes. Reason: it is one indexed `SELECT` and one diagnostic, closes the
    only race the engine's locks cannot, and is the seam the follow-up
    exclusion spec extends.
+   **Answer: yes, keep the re-check (default accepted 2026-11-23).**
 4. **Report dropped OKF `derived_events` values on the existing
    `dropped_pointer_values` list (with a reason slug) or a new field?**
    Default: reuse with slug. Reason: no second widening of `MemoryDump`
    for a content-free id list.
+   **Answer: reuse the list with the slug (default accepted 2026-11-23).**
 5. **Receipt name `librarian_updated` (heal-style) or the 2026-09-29
    spec's `fact_updated`?** Default: `librarian_updated`. Reason: the
    shipped heal receipts set the `<pass>_<verb>` convention; the older

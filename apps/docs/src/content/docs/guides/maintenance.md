@@ -34,7 +34,7 @@ config: { librarian: { strategy: 'legacy' } } // default: 'ops'
 On the `ops` strategy, an `UPDATE` of a librarian fact rewrites its title and body in place
 and records the event the new text came from in the fact's `derived_events` list (the
 `source_pointer` keeps naming the first event). An `UPDATE` that has to become a `SUPERSEDE`
-(its target is a user-stated fact; a document target has no provenance to pass on) gives the replacement the target's provenance
+(its target is a user-stated or user-confirmed fact; a document target yields a draft replacement that inherits the same way, though documents normally carry none) gives the replacement the target's provenance
 the same way; a plain `SUPERSEDE` does not. Facts rewritten before schema v18 have no list. If an
 event is deleted outside the engine while a pass runs, the pass drops that event's candidates
 and emits `source_event_gone`.
