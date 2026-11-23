@@ -88,6 +88,10 @@ changes. The T-pins below guard this.
    under a declared budget, `runBatched` splits a two-fact batch at the
    derived cap (the analog of the `runResolve 40_000-char batch split`
    test in `contextBudgetByteIdentity.test.ts`).
+   B1 and B2 each carry a legacy-control run (issue #456, spec
+   `specs/backfill-cap-legacy-control/spec.md`): B1-control proves the B1
+   pair splits under legacy; B2-control records that B2's shape is identical
+   under legacy (upper-bracket pin only).
 5. No silent fallback. A test asserts a malformed `context` section throws
    out of the backfill pass; it never degrades to the legacy number.
 6. Suite health. All vitest suites pass. The controller records baseline
