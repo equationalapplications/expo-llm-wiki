@@ -1,8 +1,8 @@
 # Ingest-time typing — ledger
 
-In flight: 1
+In flight: 2
 
-- [ ] 1. Compat pins on unmodified code — evidence:
+- [x] 1. Compat pins on unmodified code — evidence: this commit (recorded on unmodified code); `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/ingestTypingCompat.test.ts` 40 passed
 - [ ] 2. `ingest_zero_facts` gate fix — evidence:
 - [ ] 3. Config key, resolver, export — evidence:
 - [ ] 4. Shared engagement, concurrency opt, counters type — evidence:
