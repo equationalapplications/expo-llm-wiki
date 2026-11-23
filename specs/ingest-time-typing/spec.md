@@ -1,6 +1,6 @@
 # Spec — Step 14: Ingest-time typing
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Intent check:** Rule 1 (the classifier is the host's `llmProvider.classify`;
 core adds no provider, key or network client). Rule 2 (no schema change:
@@ -783,3 +783,12 @@ Each carries the recommended default and a one-line reason.
    config only as the librarian does? — The host's per-call knob should
    govern every fan-out that call makes; an additive optional argument
    leaves the librarian untouched.
+
+### Owner answers (2026-11-23)
+
+All nine open-question defaults accepted: 1 reading as recommended; 2 sibling
+`typeOnIngest` key; 3 no meter, visible through `llm_usage`; 4 no INTENT
+amendment; 5 `node_type_assigned { writer: 'llm' }` at the ingest door;
+6 `factId` + `sourceRef` only; 7 engage in `'emergent'` too; 8
+`IngestDocumentResult.typing?` with `TypingCounters` public; 9 honor the
+call's resolved `chunkConcurrency`.
