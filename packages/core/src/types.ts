@@ -667,6 +667,15 @@ export interface WikiFact {
   // --- Source pointer (specs/source-pointers). Present on mapped facts only when non-null. ---
   /** Structured provenance from this librarian fact to its source event, with the verified quote. Null for legacy/heal/ingest facts. */
   source_pointer?: WikiSourcePointer | null;
+  /**
+   * Ids of further events this fact's stored wording also rests on, beyond
+   * the one `source_pointer` names (specs/inplace-update-provenance). Written
+   * by the ops librarian when it merges event text into an existing fact. A
+   * contribution ledger, not a second pointer: no quote, no position. Present
+   * only when non-empty; absent for facts updated before schema v18.
+   * `forget({ eventId })` matches it.
+   */
+  derived_events?: string[];
 }
 
 export interface WikiTask {

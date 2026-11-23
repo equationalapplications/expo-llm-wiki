@@ -82,7 +82,7 @@ fn main() {
     conn.execute_batch(&format!("{ENTRIES_DDL}\n{EDGES_DDL}\n{META_DDL}"))
         .expect("create llm_wiki_* schema");
     conn.execute(
-        "INSERT INTO llm_wiki_meta (key, value) VALUES ('schema_version', '17')",
+        "INSERT INTO llm_wiki_meta (key, value) VALUES ('schema_version', '18')",
         [],
     )
     .expect("stamp schema_version");

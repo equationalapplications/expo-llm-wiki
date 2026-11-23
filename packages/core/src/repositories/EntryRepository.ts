@@ -7,6 +7,7 @@ import { reanchorRebuildFingerprint } from '../services/search/fts5Progress';
 import { liveAtSql, type LiveMode } from '../utils/temporal';
 import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 import { parseStoredSourcePointer, serializeSourcePointer } from '../utils/sourcePointer';
+import { parseStoredDerivedEvents, serializeDerivedEvents } from '../utils/derivedEvents';
 
 /** Subset of temporal columns that {@link EntryRepository.setTemporal} may write (spec 2026-09-29 §4.3). */
 export type TemporalFields = {
@@ -69,6 +70,7 @@ function mapRowToFact(row: any): WikiFact {
   const now = Date.now();
   const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
   const sourcePointer = parseStoredSourcePointer(row.source_pointer);
+  const derivedEvents = parseStoredDerivedEvents(row.derived_events);
 
   const mapped = {
     id: row.id,
@@ -110,6 +112,9 @@ function mapRowToFact(row: any): WikiFact {
     // same temporal-fields pattern. Tolerant read: a malformed stored value
     // reads as null without throwing (test 1).
     ...(sourcePointer ? { source_pointer: sourcePointer } : {}),
+    // derived_events (specs/inplace-update-provenance §5): present only when
+    // non-empty; a malformed stored value reads as absent without throwing.
+    ...(derivedEvents ? { derived_events: derivedEvents } : {}),
   };
   return mapped as WikiFact;
 }
@@ -264,10 +269,11 @@ export class EntryRepository extends BaseRepository {
       last_verified_at: number | null;
       last_verified_by: string | null;
       source_pointer: string | null;
+      derived_events: string | null;
     }>(
       `SELECT id, entity_id, lifecycle_status, stale_after, generated_by,
               okf_sources, okf_verified, okf_usage_window,
-              last_verified_at, last_verified_by, source_pointer
+              last_verified_at, last_verified_by, source_pointer, derived_events
          FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
@@ -288,8 +294,8 @@ export class EntryRepository extends BaseRepository {
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window, source_pointer
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer, derived_events
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         body = excluded.body,
@@ -307,7 +313,8 @@ export class EntryRepository extends BaseRepository {
         embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
         embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
         embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
-        okf_type = excluded.okf_type
+        okf_type = excluded.okf_type,
+        derived_events = CASE WHEN ? THEN excluded.derived_events ELSE derived_events END
       WHERE ${this.prefix}entries.entity_id = excluded.entity_id`,
       [
         fact.id,
@@ -339,6 +346,11 @@ export class EntryRepository extends BaseRepository {
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
         serializeSourcePointer(fact.source_pointer),
+        serializeDerivedEvents(fact.derived_events),
+        // derived_events is writable on conflict (the librarian's in-place
+        // UPDATE merges events into it), but only when the caller supplied the
+        // key: an undefined key leaves a stored list untouched.
+        fact.derived_events !== undefined ? 1 : 0,
       ],
     );
 
@@ -378,6 +390,12 @@ export class EntryRepository extends BaseRepository {
           last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
           last_verified_by: existingRow.last_verified_by ?? null,
           source_pointer: parseStoredSourcePointer(existingRow.source_pointer),
+          ...(fact.derived_events === undefined
+            ? (() => {
+                const stored = parseStoredDerivedEvents(existingRow.derived_events);
+                return stored ? { derived_events: stored } : {};
+              })()
+            : {}),
         }
       : null;
     await this.outbox.push({
@@ -462,6 +480,7 @@ export class EntryRepository extends BaseRepository {
     fact: WikiFact,
     tx: SQLiteAdapter,
     sourcePointerPresent = false,
+    derivedEventsPresent = false,
   ): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
     const tagsJson = JSON.stringify(fact.tags);
@@ -491,8 +510,8 @@ export class EntryRepository extends BaseRepository {
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window, source_pointer
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer, derived_events
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -521,7 +540,8 @@ export class EntryRepository extends BaseRepository {
         okf_sources = excluded.okf_sources,
         okf_verified = excluded.okf_verified,
         okf_usage_window = excluded.okf_usage_window,
-        source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE source_pointer END`,
+        source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE source_pointer END,
+        derived_events = CASE WHEN ? THEN excluded.derived_events ELSE derived_events END`,
       [
         fact.id,
         fact.entity_id,
@@ -550,9 +570,13 @@ export class EntryRepository extends BaseRepository {
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
         serializeSourcePointer(fact.source_pointer),
+        serializeDerivedEvents(fact.derived_events),
         // The presence flag binds to the SET clause's CASE, AFTER the INSERT
         // values above.
         sourcePointerPresent ? 1 : 0,
+        // derived_events follows the same presence-flag pattern: a pre-v18
+        // dump (no key) never nulls a stored list.
+        derivedEventsPresent ? 1 : 0,
       ],
     );
 

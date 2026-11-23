@@ -442,7 +442,29 @@ export const MIGRATIONS: Migration[] = [
       // database today, so re-running v17 is trivially idempotent.
     },
   },
+  {
+    version: 18,
+    description: 'Schema v18: derived_events on entries (in-place update provenance)',
+    run: async (db, prefix) => {
+      // v18 is shared by several pending changes (owner ruling 2026-11-23);
+      // each contributes one named, idempotent helper called from here.
+      await addDerivedEventsColumn(db, prefix);
+    },
+  },
 ];
+
+/**
+ * v18 (specs/inplace-update-provenance §1): nullable derived_events TEXT on
+ * entries. ALTER TABLE ADD COLUMN must run outside any explicit transaction.
+ * Idempotent PRAGMA guard (v16 pattern). No backfill: null is the honest
+ * value for facts updated before this release.
+ */
+export async function addDerivedEventsColumn(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+  if (!cols.some((c) => c.name === 'derived_events')) {
+    await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN derived_events TEXT`);
+  }
+}
 
 /**
  * Partial index covering the legacy source_type probe. Created only by v14 and
