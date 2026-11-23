@@ -402,3 +402,40 @@ describe('test 11: dump round-trip', () => {
     expect(await listOf(t1.db)).toBeNull();
   });
 });
+
+import { formatOkfBundle } from '../src/utils/formatOkfBundle';
+import { parseOkfBundle } from '../src/utils/parseOkfBundle';
+
+describe('test 12: OKF round-trip', () => {
+  const base = (over: Partial<WikiFact>): WikiFact => ({
+    id: 'fact_aaa', entity_id: 'alice', title: 'T', body: 'B', tags: [],
+    confidence: 'inferred', source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+    created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0, deleted_at: null,
+    ...over,
+  });
+  const fmt = (f: WikiFact, profile?: 'llm-wiki/1') =>
+    formatOkfBundle({ generatedAt: 0, entities: { alice: { facts: [f], tasks: [], events: [], edges: [] } } }, profile ? { profile } : undefined);
+  const fileOf = (d: ReturnType<typeof fmt>) => d.files.find((f) => f.path === 'entities/alice/facts/fact_aaa.md')!;
+
+  it('emits only when non-empty and parses back exactly (both profiles)', () => {
+    for (const profile of [undefined, 'llm-wiki/1' as const]) {
+      expect(fileOf(fmt(base({}), profile)).content).not.toContain('derived_events');
+      expect(fileOf(fmt(base({ derived_events: [] }), profile)).content).not.toContain('derived_events');
+      const d = fmt(base({ derived_events: ['evt_1', 'evt_2'] }), profile);
+      expect(fileOf(d).content).toContain('derived_events');
+      const back = parseOkfBundle('alice', d.files);
+      expect((back.entities['alice'].facts[0] as WikiFact).derived_events).toEqual(['evt_1', 'evt_2']);
+      expect(back.dropped_pointer_values).toBeUndefined();
+    }
+  });
+
+  it('a malformed value is dropped and reported by id + slug, never the raw value', () => {
+    const d = fmt(base({}));
+    const file = fileOf(d);
+    file.content = file.content.replace('---\n', '---\nderived_events:\n  - 42\n  - secret-text\n');
+    const back = parseOkfBundle('alice', d.files);
+    expect((back.entities['alice'].facts[0] as WikiFact).derived_events).toBeUndefined();
+    expect(back.dropped_pointer_values).toEqual([{ factId: 'fact_aaa', reason: 'derived_events_malformed' }]);
+    expect(JSON.stringify(back.dropped_pointer_values)).not.toContain('secret');
+  });
+});

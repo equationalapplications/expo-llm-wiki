@@ -1,5 +1,6 @@
 import type { MemoryDump, WikiFact, WikiTask, WikiEvent, WikiEdge } from '../types';
 import { validateSourcePointerValue } from './sourcePointer';
+import { validateDerivedEventsValue } from './derivedEvents';
 import type { OkfFile, OkfFrontmatter, OkfFrontmatterValue } from '@equationalapplications/core-okf';
 import {
   parseConcept,
@@ -306,6 +307,19 @@ function frontmatterToFact(
         return {};
       }
       return { source_pointer: v };
+    })(),
+    // derived_events (specs/inplace-update-provenance §5): a well-formed list
+    // is restored; absent or empty omits the property (import presence rule);
+    // malformed omits it AND is reported by id + slug, never the raw value.
+    ...(() => {
+      const raw = (frontmatter as any).derived_events;
+      if (raw === undefined) return {};
+      const v = validateDerivedEventsValue(raw);
+      if (v === undefined) {
+        droppedPointerValues.push({ factId: id, reason: 'derived_events_malformed' });
+        return {};
+      }
+      return v ? { derived_events: v } : {};
     })(),
   };
 }

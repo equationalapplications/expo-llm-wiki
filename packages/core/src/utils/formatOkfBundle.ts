@@ -109,6 +109,8 @@ function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
     ...(sourcePointerFrontmatter(f.source_pointer)
       ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
       : {}),
+    // derived_events (specs/inplace-update-provenance §5): optional list, only when non-empty.
+    ...(f.derived_events && f.derived_events.length > 0 ? { derived_events: f.derived_events } : {}),
   };
 }
 
@@ -156,6 +158,8 @@ function factFrontmatterV1(f: WikiFact): OkfFrontmatter {
     ...(sourcePointerFrontmatter(f.source_pointer)
       ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
       : {}),
+    // derived_events (specs/inplace-update-provenance §5): optional list, only when non-empty.
+    ...(f.derived_events && f.derived_events.length > 0 ? { derived_events: f.derived_events } : {}),
   };
 }
 
