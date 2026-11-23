@@ -448,7 +448,9 @@ export const MIGRATIONS: Migration[] = [
     run: async (db, prefix) => {
       // Shared v18 (owner ruling 2026-11-23): #443, #451 and #450 land in ONE
       // schema version. This body only calls named, idempotent helpers, so a
-      // later PR appends one helper call here. Do not inline DDL.
+      // later PR appends one helper call here. Do not inline DDL. The three PRs
+      // land in ONE push to main (stacked; only the top PR merges). If a release
+      // ever ships v18 before they land, the rest go in v19 instead.
       await createEntriesDeletedIndex(db, prefix);
     },
   },

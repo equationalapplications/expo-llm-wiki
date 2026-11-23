@@ -108,7 +108,7 @@ describe('prune queries use entries_deleted_idx', () => {
     const rows = await db.getAllAsync<{ detail: string }>(`EXPLAIN QUERY PLAN ${call.sql}`, call.args);
     return rows.map((r) => r.detail).join(' | ');
   }
-  async function populated() {
+  async function populated(analyze: boolean) {
     const db = await fresh();
     const now = Date.now();
     await db.execAsync('BEGIN');
@@ -119,22 +119,22 @@ describe('prune queries use entries_deleted_idx', () => {
       );
     }
     await db.execAsync('COMMIT');
-    await db.execAsync('ANALYZE');
+    if (analyze) await db.execAsync('ANALYZE'); // the engine itself never runs ANALYZE
     const { adapter, calls } = recording(db);
     const outbox = new OutboxRepository(adapter, P, false);
     return { db, adapter, now, calls, entries: new EntryRepository(adapter, P, outbox), meta: new MetadataRepository(adapter, P) };
   }
 
-  it('getPrunableMetadata (cutoff and noCutoff) searches the partial index', async () => {
-    const r = await populated();
+  it.each([false, true])('getPrunableMetadata (cutoff and noCutoff) searches the partial index (ANALYZE=%s)', async (analyze) => {
+    const r = await populated(analyze);
     await r.entries.getPrunableMetadata('e1', r.now);
     await r.entries.getPrunableMetadata('e1', r.now, undefined, { noCutoff: true });
     expect(r.calls).toHaveLength(2);
     for (const c of r.calls) expect(await plan(r.db, c)).toContain(`USING INDEX ${IDX}`);
   });
 
-  it('bulkDeletePruned chunk searches the partial index on a sparse backlog and removes the rows', async () => {
-    const r = await populated();
+  it.each([false, true])('bulkDeletePruned chunk searches the partial index on a sparse backlog and removes the rows (ANALYZE=%s)', async (analyze) => {
+    const r = await populated(analyze);
     const ids = ['id1', 'id1001', 'id2001', 'id3001'];
     await r.entries.bulkDeletePruned('e1', r.now, ids, r.adapter);
     const del = r.calls.find((c) => c.sql.startsWith('DELETE'))!;
@@ -142,8 +142,8 @@ describe('prune queries use entries_deleted_idx', () => {
     expect((await r.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE deleted_at IS NOT NULL`))!.n).toBe(0);
   });
 
-  it('getDistinctEntityIds (both forms) scans the covering partial index, not the table', async () => {
-    const r = await populated();
+  it.each([false, true])('getDistinctEntityIds (both forms) scans the covering partial index, not the table (ANALYZE=%s)', async (analyze) => {
+    const r = await populated(analyze);
     await r.meta.getDistinctEntityIds(undefined, { softDeletedAll: true });
     await r.meta.getDistinctEntityIds(undefined, { softDeletedAtOrBefore: r.now });
     expect(r.calls).toHaveLength(2);
