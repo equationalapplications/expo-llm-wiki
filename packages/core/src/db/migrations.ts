@@ -494,7 +494,8 @@ export async function addDerivedEventsColumn(db: SQLiteAdapter, prefix: string):
   const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
   if (!cols.some((c) => c.name === 'derived_events')) {
     await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN derived_events TEXT`);
-  }}
+  }
+}
 
 /**
  * Partial index covering the legacy source_type probe. Created only by v14 and
