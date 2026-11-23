@@ -36,6 +36,8 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   ['validation wording', 'Invalid input length for field X'],
   // bare output-config error: no context clause, so the dual-match is NOT satisfied (errata E2)
   ['bare max_tokens too large', 'max_tokens is too large: 4096 tokens must be ≤ 4096'],
+  ['context fully cached', 'The context is fully cached, retry later'],
+  ['context fully loaded', 'Context is fully loaded'],
   ['disk full', 'Disk is full'],
   ['queue full', 'Request queue is full, retry later'],
   ['parse error','Unexpected token < in JSON at position 0'],

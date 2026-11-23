@@ -40,7 +40,7 @@ Nothing else changes. The ordering rules (rate-limit guard first, overflow befor
 
 ### False-positive check
 
-The pattern requires the literal words "context is full". Checked against the existing `NOT_OVERFLOW` corpus (5xx, auth, truncated output, `max_tokens` config, validation wording, JSON parse error, three 429 bodies): none contains "context is full". `RATE_LIMIT_PATTERN` runs first and still wins for any 429 body. Wording that could match elsewhere ("disk is full", "queue is full", "buffer is full") lacks "context". A wiki write path that logs "context is full" for a non-LLM reason does not go through this classifier; it reads only errors thrown by the host's LLM callback. A false positive would cost one wasted batch split plus a cooldown, which is the same price the other patterns accept.
+The pattern is word-bounded (`/\bcontext is full\b/i`), so it requires the literal words "context is full" and does not match "context is fully cached" or "Context is fully loaded". Checked against the existing `NOT_OVERFLOW` corpus (5xx, auth, truncated output, `max_tokens` config, validation wording, JSON parse error, three 429 bodies): none contains "context is full". `RATE_LIMIT_PATTERN` runs first and still wins for any 429 body. Wording that could match elsewhere ("disk is full", "queue is full", "buffer is full") lacks "context". A wiki write path that logs "context is full" for a non-LLM reason does not go through this classifier; it reads only errors thrown by the host's LLM callback. A false positive would cost one wasted batch split plus a cooldown, which is the same price the other patterns accept.
 
 ## 4. Files touched
 
