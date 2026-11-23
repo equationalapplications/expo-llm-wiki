@@ -23,7 +23,8 @@ import { resolveContextBudget, resolveDefaultChunkLength } from '../config/conte
 import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 import { callLlm } from '../utils/llmCall';
-import { normalizeForWrite, emptyTypingCounters } from './typing/typeOnWrite';
+import { normalizeForWrite, emptyTypingCounters, canEngageIngestTyping, classifyFactsForWrite, tallyTypingOutcome, volunteeredTypeResolves } from './typing/typeOnWrite';
+import { resolveTypingMinConfidence } from '../utils/engineDefaults';
 import type { TypingOutcome } from './typing/typeOnWrite';
 
 type ChunkResult =
@@ -189,7 +190,15 @@ export class IngestionService {
       // Hoisting also makes its DB-systemic nature structural — a fault
       // surfaces before any LLM tokens are spent, not buried under
       // `WikiIngestEmptyError` after the first LLM call. See spec §3.
-      const ontologyContext = await this.ontologyService?.buildWritePromptContext(entityId, { engaged: false }) ?? null;
+      // Ingest-time typing engagement (specs/ingest-time-typing §2) resolves here,
+      // once per call, outside any transaction. When engaged the write context is
+      // `null`, so the manifest leaves every chunk prompt (§5); otherwise the
+      // context is today's, byte for byte.
+      const hoistedState = await this.ontologyService?.getEffectiveState(entityId)
+        ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+      const engaged = this.ontologyService !== undefined
+        && canEngageIngestTyping(this.options.config, this.options.llmProvider, hoistedState.mode, hoistedState.manifest);
+      const ontologyContext = await this.ontologyService?.buildWritePromptContext(entityId, { engaged }) ?? null;
       // Specs/librarian-guidance: guidance resolves here — once per ingest
       // call, next to the ontology hoist (after the duplicate-hash and
       // empty-chunk early returns, so a resolver never runs for an ingest
@@ -398,7 +407,30 @@ export class IngestionService {
       }
 
       // Pre-transaction typing outcomes (specs/ingest-time-typing §3); empty until the typing stage runs.
-      const typing: IngestTyping = { outcomes: new Map(), counters: emptyTypingCounters() };
+      const typing = { outcomes: new Map<ExtractedFact, TypingOutcome>(), counters: emptyTypingCounters() };
+      if (engaged) {
+        // The typing stage (specs/ingest-time-typing §3): one classify call per kept
+        // winner whose own slug does not already resolve. No database write, no
+        // transaction, no meter (§6); every call is reported through `llm_usage`.
+        const asked: ExtractedFact[] = [];
+        for (const slot of orderedChunkFacts) {
+          for (const fact of slot.facts) {
+            if (!volunteeredTypeResolves((fact as ExtractedFactWithOntology).okf_type, hoistedState.manifest)) asked.push(fact);
+          }
+        }
+        const outcomes = await classifyFactsForWrite(
+          this.options,
+          { entityId, trigger: 'call', operation: 'ingest' },
+          asked,
+          hoistedState.manifest,
+          resolveTypingMinConfidence(this.options.config),
+          { concurrency: chunkConcurrency },
+        );
+        asked.forEach((fact, i) => {
+          typing.outcomes.set(fact, outcomes[i]);
+          tallyTypingOutcome(typing.counters, outcomes[i]);
+        });
+      }
 
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
@@ -414,7 +446,7 @@ export class IngestionService {
           // Zero-fact re-ingest receipt (spec §5): a full re-ingest that
           // tombstoned prior facts/edges and then wrote nothing. Emitted
           // only when the ontology is active; the buffer flushes post-commit.
-          if (ontologyContext !== null && insertedFacts.length === 0 && deletedSourceFactIds.length > 0) {
+          if (hoistedState.mode !== 'off' && insertedFacts.length === 0 && deletedSourceFactIds.length > 0) {
             diagBuffer.push({
               entityId, operation: 'ingest', trigger: 'call', code: 'ingest_zero_facts',
               detail: { sourceRef, chunks: chunks.length },
@@ -539,6 +571,7 @@ export class IngestionService {
         failedChunks,
       };
       if (failedChunks > 0) result.parseFailures = failures;
+      if (engaged) result.typing = typing.counters;
       return result;
 
     } finally {

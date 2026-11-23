@@ -1656,6 +1656,10 @@ export interface IngestDocumentResult {
   failedChunks: number;
   duplicateOf?: string;
   parseFailures?: ChunkFailure[];
+  /** Ingest-time typing counters (specs/ingest-time-typing §9). Present only when
+   * `systemOne.typeOnIngest: 'auto'` engaged for this call. `unattempted` is always
+   * `0` here: `ingestDocument()` carries no token budget. */
+  typing?: TypingCounters;
 }
 
 /**
