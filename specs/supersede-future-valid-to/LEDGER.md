@@ -13,3 +13,7 @@ In flight: nothing (implementation done; awaiting review loops)
 - [x] 9. Full verification — evidence: core suite 3127/3128 then fixed fixture; `pnpm -r typecheck` clean
 
 ## Discrepancies
+
+## Review r1 (T4, 2026-11-23)
+
+- [x] Import replaces (absent key imports null; null when not superseded); supersede always writes prior_valid_to — evidence: this commit; `vitest run` temporalRoundTrip/supersede/reopen/opsLibrarian 69 passed; full core suite 260 files, 3130 tests passed via lock.

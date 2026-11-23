@@ -85,12 +85,27 @@ describe('prior_valid_to round-trip (specs/supersede-future-valid-to D5)', () =>
     expect('prior_valid_to' in dump.entities.u.facts.find((f) => f.id === newId)!).toBe(false);
   });
 
-  it('a pre-v18 dump (key absent) never nulls a stored value on a superseded fact', async () => {
+  it('an absent key imports null (replace semantics)', async () => {
     const { db, wiki } = await scheduledSource();
     const dump = await wiki.exportDump(['u']);
     delete (dump.entities.u.facts.find((f) => f.id === 'old') as any).prior_valid_to;
     await wiki.importDump(dump);
-    expect(await prior(db)).toBe(FUTURE);
+    expect(await prior(db)).toBeNull();
+  });
+
+  it('a stale prior on a live imported fact is coerced to null, so reopen after an open-ended supersede yields null', async () => {
+    const db = openTestDatabase();
+    const w = new WikiMemory(db, opts);
+    await w.setup();
+    await w.importDump({ version: 1, entities: { u: { facts: [{
+      id: 'live', entity_id: 'u', title: 't', body: 'b', tags: [], confidence: 'certain', source_type: 'user_stated',
+      source_hash: null, source_ref: null, created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0,
+      deleted_at: null, prior_valid_to: FUTURE,
+    }], tasks: [], events: [] } } } as any);
+    expect(await prior(db, 'live')).toBeNull();
+    const { newId } = await w.supersede('u', 'live', { title: 'n', body: 'b' }, { validFrom: 500 });
+    await w.forget('u', { entryId: newId });
+    expect(await w.reopen('u', 'live')).toEqual({ valid_to: null });
   });
 
   it('an explicit null in the dump clears; a present value replaces', async () => {

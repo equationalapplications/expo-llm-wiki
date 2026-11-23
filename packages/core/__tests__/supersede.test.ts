@@ -227,3 +227,12 @@ describe('supersede() records a replaced scheduled end (specs/supersede-future-v
     expect(rows.map((r) => JSON.parse(r.payload)).some((p) => p.prior_valid_to === FUTURE && p.valid_to === 5_000)).toBe(true);
   });
 });
+
+describe('supersede() overwrites a stale prior_valid_to (T4 r1)', () => {
+  it('open-ended supersede writes prior_valid_to null even over a stale value', async () => {
+    await insert('old');
+    await db.runAsync(`UPDATE llm_wiki_entries SET prior_valid_to = 777 WHERE id = 'old'`);
+    await wiki.supersede('e1', 'old', { title: 'x', body: 'y' }, { validFrom: 5_000 });
+    expect((await db.getFirstAsync<any>(`SELECT prior_valid_to FROM llm_wiki_entries WHERE id='old'`)).prior_valid_to).toBeNull();
+  });
+});

@@ -152,13 +152,12 @@ the supersession predates schema 18. Liveness predicates never read it.
 
 ### D2 — `supersedeInTx` records the replaced end
 
-Immediately before the write at `:49`, when `old.valid_to != null` (the
-`:34` guard guarantees it is then in the future), the write becomes
-`setTemporal(oldId, entityId, { valid_to: t, superseded_by: newId,
-superseded_at: now, prior_valid_to: old.valid_to }, tx)`. When
-`old.valid_to` is null the key is omitted (the column stays whatever it
-was — `NULL` on every row this engine wrote, since D4 clears it on
-reopen). `supersedeInTx` returns `{ replacedScheduledEnd: number | null }`
+The write at `:49` becomes `setTemporal(oldId, entityId, { valid_to: t,
+superseded_by: newId, superseded_at: now, prior_valid_to: old.valid_to },
+tx)`. The key is always written (null when `old.valid_to` is null), so a
+stale value can never survive a supersede; the diagnostic (D3) fires only
+for a non-null end. Import coerces it to null when the row's
+`superseded_by` is null (D5). `supersedeInTx` returns `{ replacedScheduledEnd: number | null }`
 so both callers can report it (D3). Guard order and every existing reason
 are unchanged; the overwrite semantics D3b ruled are unchanged.
 
@@ -232,13 +231,7 @@ the four existing keys. `upsertForImport`'s SQL is untouched (the
 temporal columns are written by `setTemporal`, not by that statement).
 A pre-v18 dump imports with the column null, which is honest.
 
-**As-landed amendment (owner instruction 2026-11-23):** the write is
-presence-aware, following `source_pointer`'s pattern, so a pre-v18 dump
-never nulls a stored value: a key present (even null) is authoritative;
-an absent key clears the column only when the fact is not superseded
-(the column must be null there) and otherwise leaves the stored value
-untouched. (`exportDump` and OKF omit the key when null, as for the other
-optional temporal fields.)
+Review r1 (2026-11-23): an absent-key-keeps variant was tried and reverted — keeping a stored prior can stitch one supersession's scheduled end onto another's metadata.
 
 ### D6 — erasure and retention
 

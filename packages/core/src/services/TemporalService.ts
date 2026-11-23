@@ -48,11 +48,11 @@ export class TemporalService {
     if (t <= start) throw new WikiSupersedeError('invalid_interval');
 
     // D2: a scheduled (future) end is about to be overwritten; keep it in
-    // prior_valid_to so reopen() can restore it. Open-ended: key omitted.
+    // prior_valid_to so reopen() can restore it. Open-ended: written as null so a stale value cannot survive.
     const replacedScheduledEnd = old.valid_to;
     await this.entryRepo.setTemporal(oldId, entityId, {
       valid_to: t, superseded_by: newId, superseded_at: now,
-      ...(replacedScheduledEnd != null ? { prior_valid_to: replacedScheduledEnd } : {}),
+      prior_valid_to: replacedScheduledEnd,
     }, tx);
     if (repl.valid_from == null) {
       await this.entryRepo.setTemporal(newId, entityId, { valid_from: t }, tx);
