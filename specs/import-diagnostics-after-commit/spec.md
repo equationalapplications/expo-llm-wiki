@@ -23,7 +23,7 @@ written, but the host's `onDiagnostic` has already been told that fact a had
 an invalid pointer. The host sees a refusal report for an import that never
 happened.
 
-## Root cause (evidence on main, `dd6e2a4c`)
+## Root cause (evidence on main, `dd6e2a4c`; line numbers below are from that commit. Re-audited 2026-11-23 on main `b70247ee` after PR #469 landed: the inline `source_pointer_invalid` emit moved to `:458`, the buffer to `:255`, the flush to `:706`; no other inline emit is reachable inside the transaction, and the audit table is unchanged)
 
 `packages/core/src/services/ImportExportService.ts`:
 
@@ -61,7 +61,7 @@ the import path).
 | 3 | `import_tombstone_skipped` | `:685` | after commit | after commit |
 | 4 | `event_created_at_clamped` | `:691` | after commit | after commit |
 | 5 | `event_created_at_restamped` | `:698` | after commit | after commit |
-| 6 | `derived_events_invalid` | added by PR #469 | inside the transaction | already buffered in #469 |
+| 6 | `derived_events_invalid` | added by PR #469 (now on main, `:477`) | inside the transaction | already buffered in #469 |
 
 So exactly one emit is inline today: row 1. The brief asked for every inline
 one, and the audit finds one. Two non-diagnostic observations, out of scope
@@ -85,8 +85,7 @@ already uses the buffer correctly, so it is the pattern this spec follows,
 and it adds no inline emit. This change edits only the lines at `:457-464`,
 which #469 leaves as context lines directly above its new block. The two
 edits do not overlap, so this merges cleanly after #469, with at most
-adjacent-hunk context shifting. Implementation starts after #469 lands and
-rebases on it. Ordering of the buffered diagnostics: `source_pointer_invalid`
+adjacent-hunk context shifting. #469 has landed (v18 stack, on main); implementation is on top of it. Ordering of the buffered diagnostics: `source_pointer_invalid`
 and `derived_events_invalid` for one fact are pushed in that order, before
 that entity's stored-source refusals.
 
