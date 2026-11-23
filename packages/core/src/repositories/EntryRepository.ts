@@ -685,6 +685,11 @@ export class EntryRepository extends BaseRepository {
           ELSE 0 END)
     ELSE 0 END))`;
 
+  /** Bind values for `EVENT_MATCH_SQL` after an `entity_id = ?` term: the event id twice. */
+  static eventMatchArgs(entityId: string, eventId: string): [string, string, string] {
+    return [entityId, eventId, eventId];
+  }
+
   /** Old name kept as an alias (tests and external references). */
   static readonly POINTER_EVENT_MATCH_SQL = EntryRepository.EVENT_MATCH_SQL;
 
@@ -701,7 +706,7 @@ export class EntryRepository extends BaseRepository {
   ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`;
-    const args: unknown[] = [entityId, eventId, eventId];
+    const args: unknown[] = EntryRepository.eventMatchArgs(entityId, eventId);
     if (!includeDeleted) sql += ` AND deleted_at IS NULL`;
     const rows = await executor.getAllAsync<{ id: string }>(sql, args);
     return rows.map((r) => r.id);
@@ -712,7 +717,7 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ n: number }>(
       `SELECT COUNT(*) AS n FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId, eventId],
+      EntryRepository.eventMatchArgs(entityId, eventId),
     );
     return row?.n ?? 0;
   }
@@ -731,11 +736,11 @@ export class EntryRepository extends BaseRepository {
     const now = Date.now();
     const idsToDelete = await executor.getAllAsync<{ id: string }>(
       `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId, eventId],
+      EntryRepository.eventMatchArgs(entityId, eventId),
     );
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [now, now, entityId, eventId, eventId],
+      [now, now, ...EntryRepository.eventMatchArgs(entityId, eventId)],
     );
     for (const row of idsToDelete) {
       await this.outbox.push({

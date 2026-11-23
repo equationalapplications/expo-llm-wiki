@@ -419,7 +419,8 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
 14. Legacy parity: `librarianLegacyParity.test.ts` snapshot unchanged.
 15. Growth: 200 merges from 200 events read, export and match correctly.
 16. Public exports: new codes appear in `WikiDiagnosticCode`;
-    `publicExports.test.ts` updated.
+    `publicExports.test.ts` updated. (As landed: `publicExports.test.ts` was not
+    touched; the vocabulary assertion is in `derivedEvents.test.ts`.)
 
 ## Open questions for Kurt
 1. **Should `forget({ eventId })` delete facts that merely absorbed the

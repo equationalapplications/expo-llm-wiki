@@ -117,7 +117,7 @@ export const MESSAGE: Record<WikiDiagnosticCode, string> = {
   external_deletion_discarded: 'Pending external vector removals were discarded because forceDeleteIgnoreRankerHook is set.',
   guidance_too_long: 'The configured guidance exceeded the length cap and was not sent for this pass.',
   guidance_resolver_failed: 'The per-entity guidance resolver failed; its value was not used for this pass.',
-  source_pointer_unresolved: 'A stored librarian fact carries no source pointer because the model answer could not yield one.',
+  source_pointer_unresolved: 'A stored librarian fact carries no source pointer because the model answer could not yield one, or the librarian merged such an unattributed candidate into this fact in place (its derived_events list was not extended).',
   source_pointer_invalid: 'Import met a malformed source pointer value and stored a null pointer.',
   source_event_gone: 'A librarian candidate was dropped at apply time because the event it came from no longer exists (deleted outside the engine while the pass ran).',
   derived_events_invalid: 'Import met a malformed derived_events value and stored null.',

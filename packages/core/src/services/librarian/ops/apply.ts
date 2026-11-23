@@ -186,7 +186,7 @@ export async function applyOps(
       await deps.entryRepo.setTemporal(id, entityId, { valid_from: validFrom }, tx);
       // Rule 6 fix (spec §Ops path + §Diagnostics): a fact that landed without
       // its pointer is reported, not swallowed. Candidates the gate rejects or
-      // merges never reach insert(), so they emit nothing.
+      // merges never reach insert(), so they emit nothing (merges report at the UPDATE branch).
       if (g.candidate.pointerUnresolved !== null) {
         input.diagnostics.push({
           ...diagBase,
