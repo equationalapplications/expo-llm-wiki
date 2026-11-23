@@ -1,6 +1,6 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
 import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
-import { normalizeTitleKey, isReservedAbstainSlug, typeSatisfies, ONTOLOGY_ABSTAIN_SENTINEL } from '../utils/ontology';
+import { normalizeTitleKey, isReservedAbstainSlug, typeSatisfies } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';

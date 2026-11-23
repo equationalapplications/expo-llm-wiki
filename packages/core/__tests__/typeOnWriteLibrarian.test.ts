@@ -201,3 +201,13 @@ describe('legacy only: dedupe-skipped facts', () => {
     expect(runLegacyLibrarianPass).toBeDefined();
   });
 });
+
+describe('door receipts do not contradict (type-on-write §8)', () => {
+  it('a model slug that resolves in-transaction suppresses a decline receipt for the same fact', async () => {
+    const { normalizeForWrite } = await import('../src/services/typing/typeOnWrite');
+    const svc = { validateAndNormalizeFact: (f: any) => ({ okf_type: f.okf_type === 'person' ? 'person' : null, edges: [], match: { raw: 'person', canonical: 'person', via: 'exact' as const } }) };
+    const base = { entityId: 'u', operation: 'librarian' as const, trigger: 'call' as const };
+    const r = normalizeForWrite(svc as any, { title: 't', body: 'b', tags: [], confidence: 'certain', okf_type: 'person' } as any, MANIFEST, 'strict', { kind: 'abstain' }, base, 'f1');
+    expect(r.receipts.map((x) => x.code)).toEqual(['node_type_assigned']);
+  });
+});

@@ -191,6 +191,9 @@ export class MaintenanceScheduler {
           st.report.factsWritten += r.factsWritten;
           if (r.typing) st.report.typedOnWrite = (st.report.typedOnWrite ?? 0) + r.typing.typed;
           progressed = true;
+          // Budget exhausted during write-time typing: the pass wrote its facts and
+          // recorded them above; the run stops as exhausted rather than 'complete'.
+          if ((r.typing?.unattempted ?? 0) > 0) { stopped = exhaustedStop(); break rounds; }
           const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
           if ((await this.eventRepo.countAfter(entityId, wm)) === 0) st.librarian = false;
           continue;

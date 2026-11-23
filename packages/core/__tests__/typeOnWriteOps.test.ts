@@ -214,3 +214,25 @@ describe('type on write: backfill interaction (§11)', () => {
     expect(untyped.map((f: any) => f.title)).toEqual(['Mystery Item']);
   });
 });
+
+describe('type on write: scheduler stop reason (§6)', () => {
+  it('a budget exhausted during typing stops the run as budget_exhausted and counts typedOnWrite', { timeout: 60000 }, async () => {
+    const three = () => ({ facts: [fact('Ada Lovelace'), fact('Charles Babbage'), fact('Grace Hopper')], tasks: [] });
+    const run = async (budget?: number) => {
+      const t = await mk({ gen: [three], classify: () => choice('person') });
+      return t.wiki.runPendingMaintenance({ jobs: ['librarian'], tokenBudget: budget });
+    };
+    const full = await run();
+    expect(full.stoppedReason.reason).toBe('complete');
+    let found: any;
+    for (let k = 1; k < 400 && !found; k++) {
+      const r = await run(full.tokensUsed - k);
+      if (r.stoppedReason.reason === 'budget_too_small') break;
+      if (r.stoppedReason.reason === 'budget_exhausted') found = r;
+    }
+    expect(found).toBeDefined();
+    expect(found.perEntity[0].factsWritten).toBe(3);
+    expect(found.perEntity[0].typedOnWrite).toBeGreaterThan(0);
+    expect(found.perEntity[0].typedOnWrite).toBeLessThan(3);
+  });
+});

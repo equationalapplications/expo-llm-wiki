@@ -266,10 +266,8 @@ export function normalizeForWrite(
   }
   let typedByClassifier = false;
   // In-transaction mode 'off' (a flip after the engagement check): a stored 'off'
-  // row keeps its manifest, so the slug would still resolve; the spec (§4) says
-  // the fact is stored untyped with no ontology receipts, so the classifier's
-  // type is not applied. (Spec §4's "the manifest is empty" does not match
-  // getEffectiveState; the observable outcome is what is implemented.)
+  // row keeps its manifest, so the slug would still resolve; the door therefore
+  // checks the mode itself and does not apply the classifier's type (spec §4).
   if (!normalized.okf_type && outcome?.kind === 'accepted' && mode !== 'off') {
     const second = ontology?.validateAndNormalizeFact(
       { ...fact, okf_type: outcome.okfType, edges: [] }, manifest, { strict: false },
@@ -295,7 +293,9 @@ export function normalizeForWrite(
       receipts.push({ ...base, code: 'node_type_assigned', detail: { factId, okfType: normalized.okf_type, writer: 'llm' } });
     }
   }
-  if (outcome && outcome.kind !== 'accepted' && emit) {
+  // A decline receipt only when the door did not type the row (a model slug that
+  // resolved in-transaction beats a non-accepted outcome; no contradictory pair).
+  if (outcome && outcome.kind !== 'accepted' && emit && !normalized.okf_type) {
     const r = typingOutcomeReceipt(base, factId, outcome);
     if (r) receipts.push(r);
   }

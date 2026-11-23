@@ -12,7 +12,7 @@ export { formatOkfBundle, type FormatOkfBundleOptions, type OkfFormatProfile } f
 export { parseOkfBundle, type OkfImportOptions } from './utils/parseOkfBundle';
 export { parseEmbedding } from './utils/embedding';
 export { validateManifest } from './utils/ontology';
-export { buildOntologyPromptAppendix, buildWriteOntologyAppendix } from './prompts/ontology';
+export { buildOntologyPromptAppendix } from './prompts/ontology';
 export { configureRandomSource } from './utils/ids';
 export { validUsage } from './utils/llmCall';
 export { chunkText, safeSlice } from './utils/pure';
