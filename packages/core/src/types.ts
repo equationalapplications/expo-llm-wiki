@@ -150,6 +150,17 @@ export interface WriteOntologyPromptContext {
   ontologyModeInstructions: string;
 }
 
+/** Per-pass typing counters (specs/type-on-write §8; carried on `IngestDocumentResult.typing`, specs/ingest-time-typing §9). */
+export interface TypingCounters {
+  asked: number;
+  typed: number;
+  abstained: number;
+  lowConfidence: number;
+  invalid: number;
+  skipped: number;
+  unattempted: number;
+}
+
 /** Result of a single ontology backfill run. Omissions (facts the model declined
  * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {

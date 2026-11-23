@@ -7,8 +7,9 @@
  * the heal-screen step added the `'healScreen'` member. Each landed as one
  * new line in
  * `SystemOneThresholdSite`, so sibling PRs merged cleanly. The type-on-write
- * step landed the `typeOnWrite` key; it reuses the `'typing'` floor and added
- * no `SystemOneThresholdSite` member. Nothing outside that boundary belongs
+ * step landed the `typeOnWrite` key and the ingest-time typing step landed
+ * `typeOnIngest`; both reuse the `'typing'` floor and added no
+ * `SystemOneThresholdSite` member. Nothing outside that boundary belongs
  * here.
  */
 
@@ -72,9 +73,24 @@ export interface SystemOneConfig {
    * classifier does not type are written untyped exactly as today and stay
    * eligible for backfill. Engages only when a classifier is present and the
    * manifest is representable. Facts typed this way carry no
-   * manifest-drawn edges. There is no `'off'`.
+   * manifest-drawn edges. There is no `'off'`. Librarian only;
+   * `typeOnIngest` governs ingest.
    */
   typeOnWrite?: 'auto' | 'llm';
+  /**
+   * Ingest-time typing for `ingestDocument()`. `'llm'` (default) keeps today's
+   * ingest path exactly: every chunk prompt carries the ontology block and the
+   * model types each fact inline, or leaves it for backfill. `'auto'` asks
+   * `llmProvider.classify` to type every extracted fact the call is about to
+   * insert, and the ontology block leaves the ingest prompt for that call.
+   * The classify calls are as metered as the call's generative chunk calls:
+   * `ingestDocument()` carries no token budget. Facts the classifier does
+   * not type are written untyped exactly as today and stay eligible for
+   * backfill. Engages only when a classifier is present and the manifest is
+   * representable. Facts typed this way carry no manifest-drawn edges.
+   * Independent of `typeOnWrite`. There is no `'off'`.
+   */
+  typeOnIngest?: 'auto' | 'llm';
   /** Per-site minimum confidence. Only the classifier path reads a floor. */
   minConfidence?: Partial<Record<SystemOneThresholdSite, number>>;
   /**
