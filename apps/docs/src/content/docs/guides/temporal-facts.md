@@ -94,7 +94,8 @@ index and read cache. It resolves with the restored `valid_to`. It throws `WikiS
 - the fact is missing, soft-deleted or belongs to another entity (`not_found`, `cross_entity`);
 - it is not superseded (`not_superseded`). A fact ended by `expire()` is not reopened;
 - it is an `immutable_document` fact (`immutable_target`);
-- its replacement is still live (`successor_live`). Forget the replacement first. A forgotten or
+- its replacement is still live (`successor_live`). Any replacement that is not forgotten blocks
+  reopen, including one that is itself superseded. Forget the replacement first. A forgotten or
   hard-deleted replacement passes. Only the direct replacement is checked, not the rest of a longer chain.
 
 Two consequences. If the restored end has already passed, the fact comes back expired: `reopen()`

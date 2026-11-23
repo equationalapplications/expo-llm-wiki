@@ -164,7 +164,10 @@ export class TemporalService {
       // is surfaced (INTENT rule 3). Forgotten or absent passes.
       const successor = await this.entryRepo.findTemporalRow(row.superseded_by, tx);
       if (successor && successor.deleted_at == null) throw new WikiSupersedeError('successor_live', 'reopen()');
-      restored = row.prior_valid_to;
+      // A crafted dump can carry a non-finite, non-integer or pre-start value;
+      // restore null rather than an interval that cannot hold the fact.
+      const p = row.prior_valid_to;
+      restored = p != null && Number.isInteger(p) && p > (row.valid_from ?? row.created_at) ? p : null;
       const changes = await this.entryRepo.setTemporal(factId, entityId, {
         valid_to: restored, superseded_by: null, superseded_at: null, prior_valid_to: null,
       }, tx);

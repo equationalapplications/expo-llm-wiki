@@ -209,6 +209,8 @@ After commit: `searchService.syncEntries(entityId, [factId])` and
 `evictCache(entityId)`, exactly as `expire()`. No embedding call (the row
 kept its vector). Returns the restored `valid_to`.
 
+Review r1 (Sonnet, 2026-11-23): a stored `prior_valid_to` that is non-integer or not after the fact's start (`valid_from ?? created_at`) — only a crafted dump can carry one — restores `NULL` instead.
+
 Consequences, documented: a restored `prior_valid_to` that has since
 passed leaves the fact *expired* (an archive) — `reopen()` restores the
 host's declaration, it does not revalidate; a supersession recorded
@@ -231,7 +233,7 @@ the four existing keys. `upsertForImport`'s SQL is untouched (the
 temporal columns are written by `setTemporal`, not by that statement).
 A pre-v18 dump imports with the column null, which is honest.
 
-Review r1 (2026-11-23): an absent-key-keeps variant was tried and reverted — keeping a stored prior can stitch one supersession's scheduled end onto another's metadata.
+Review r1 (2026-11-23): an absent-key-keeps variant was tried and reverted — keeping a stored prior can stitch one supersession's scheduled end onto another's metadata. As landed, import coerces `prior_valid_to` to null when the row's `superseded_by` is null (as D2 says).
 
 ### D6 — erasure and retention
 
@@ -310,7 +312,7 @@ fails its startup check by design, as every prior bump did.
   `packages/core/src/services/ImportExportService.ts` — D5.
 - Tests: `packages/core/__tests__/supersede.test.ts`, new
   `reopen.test.ts`, new `migration18.test.ts`, `opsLibrarian.test.ts`,
-  `temporalRoundTrip.test.ts`, `expire.test.ts`.
+  `temporalRoundTrip.test.ts`.
 - Docs listed in D7; `INTENT.md` amendment.
 
 ## Test plan

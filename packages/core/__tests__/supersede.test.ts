@@ -209,10 +209,17 @@ describe('supersede() records a replaced scheduled end (specs/supersede-future-v
   });
 
   it('a rejected supersede (already_expired) records nothing and emits nothing', async () => {
-    await insert('old');
-    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 200 WHERE id = 'old'`);
-    await expect(wiki.supersede('e1', 'old', { title: 'x', body: 'y' })).rejects.toMatchObject({ reason: 'already_expired' });
-    expect(await prior('old')).toBeNull();
+    const { d, w, diagnostics } = await withDiag();
+    await d.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at, valid_to) VALUES ('old','e1','t','b',100,100,${FUTURE})`);
+    // future end is read, then the supersede is rejected (replacement not_found)
+    await expect(w.supersede('e1', 'old', 'missing')).rejects.toMatchObject({ reason: 'not_found' });
+    const r = await d.getFirstAsync<any>(`SELECT valid_to, prior_valid_to, superseded_by FROM llm_wiki_entries WHERE id='old'`);
+    expect(r).toEqual({ valid_to: FUTURE, prior_valid_to: null, superseded_by: null });
+    expect(diagnostics.filter((x) => x.code === 'supersede_scheduled_end_replaced')).toHaveLength(0);
+    await insert('old2');
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 200 WHERE id = 'old2'`);
+    await expect(wiki.supersede('e1', 'old2', { title: 'x', body: 'y' })).rejects.toMatchObject({ reason: 'already_expired' });
+    expect(await prior('old2')).toBeNull();
   });
 
   it('outbox UPDATE payload for supersede carries prior_valid_to', async () => {

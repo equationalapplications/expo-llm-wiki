@@ -99,12 +99,13 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   the old fact came from a person — an update to a fact taken from a
   document becomes a draft for review, not a replacement), or ended
   without a replacement by `expire()`. An archive is a superseded
-  fact. `reopen()` returns a replaced fact (not an archive) to live once
-  its replacement is forgotten or gone. It stays in the
+  fact. It stays in the
   store, marked, until the retention window ends; its text is history
   the host chose to keep, not a forgotten row. Erase never shortens
   the host's chosen window for it; once that window ends, an aged
-  superseded fact becomes forgotten like any other.
+  superseded fact becomes forgotten like any other. `reopen()` returns a
+  replaced fact (not an archive) to live once its replacement is
+  forgotten or gone.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
   or through the chain or source paths), or one a heal pass removed.
   Between that deletion and the hard delete it is soft-deleted: present

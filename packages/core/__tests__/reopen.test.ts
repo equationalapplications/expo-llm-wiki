@@ -104,6 +104,31 @@ describe('reopen()', () => {
     expect(ids).toContain('old');
   });
 
+  it('a crafted invalid prior (<= start, non-integer) restores null', async () => {
+    await supersedeThenForget('future');
+    await db.runAsync(`UPDATE llm_wiki_entries SET prior_valid_to = 50 WHERE id = 'old'`);
+    expect(await wiki.reopen('e1', 'old')).toEqual({ valid_to: null });
+  });
+
+  it('chain A->B->C: B blocked while C live; forget C reopens B with its prior; forget B reopens A with F', async () => {
+    await insert('A');
+    await insert('B2');
+    const F = FUTURE;
+    await wiki.expire('e1', 'A', { at: F });
+    await wiki.supersede('e1', 'A', 'B2', { validFrom: 5_000 });
+    const B = FUTURE + 1000;
+    await wiki.expire('e1', 'B2', { at: B }).catch(() => undefined);
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = ? WHERE id = 'B2'`, [B]);
+    const { newId: C } = await wiki.supersede('e1', 'B2', { title: 'C', body: 'b' }, { validFrom: 6_000 });
+    await expect(wiki.reopen('e1', 'B2')).rejects.toMatchObject({ reason: 'successor_live' });
+    await wiki.forget('e1', { entryId: C });
+    expect(await wiki.reopen('e1', 'B2')).toEqual({ valid_to: B });
+    // A's successor B2 is live again, so A is blocked until B2 is forgotten
+    await expect(wiki.reopen('e1', 'A')).rejects.toMatchObject({ reason: 'successor_live' });
+    await wiki.forget('e1', { entryId: 'B2' });
+    expect(await wiki.reopen('e1', 'A')).toEqual({ valid_to: F });
+  });
+
   describe('guards leave the row byte-identical and push no outbox row', () => {
     async function expectReject(entity: string, id: string, reason: string, snapshotIds: string[] = [id]) {
       const before = await Promise.all(snapshotIds.map(row));
