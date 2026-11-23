@@ -45,7 +45,8 @@ to this issue (new deletion semantics on a JSON column).
 > shared predicate is widened to `EntryRepository.EVENT_MATCH_SQL`
 > (`POINTER_EVENT_MATCH_SQL` is kept as an alias): a row also matches when its
 > `derived_events` list contains the event id, through a `json_each` term under
-> its own `json_valid` and `json_type = 'array'` guard. The event id binds
+> its own `json_valid` and `json_type = 'array'` guard, and requiring
+> `json_each.type = 'text'` on the element. The event id binds
 > twice. The text below describes the original single-term form.
 
 A fact matches when, entity-scoped:

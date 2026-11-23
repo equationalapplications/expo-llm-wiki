@@ -230,7 +230,11 @@ meaning and is never re-attributed.
   `source_pointer` (`:524, 552`): a dump without the key leaves a stored
   list untouched. The ordinary `upsert` serializes the whole fact into the
   outbox payload (`:383`), so the list reaches outbox consumers with
-  no further change (verify in plan).
+  no further change. As landed: the ordinary `upsert` writes `derived_events` on
+  conflict only when the caller supplies the key (`CASE WHEN ? THEN
+  excluded.derived_events ELSE derived_events END`), so a re-upsert without the
+  key never nulls an erasure trace; consequently the outbox payload overlays the
+  stored list when the key is absent.
 
 ### 3. Apply-time re-check (closes the host-side deletion race)
 
@@ -261,7 +265,8 @@ predicate:
       ELSE 0 END)
 OR
 (CASE WHEN json_valid(derived_events) AND json_type(derived_events) = 'array'
-      THEN EXISTS (SELECT 1 FROM json_each(derived_events) WHERE value = ?)
+      THEN EXISTS (SELECT 1 FROM json_each(derived_events)
+                   WHERE json_each.type = 'text' AND json_each.value = ?)
       ELSE 0 END)
 ```
 

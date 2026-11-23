@@ -450,8 +450,8 @@ break the erasure promise through the export door.
   A note on rule 12: the record of which events a rewritten fact absorbed
   now exists, so `forget({ eventId })` finds wording that survived inside a
   fact pointing at another event; the live per-update receipts land with
-  roadmap step 13, and rule 12's "per-fact pass reports are planned"
-  sentence stands until they ship. Recorded with
+  roadmap step 13, and rule 12's sentence that the librarian's per-fact pass
+  reports are planned stands until they ship. Recorded with
   `specs/inplace-update-provenance/` (issue #450, PR #469); the follow-up
   `forget-event-exclusion` is issue #472. Owner ruling, 2026-11-23. Why: a
   host cannot honor an erasure request against wording it cannot find. No
