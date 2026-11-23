@@ -54,7 +54,9 @@ const wiki = createWiki(db, {
 | `classification_low_confidence` / `classification_invalid` | A classifier backfill answer was rejected |
 | `context_overflow_skipped` | An item's prompt overflowed the model's context window and the item was skipped. Emitted by heal, generative ontology backfill, classifier backfill, and the ops librarian (extract and resolve). `detail` is `{ factId }` for a fact, `{ sourceRef }` for a librarian event, or `{ itemIndex }` for an ops-resolve candidate |
 | `librarian_gate` / `librarian_op_rejected` / `resolve_failed` / `contradicts_document` | Outcomes of the ops librarian |
-| `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one |
+| `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one. Also emitted when the librarian merged such a candidate into an existing fact in place: `detail.factId` is then the merged fact, and its `derived_events` list was not extended |
+| `source_event_gone` | An ops librarian candidate was dropped whole at apply time because the event it came from no longer exists (deleted outside the engine while the pass ran, for example with direct SQL). `detail` is `{ itemIndex, sourceRef }`, the event id only. Candidates whose pointer could not be resolved are not dropped |
+| `derived_events_invalid` | A dump import met a malformed `derived_events` value and stored null (`detail.factId` only; OKF frontmatter reports it through `dropped_pointer_values` with the reason `derived_events_malformed`) |
 | `source_pointer_invalid` | A dump import met a malformed source pointer value and stored a null pointer (OKF frontmatter reports malformed pointers differently: check `dropped_pointer_values` on the `parseOkfBundle` result) |
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |

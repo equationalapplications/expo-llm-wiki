@@ -439,3 +439,33 @@ describe('test 12: OKF round-trip', () => {
     expect(JSON.stringify(back.dropped_pointer_values)).not.toContain('secret');
   });
 });
+
+import { SEVERITY, MESSAGE } from '../src/utils/diagnostics';
+
+describe('tests 15-16: growth and vocabulary', () => {
+  it('test 15: a fact merged from 200 events reads, exports, round-trips through OKF and matches in forget', async () => {
+    const { db, repo } = await repoSetup();
+    const wiki = new WikiMemory(db, { llmProvider: llm } as any);
+    const ids = Array.from({ length: 200 }, (_, i) => `evt_${i}`);
+    let list: string[] = [];
+    for (const id of ids) {
+      list = [...list, id];
+      await db.withTransactionAsync((tx) => repo.upsert(mkFact({ derived_events: list }), tx));
+    }
+    expect((await repo.findByIds(['F']))[0].derived_events).toHaveLength(200);
+    const dump = await wiki.exportDump('u');
+    expect((dump.entities['u'].facts as any[])[0].derived_events).toEqual(ids);
+    const okf = formatOkfBundle(dump as any);
+    const back = parseOkfBundle('u', okf.files);
+    expect((back.entities['u'].facts[0] as WikiFact).derived_events).toEqual(ids);
+    expect(await wiki.forget('u', { eventId: 'evt_199' }, { dryRun: true })).toEqual({ deleted: { entries: 1, tasks: 0 } });
+    expect((await wiki.forget('u', { eventId: 'evt_0' })).deleted.entries).toBe(1);
+  });
+
+  it('test 16: the new codes carry a severity and a content-free message', () => {
+    for (const code of ['source_event_gone', 'derived_events_invalid'] as const) {
+      expect(SEVERITY[code]).toBe('warn');
+      expect(MESSAGE[code].length).toBeGreaterThan(0);
+    }
+  });
+});

@@ -31,6 +31,14 @@ config: { librarian: { strategy: 'legacy' } } // default: 'ops'
 | Changes | Rewrites facts | `ADD` / `UPDATE` / `SUPERSEDE` / `NOOP`, in one batched call. Supersede keeps history. |
 | Prompt overrides | `prompts.guidance`[^1] | `prompts.guidance` |
 
+On the `ops` strategy, an `UPDATE` of a librarian fact rewrites its title and body in place
+and records the event the new text came from in the fact's `derived_events` list (the
+`source_pointer` keeps naming the first event). An `UPDATE` that has to become a `SUPERSEDE`
+(its target is a document or a user-stated fact) gives the replacement the target's provenance
+the same way; a plain `SUPERSEDE` does not. Facts rewritten before schema v18 have no list. If an
+event is deleted outside the engine while a pass runs, the pass drops that event's candidates
+and emits `source_event_gone`.
+
 [^1]: `prompts.librarianSystemPrompt` was removed in 9.0.0; use `prompts.guidance`.
 
 Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) depend on your

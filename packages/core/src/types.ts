@@ -1531,7 +1531,8 @@ export interface ForgetParams {
   sourceHash?: string;
   /**
    * Soft-delete every librarian fact whose `source_pointer` names this event
-   * id (entity-scoped; exact match, no normalization — event ids are
+   * id, or whose `derived_events` list contains it (a fact the librarian
+   * merged this event's text into is deleted whole; entity-scoped; exact match, no normalization — event ids are
    * engine-generated). Mutually exclusive with every other selector;
    * `clearAll` excludes it. Removal reports through the return value and the
    * per-row outbox DELETE events. See `specs/forget-by-event-id/` (issue #386).

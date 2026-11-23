@@ -60,7 +60,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   can carry: the event it came from (`event_id`) plus, when grounding
   permits, the verified quote. When the librarian merges new text into
   an UPDATE or SUPERSEDE, the stored body may rest on more than the
-  named event; the pointer is not re-attributed. The quote survives the
+  named event; the pointer is not re-attributed, and the fact's
+  `derived_events` list names the further events a merge drew on. The quote survives the
   event's prune and travels with the fact through export and the
   outbox; it is content, not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
@@ -443,6 +444,18 @@ break the erasure promise through the export door.
 
 ## Amendments
 
+- 2026-11-23 — The glossary's Source pointer entry gains one sentence: an
+  ops librarian fact's `derived_events` list names the further events an
+  in-place merge drew on, beside the pointer that is not re-attributed.
+  A note on rule 12: the record of which events a rewritten fact absorbed
+  now exists, so `forget({ eventId })` finds wording that survived inside a
+  fact pointing at another event; the live per-update receipts land with
+  roadmap step 13, and rule 12's "per-fact pass reports are planned"
+  sentence stands until they ship. Recorded with
+  `specs/inplace-update-provenance/` (issue #450, PR #469); the follow-up
+  `forget-event-exclusion` is issue #472. Owner ruling, 2026-11-23. Why: a
+  host cannot honor an erasure request against wording it cannot find. No
+  rule text changed.
 - 2026-11-20 — Rule 11 is retitled "Benchmarks back claims and gate the
   native engine" and gains a paragraph: the engine runs whatever model
   the host hands it, puts no benchmark in front of that choice, and
