@@ -1,6 +1,6 @@
 # Spec — Step 13: Type on write
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Implemented (2026-11-23, PR #471); owner-approved 2026-11-23, all open-question defaults accepted
 **Date:** 2026-11-23
 **Intent check:** Rule 1 (the classifier is the host's `llmProvider.classify`;
 core adds no provider, key or network client). Rule 2 (no schema change at
