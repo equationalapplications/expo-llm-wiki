@@ -442,7 +442,27 @@ export const MIGRATIONS: Migration[] = [
       // database today, so re-running v17 is trivially idempotent.
     },
   },
+  {
+    version: 18,
+    description: 'prior_valid_to: record the scheduled end a supersede overwrote',
+    run: async (db, prefix) => {
+      await addPriorValidToColumn(db, prefix);
+    },
+  },
 ];
+
+/**
+ * v18 DDL (supersede-future-valid-to D1): nullable `prior_valid_to INTEGER` on
+ * entries. Idempotent via a PRAGMA table_info guard (v13/v16 pattern); must run
+ * outside any explicit transaction (ALTER TABLE ADD COLUMN). No backfill:
+ * nothing to backfill from. Exported so the v18 body stays a one-line call.
+ */
+export async function addPriorValidToColumn(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+  if (!cols.some((c) => c.name === 'prior_valid_to')) {
+    await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN prior_valid_to INTEGER`);
+  }
+}
 
 /**
  * Partial index covering the legacy source_type probe. Created only by v14 and

@@ -14,10 +14,10 @@ use crate::error::GraphragError;
 use rusqlite::Transaction;
 
 /// packages/core `CURRENT_SCHEMA_VERSION` (packages/core/src/db/migrations.ts,
-/// derived there from the last migration; core 9.4.x runs schema 17).
+/// derived there from the last migration; core 9.4.x runs schema 18).
 /// Kept in lockstep by the parity test (tests/schema_parity.rs), which parses
 /// the migrations file and fails if this pin ever falls behind or ahead.
-pub const REQUIRED_SCHEMA_VERSION: i64 = 17;
+pub const REQUIRED_SCHEMA_VERSION: i64 = 18;
 
 /// Required columns of `{prefix}entries` (schema.ts, verbatim names).
 const REQUIRED_ENTRIES_COLUMNS: &[&str] = &[
