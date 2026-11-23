@@ -19,7 +19,7 @@ export interface GuidanceDiagnostic {
     reason?: 'threw' | 'non_string';
   };
 }
-import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WriteOntologyPromptContext, WikiInstructions } from '../types';
+import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WikiInstructions } from '../types';
 
 /** Backfill builders accept the backfill context only: a write context (branded) is rejected. */
 type BackfillOntologyContext = OntologyPromptContext & { site?: never };
@@ -162,7 +162,7 @@ export class PromptService {
   private buildWriteSystemPrompt(
     template: string,
     variables: Record<string, unknown>,
-    ontologyContext: WriteOntologyPromptContext | null | undefined,
+    ontologyContext: OntologyPromptContext | null | undefined,
   ): string {
     const hasOntologyPlaceholders = this.hasOntologyPlaceholders(template);
     // Strip before hydration so variable values (document text) are never edited.
@@ -187,7 +187,7 @@ export class PromptService {
     return hasOntologyPlaceholders ? hydrated : this.appendWriteOntology(hydrated, ontologyContext);
   }
 
-  private appendWriteOntology(systemPrompt: string, ctx: WriteOntologyPromptContext | null | undefined): string {
+  private appendWriteOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {
     if (!ctx) return systemPrompt;
     return `${systemPrompt}\n\n${ctx.ontologyModeInstructions}`;
   }
@@ -223,7 +223,7 @@ export class PromptService {
   buildIngestPrompt(
     documentChunk: string,
     runtimeOverride?: string,
-    ontologyContext?: WriteOntologyPromptContext | null,
+    ontologyContext?: OntologyPromptContext | null,
     guidance?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT;
@@ -244,7 +244,7 @@ export class PromptService {
     events: unknown[],
     currentFacts: unknown[],
     runtimeOverride?: string,
-    ontologyContext?: WriteOntologyPromptContext | null,
+    ontologyContext?: OntologyPromptContext | null,
     guidance?: string,
   ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
     const template = runtimeOverride ?? LIBRARIAN_SYSTEM_PROMPT;
@@ -419,7 +419,7 @@ export class PromptService {
   /** Ops extract (spec §5.2): events only — no existing facts. */
   buildOpsExtractPrompt(
     events: LabeledEvent[],
-    ontologyContext?: WriteOntologyPromptContext | null,
+    ontologyContext?: OntologyPromptContext | null,
     guidance?: string,
   ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
     const lines = events.map((l) => `${l.label} [${new Date(l.at).toISOString()}] (${l.event.event_type}) ${l.event.summary}`);
@@ -449,7 +449,7 @@ export class PromptService {
    * ontology context, matching `buildHealPrompt`.
    */
   buildInstructionTemplates(
-    writeContext: WriteOntologyPromptContext | null,
+    writeContext: OntologyPromptContext | null,
     librarianStrategy: 'legacy' | 'ops',
     guidance?: string,
     /**
@@ -465,7 +465,7 @@ export class PromptService {
      * passes the un-engaged context here because write-time typing governs the
      * librarian only (specs/type-on-write §5, step-14 seam).
      */
-    ingestContext?: WriteOntologyPromptContext | null,
+    ingestContext?: OntologyPromptContext | null,
   ): WikiInstructions {
     const o = this.globalOverrides;
     const backfill: BackfillOntologyContext | null = backfillContext !== undefined

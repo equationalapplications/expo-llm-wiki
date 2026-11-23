@@ -274,9 +274,11 @@ code:
   the fact untyped and the existing `nodeTypeReceipts` call at the same site
   emits `node_type_dropped { factId, nodeType, reason: 'not_in_manifest' }`.
   No new code path.
-- If the in-transaction mode is `'off'`, the manifest is empty, the slug
-  misses, the fact is stored untyped, and `shouldEmitOntologyReceipt(mode)`
-  suppresses the door receipts as today (`legacy.ts:170`, `apply.ts:119`).
+- If the in-transaction mode is `'off'`, the door does not apply the
+  classifier's type (it checks the mode itself: a stored `'off'` row keeps
+  its manifest, so the slug would still resolve), the fact is stored as
+  today's door stores it, and `shouldEmitOntologyReceipt(mode)` suppresses
+  the door receipts (`legacy.ts:170`, `apply.ts:119`).
 - `edges: []` is deliberate: the classifier proposes none, and any edges the
   generative model may have volunteered without a type were already dropped
   as `no_source_type` by the first normalization (`OntologyService.ts:126-139`)
@@ -302,8 +304,10 @@ consumer families are kept apart at the type level:
   (Test plan 1) is the guard.
 - `types.ts`: `WriteOntologyPromptContext` is a new, additive exported type
   with the same two fields plus a literal brand (`site: 'write'`), so a
-  write context cannot be passed to the backfill builder, nor a backfill
-  context to a write builder, without a compile error. `OntologyPromptContext`
+  write context cannot be passed to the backfill builder without a compile
+  error. The reverse direction stays open: the public write builders keep
+  accepting a plain `OntologyPromptContext`, so no host call that compiles
+  today stops compiling (semver: minor). `OntologyPromptContext`
   (`types.ts:136-139`) is unchanged.
 - `OntologyService`: `buildPromptContext(entityId)` (`:88-93`) stays and
   serves backfill only. New `buildWritePromptContext(entityId, { engaged })`
@@ -314,7 +318,9 @@ consumer families are kept apart at the type level:
   `OntologyPromptContext` only. `buildIngestPrompt` (`:185-203`),
   `buildLibrarianPrompt` (`:205-237`), `buildOpsExtractPrompt` (`:382-398`)
   and the `ingest`/`librarian` entries of `buildInstructionTemplates`
-  (`:420-423`) accept `WriteOntologyPromptContext` only. The private
+  (`:420-423`) keep accepting `OntologyPromptContext | null` (a
+  `WriteOntologyPromptContext` is assignable to it); only the backfill
+  builder narrows, to `OntologyPromptContext & { site?: never }`. The private
   `appendOntology`/`buildSystemPrompt` helpers (`:158-183`) are split into a
   write and a backfill variant with identical bodies, so the roadmap's
   sentence holds in the file it names: a write-time instruction change
@@ -667,28 +673,24 @@ recorded at lane open; the suite passes as a whole.
    and `buildInstructionTemplates().ontologyBackfill` equal their recorded
    fixtures on the appended and the placeholder branch; (c) the
    `librarianLegacyParity` snapshot is unchanged (never run with `-u`).
-   **Answer (2026-11-23): Reuse the `'typing'` chain, 0.5 default.**
 
 2. **Split holds under change.** A test mutates the write appendix (a
    module mock returning different text) and asserts the backfill prompt is
    unchanged; and vice versa. A type-level test (`// @ts-expect-error`)
    asserts a `WriteOntologyPromptContext` is rejected by
-   `buildOntologyBackfillPrompt` and an `OntologyPromptContext` by
-   `buildOpsExtractPrompt`.
-   **Answer (2026-11-23): Do not stamp.**
+   `buildOntologyBackfillPrompt`, and that a plain `OntologyPromptContext` is
+   accepted by all four public write builders.
 
 3. **Resolver.** `resolveSystemOneTypeOnWrite`: unset → `'llm'`;
    `'auto'`/`'llm'` pass through; invalid warns once and resolves `'llm'`;
    the floor read is `resolveTypingMinConfidence` (a configured
    `minConfidence.typing: 0` is honored — `??` not `||`).
-   **Answer (2026-11-23): Engage in `'emergent'` too.**
 
 4. **Engagement predicate.** Each of §2's four conditions alone disables the
    step: no classify call, today's appendix sent (prompt equals test 1's
    fixture), no new receipt. 254 slugs plus the sentinel engages; 255 does
    not; a manifest carrying `none_of_these` does not. The backfill site
    imports the same predicate and its existing boundary tests stay green.
-   **Answer (2026-11-23): Yes.**
 
 5. **Engaged prompt.** Under engagement the librarian system prompt (both
    strategies) equals the mode-`'off'` prompt for the same inputs, byte for
@@ -697,7 +699,6 @@ recorded at lane open; the suite passes as a whole.
    placeholder override has its ontology placeholders stripped;
    `getInstructions().librarian` equals the engaged prompt while
    `.ontologyBackfill` is unchanged.
-   **Answer (2026-11-23): `typedOnWrite?` beside `typed`.**
 
 6. **Accepted type reaches the row.** Ops and legacy: a classifier answer
    at or above the floor stores `okf_type` on the inserted row, emits one
@@ -706,7 +707,6 @@ recorded at lane open; the suite passes as a whole.
    from `findUntypedByEntityId`. A model-volunteered valid slug is not
    asked and receipts `writer: 'llm'`. No edge row is written for a
    write-typed fact (§10).
-   **Answer (2026-11-23): Receipts plus internal id lists; `runLibrarian()` stays `void`.**
 
 7. **Every non-accept outcome.** Abstain, below-floor (`confidence` exactly
    equal to the floor is accepted; `floor − ε` is not), `choice_not_offered`,
@@ -715,7 +715,6 @@ recorded at lane open; the suite passes as a whole.
    the §8 receipt, and leave the fact eligible for an immediate backfill
    pass (assert `countUntypedByEntityId(...).eligible` counts it). The
    sentinel at confidence `1.0` is an abstain, not an accept.
-   **Answer (2026-11-23): Ship here.**
 
 8. **Budget.** A meter that admits extraction and resolution but exhausts
    during typing: the first facts are typed, the rest are written untyped,
@@ -826,34 +825,41 @@ single per-update receipt; PR #469 (issue #450) dropped its proposed
    edges/resolve/heal did)? — S1-0 §1 reserved exactly this reuse, and an
    N-way `choice` at 0.5 is the signal the backfill classifier already
    accepts today; a wrong type is a wrong stamp, not data loss.
+   **Answer (2026-11-23): Reuse the `'typing'` chain, 0.5 default.**
 2. **Cooldown stamp on write-time non-accepts.** Do not stamp
    (recommended) or stamp like the backfill's completed reviews? — Not
    stamping keeps the generative backfill as the immediate second opinion;
    the price is one duplicate classify call per such fact when the backfill
    also runs `typing: 'auto'`, disclosed in §11.
+   **Answer (2026-11-23): Do not stamp.**
 3. **Emergent mode under engagement.** Engage in `'emergent'` too and lose
    the write path's `ontology_updates` for the pass (recommended), or
    engage only in `'strict'`? — One prompt shape and one rule; the backfill's
    generative path keeps proposing types, and the host opted in knowingly.
+   **Answer (2026-11-23): Engage in `'emergent'` too.**
 4. **`node_type_assigned { writer: 'llm' }` at the write door for
    generative-typed facts, in every mode.** Yes (recommended) — it is the
    missing third leg of the typing audit the ontology-curation spec built,
    and step 12 ruled receipts fire for default hosts too; it is a new `info`
    diagnostic on default hosts, which §12 discloses.
+   **Answer (2026-11-23): Yes.**
 5. **Counter shape.** `EntityMaintenanceReport.typedOnWrite?` beside
    backfill's `typed` (recommended), or fold into `typed`? — Two writers
    stay distinguishable in the host's report; folding would hide which path
    did the typing.
+   **Answer (2026-11-23): `typedOnWrite?` beside `typed`.**
 6. **Rule-12 librarian report channel.** Receipts plus internal
    `rewrittenIds`/`supersededIds` on `LibrarianResult`, with
    `runLibrarian()` still `void` (recommended), or also widen `runLibrarian`
    to return the lists? — Receipts are the channel hosts already consume
    (step-11 OQ6 declined new `LibrarianResult` surface for the resolve site);
    a return-type widening is its own small spec if a host asks.
+   **Answer (2026-11-23): Receipts plus internal id lists; `runLibrarian()` stays `void`.**
 7. **Does this step ship the rule-12 receipts at all,** or do they get
    their own cycle? Ship here (recommended) — PR #465's INTENT amendment
    assigns them to step 13, they are two codes at two existing branches,
    and the same PR must amend rule 12's "today" line either way.
+   **Answer (2026-11-23): Ship here.**
 8. **Step-14 key scope.** Leave `typeOnWrite` documented as librarian-only
    and let step 14 decide widen-vs-sibling (recommended), or pre-declare
    that it will cover ingest? — Step 14 has its own gate and spec; this spec

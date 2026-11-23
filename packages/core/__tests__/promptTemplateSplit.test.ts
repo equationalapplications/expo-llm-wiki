@@ -103,14 +103,16 @@ describe('write / backfill template split (type-on-write §5)', () => {
     expect(t2.librarian).toContain('Ontology constraints');
   });
 
-  it('type level: contexts are not interchangeable', () => {
+  it('type level: a write context is rejected by backfill; a plain OntologyPromptContext is accepted by every public write builder', () => {
     const ps = new PromptService();
     const w = buildWriteOntologyAppendix('strict', '{}');
     const b = buildOntologyPromptAppendix('strict', '{}');
     // @ts-expect-error a write context is rejected by the backfill builder
     ps.buildOntologyBackfillPrompt([], undefined, w);
-    // @ts-expect-error a backfill context is rejected by the ops extract builder
+    ps.buildIngestPrompt('c', undefined, b);
+    ps.buildLibrarianPrompt([], [], undefined, b);
     ps.buildOpsExtractPrompt([], b);
+    ps.buildInstructionTemplates(b, 'ops');
     expect(true).toBe(true);
   });
 });
