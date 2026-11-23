@@ -662,20 +662,34 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
-   * Shared JSON match predicate for source_pointer event ids
-   * (specs/forget-by-event-id §D1). Every JSON call sits under the single
+   * Shared JSON match predicate for an event id
+   * (specs/forget-by-event-id §D1, widened by specs/inplace-update-provenance
+   * §4): a row matches when its `source_pointer` names the event OR its
+   * `derived_events` list contains it. Every JSON call sits under its own
    * `json_valid` guard: unguarded JSON functions RAISE on malformed text, and
    * three-valued logic forces evaluation of AND operands after a NULL-guarded
    * term — a two-term form is only as safe as the planner's term-splitting.
+   * The `json_each` term additionally requires `json_type = 'array'` (a JSON
+   * object or scalar would otherwise iterate its members). The event id binds
+   * TWICE (pointer term, then derived_events term); use `eventMatchArgs`.
    * The tombstone guard (`deleted_at IS NULL`) is added per-method.
    */
-  static readonly POINTER_EVENT_MATCH_SQL = `CASE WHEN json_valid(source_pointer)
+  static readonly EVENT_MATCH_SQL = `((CASE WHEN json_valid(source_pointer)
     THEN json_type(source_pointer, '$.event_id') = 'text'
          AND json_extract(source_pointer, '$.event_id') = ?
-    ELSE 0 END`;
+    ELSE 0 END)
+    OR
+    (CASE WHEN json_valid(derived_events)
+    THEN (CASE WHEN json_type(derived_events) = 'array'
+          THEN EXISTS (SELECT 1 FROM json_each(derived_events) WHERE json_each.type = 'text' AND json_each.value = ?)
+          ELSE 0 END)
+    ELSE 0 END))`;
+
+  /** Old name kept as an alias (tests and external references). */
+  static readonly POINTER_EVENT_MATCH_SQL = EntryRepository.EVENT_MATCH_SQL;
 
   /**
-   * IDs of the entity's entries whose source_pointer names the event id.
+   * IDs of the entity's entries whose source_pointer names the event id or whose derived_events list contains it.
    * `includeDeleted = true` returns live + tombstoned rows (the forget
    * enumeration superset for index sync and the ledger backstop).
    */
@@ -687,7 +701,7 @@ export class EntryRepository extends BaseRepository {
   ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`;
-    const args: unknown[] = [entityId, eventId];
+    const args: unknown[] = [entityId, eventId, eventId];
     if (!includeDeleted) sql += ` AND deleted_at IS NULL`;
     const rows = await executor.getAllAsync<{ id: string }>(sql, args);
     return rows.map((r) => r.id);
@@ -698,7 +712,7 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ n: number }>(
       `SELECT COUNT(*) AS n FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId],
+      [entityId, eventId, eventId],
     );
     return row?.n ?? 0;
   }
@@ -717,11 +731,11 @@ export class EntryRepository extends BaseRepository {
     const now = Date.now();
     const idsToDelete = await executor.getAllAsync<{ id: string }>(
       `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId],
+      [entityId, eventId, eventId],
     );
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [now, now, entityId, eventId],
+      [now, now, entityId, eventId, eventId],
     );
     for (const row of idsToDelete) {
       await this.outbox.push({

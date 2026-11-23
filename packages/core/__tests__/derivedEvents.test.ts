@@ -130,3 +130,68 @@ describe('task 2: repository read/write of derived_events', () => {
     expect(await raw('F')).toBeNull();
   });
 });
+
+describe('tests 7-9: forget({ eventId }) matches derived_events', () => {
+  async function make() {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, { llmProvider: llm, config: { enableOutbox: true } } as any);
+    await wiki.setup();
+    const ins = (entityId: string, id: string, pointer: string | null, derived: string | null) =>
+      db.runAsync(
+        `INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, source_pointer, derived_events, created_at, updated_at) VALUES (?, ?, 't', 'b', 'doc', ?, ?, 1, 1)`,
+        [id, entityId, pointer, derived],
+      );
+    const live = async (id: string) =>
+      (await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE id = ? AND deleted_at IS NULL`, [id]))!.n;
+    return { db, wiki, ins, live };
+  }
+  const ptr = (e: string) => JSON.stringify({ event_id: e });
+
+  it('test 7: a fact whose list names E2 is soft-deleted whole (pointer E1), with an outbox DELETE; siblings behave as before; dryRun counts it', async () => {
+    const t = await make();
+    await t.ins('u', 'F', ptr('E1'), '["E2"]');
+    await t.ins('u', 'sibPtr', ptr('E2'), null);
+    await t.ins('u', 'sibNone', ptr('E5'), '["E6"]');
+    const dry = await t.wiki.forget('u', { eventId: 'E2' }, { dryRun: true });
+    expect(dry).toEqual({ deleted: { entries: 2, tasks: 0 } });
+    expect(await t.live('F')).toBe(1);
+    const res = await t.wiki.forget('u', { eventId: 'E2' });
+    expect(res.deleted.entries).toBe(2);
+    expect(await t.live('F')).toBe(0);
+    expect(await t.live('sibPtr')).toBe(0);
+    expect(await t.live('sibNone')).toBe(1);
+    const del = await t.db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${P}outbox WHERE operation='DELETE' AND table_name='entries' AND record_id='F'`);
+    expect(del!.n).toBe(1);
+  });
+
+  it('test 8: malformed derived_events (text, object, scalar, nested, mixed) neither matches nor throws, through enumerate, dryRun and delete', async () => {
+    const t = await make();
+    await t.ins('u', 'junk', null, 'not json at all');
+    await t.ins('u', 'obj', null, '{"0":"E2","k":"E2"}');
+    await t.ins('u', 'str', null, '"E2"');
+    await t.ins('u', 'num', null, '[2]');
+    await t.ins('u', 'nested', null, '[["E2"]]');
+    await t.ins('u', 'empty', null, '');
+    await t.ins('u', 'badPtrGoodList', 'garbage{', '["E2"]');
+    await t.ins('u', 'goodPtrBadList', ptr('E2'), 'garbage{');
+    const dry = await t.wiki.forget('u', { eventId: 'E2' }, { dryRun: true });
+    expect(dry.deleted.entries).toBe(2);
+    const res = await t.wiki.forget('u', { eventId: 'E2' });
+    expect(res.deleted.entries).toBe(2);
+    for (const id of ['junk', 'obj', 'str', 'num', 'nested', 'empty']) expect(await t.live(id)).toBe(1);
+    expect(await t.live('badPtrGoodList')).toBe(0);
+    expect(await t.live('goodPtrBadList')).toBe(0);
+    // Idempotent over tombstones.
+    expect((await t.wiki.forget('u', { eventId: 'E2' })).deleted.entries).toBe(0);
+  });
+
+  it('test 9: entity isolation: entity B\'s fact listing E2 survives forget(A, { eventId })', async () => {
+    const t = await make();
+    await t.ins('A', 'a', null, '["E2"]');
+    await t.ins('B', 'b', null, '["E2"]');
+    await t.wiki.forget('A', { eventId: 'E2' });
+    expect(await t.live('a')).toBe(0);
+    expect(await t.live('b')).toBe(1);
+  });
+});

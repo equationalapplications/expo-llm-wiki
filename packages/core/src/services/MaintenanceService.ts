@@ -1380,7 +1380,7 @@ export class MaintenanceService {
       // deletedEntryIds inside the same transaction: the entryId branch, the
       // by-source branch (findIdsBySource(..., includeDeleted=true) — its
       // predicate matches softDeleteBySource's exactly), the eventId branch
-      // (findIdsByPointerEvent(..., includeDeleted=true) — same predicate as
+      // (findIdsByPointerEvent(..., includeDeleted=true) — same widened EVENT_MATCH_SQL predicate (pointer OR derived_events) as
       // softDeleteByPointerEvent modulo the tombstone guard), and the
       // clearAll branch. So the index update is O(deleted), not O(entity)
       // (spec §2.1).
