@@ -36,6 +36,19 @@ describe('runBatched overflow', () => {
     expect(outcome.skipped).toEqual([]);
   });
 
+  it('llama.rn "Context is full" at batch > 1 splits instead of rethrowing', async () => {
+    let first = true;
+    const outcome = await runBatched<number, number[]>(makeArgs({
+      items: [1, 2, 3, 4],
+      call: async (p) => {
+        if (first && p.userPrompt.split(',').length > 2) { first = false; throw new Error('Context is full'); }
+        return 'ok';
+      },
+    }));
+    expect(outcome.results.flat().sort()).toEqual([1, 2, 3, 4]);
+    expect(outcome.skipped).toEqual([]);
+  });
+
   it('opt-out caller: overflow at size 1 skips non_convergent, calls onSkip with the error', async () => {
     const skipped: Array<[number, unknown]> = [];
     const outcome = await runBatched<number, number[]>(makeArgs({

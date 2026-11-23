@@ -20,6 +20,10 @@ const OVERFLOW_MESSAGES: string[] = [
   "Input is too long for requested model.",
   // OpenAI error code style
   "Invalid request: context_length_exceeded. Reduce the number of tokens.",
+  // llama.rn 0.12.9 (RNLlamaJSI.cpp:1114): prompt >= n_ctx with ctx_shift off
+  "Context is full",
+  "llama.rn: Context is full",
+  "Error: context is FULL",
 ];
 
 const NOT_OVERFLOW: Array<[string, string]> = [
@@ -32,6 +36,8 @@ const NOT_OVERFLOW: Array<[string, string]> = [
   ['validation wording', 'Invalid input length for field X'],
   // bare output-config error: no context clause, so the dual-match is NOT satisfied (errata E2)
   ['bare max_tokens too large', 'max_tokens is too large: 4096 tokens must be ≤ 4096'],
+  ['disk full', 'Disk is full'],
+  ['queue full', 'Request queue is full, retry later'],
   ['parse error','Unexpected token < in JSON at position 0'],
   // 429 rate-limit bodies mentioning "input ... exceeds ... tokens": must NOT
   // classify as input overflow despite the token wording (Sonnet review minor).

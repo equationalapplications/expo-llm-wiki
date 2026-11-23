@@ -76,6 +76,8 @@ const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
   // classify as input overflow (it would split the batch and stamp a cooldown).
   /(input|prompt).{0,40}exceed(s|ed)? .{0,30}(context|maximum)/i,
   /context limit/i,
+  // llama.rn (RNLlamaJSI.cpp): prompt >= n_ctx with ctx_shift off
+  /context is full/i,
   /too long for (the )?requested model/i,
   // vLLM dual-match wording (errata E2 ruling): the regex ENFORCES the dual-match —
   // "max_tokens ... too large" PLUS a context clause; a bare message is NOT overflow
