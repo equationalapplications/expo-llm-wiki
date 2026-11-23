@@ -115,23 +115,34 @@ async function receipts(kind: 'full' | 'partial' | 'zero', config: WikiConfig = 
     empty = true;
     await wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: HASH_B, documentChunk: 'content 2' });
   }
-  return norm(diagnostics);
+  // Filter BEFORE normalizing: the disclosed node_type_assigned receipts mention fact ids
+  // the recorded sequence never saw, and must not shift the stable ordinals.
+  return { seq: norm(diagnostics.filter((d) => d.code !== 'node_type_assigned')), assigned: diagnostics.filter((d) => d.code === 'node_type_assigned') };
 }
 
 describe('ingest default-host receipt sequences (Test plan 1c)', () => {
   for (const kind of ['full', 'partial', 'zero'] as const) {
     it(`${kind} path`, async () => {
-      const seq = await receipts(kind);
-      // The one disclosed default-host delta (spec section 12): node_type_assigned { writer: 'llm' }.
-      const withoutAssigned = seq.filter((d) => d.code !== 'node_type_assigned');
-      check(`receipts|${kind}`, withoutAssigned);
+      const { seq } = await receipts(kind);
+      // The one disclosed default-host delta (spec section 12) is node_type_assigned { writer: 'llm' }; it is excluded here and asserted below.
+      check(`receipts|${kind}`, seq);
       if (kind === 'zero') expect(seq.some((d) => d.code === 'ingest_zero_facts')).toBe(true);
     });
   }
   it('typeOnIngest llm gives the same full-path sequence as unset', async () => {
     const a = await receipts('full');
     const b = await receipts('full', { systemOne: { typeOnIngest: 'llm' } } as WikiConfig);
-    expect(b).toEqual(a);
+    expect(b.seq).toEqual(a.seq);
+  });
+  it('the one disclosed delta: node_type_assigned { writer: llm } per generative-typed fact, both paths', async () => {
+    for (const kind of ['full', 'partial'] as const) {
+      const { assigned } = await receipts(kind);
+      // Ada (folded per-son -> person) and Paris (exact) resolve; R2 and Plain do not.
+      expect(assigned.map((d) => ({ operation: d.operation, trigger: d.trigger, ...d.detail }))).toEqual([
+        { operation: 'ingest', trigger: 'call', factId: expect.any(String), okfType: 'person', writer: 'llm', sourceRef: 'doc.md' },
+        { operation: 'ingest', trigger: 'call', factId: expect.any(String), okfType: 'place', writer: 'llm', sourceRef: 'doc.md' },
+      ]);
+    }
   });
 });
 
@@ -140,3 +151,19 @@ if (RECORD) {
     writeFileSync(FIXTURE, JSON.stringify(recorded, null, 2) + '\n');
   });
 }
+
+describe('late emergent resolution (default-host compat, specs/ingest-time-typing §4)', () => {
+  it('a slug a later chunk proposes still types an earlier chunk fact, as before the refactor', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { wiki, db } = await makeDiagnosticWiki({
+      config: { maxChunkLength: 30, chunkOverlap: 0 },
+      generateText: async ({ userPrompt }) => userPrompt.includes('SECOND')
+        ? JSON.stringify({ facts: [], ontology_updates: { node_types: [{ type: 'robot', description: 'A robot' }] } })
+        : JSON.stringify({ facts: [{ title: 'R2', body: 'r2', tags: [], confidence: 'certain', okf_type: 'robot' }] }),
+    });
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'emergent' });
+    await wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: HASH_A, documentChunk: 'FIRST chunk text here.\n\nSECOND chunk text here.' });
+    const rows = await db.getAllAsync<{ title: string; okf_type: string | null }>('SELECT title, okf_type FROM llm_wiki_entries WHERE entity_id = ? AND deleted_at IS NULL', ['e1']);
+    expect(rows).toEqual([{ title: 'R2', okf_type: 'robot' }]);
+  });
+});
