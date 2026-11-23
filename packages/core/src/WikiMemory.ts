@@ -1210,6 +1210,21 @@ export class WikiMemory {
     return this.temporalService.expire(entityId, factId, options);
   }
 
+  /**
+   * Return a superseded fact to live once its replacement has been forgotten
+   * or hard-deleted (INTENT rule 12). Clears `superseded_by`/`superseded_at`
+   * and restores `valid_to` to the scheduled end `supersede()` overwrote
+   * (`prior_valid_to`), or null when the fact was open-ended. Resolves with
+   * the restored `valid_to`. Throws `WikiSupersedeError` for a missing or
+   * foreign fact, one that is not superseded (an `expire()`-ended fact is
+   * not reopened), an immutable-document fact, or `successor_live` while the
+   * direct replacement is still live. A restored end that has already passed
+   * leaves the fact expired.
+   */
+  async reopen(entityId: string, factId: string): Promise<{ valid_to: number | null }> {
+    return this.temporalService.reopen(entityId, factId);
+  }
+
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */
   async history(entityId: string, factId: string): Promise<WikiFact[]> {
     return this.temporalService.history(entityId, factId);

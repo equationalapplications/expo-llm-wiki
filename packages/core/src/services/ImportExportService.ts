@@ -509,6 +509,15 @@ export class ImportExportService {
           valid_to: fact.valid_to ?? null,
           superseded_by: fact.superseded_by ?? null,
           superseded_at: fact.superseded_at ?? null,
+          // prior_valid_to (specs/supersede-future-valid-to D5): presence-aware,
+          // like source_pointer. A key present (even null) is authoritative. An
+          // absent key (a pre-v18 dump, or an export that omits nulls) clears
+          // only when the fact is not superseded, where the column must be
+          // null; on a superseded fact it leaves the stored value untouched so
+          // an old dump never nulls a recorded scheduled end.
+          ...(fact.prior_valid_to !== undefined
+            ? { prior_valid_to: fact.prior_valid_to }
+            : fact.superseded_by == null ? { prior_valid_to: null } : {}),
         }, tx, { outbox: false });
 
         if (blobData != null) {

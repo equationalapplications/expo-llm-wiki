@@ -664,6 +664,8 @@ export interface WikiFact {
   superseded_by?: string | null;
   /** Epoch ms the supersession was recorded (transaction time). Audit only. */
   superseded_at?: number | null;
+  /** The `valid_to` this fact carried immediately before its current supersession (a scheduled end `supersede()` overwrote). Restored by `reopen()`. Absent when the fact was open-ended or the supersession predates schema 18. */
+  prior_valid_to?: number | null;
   // --- Source pointer (specs/source-pointers). Present on mapped facts only when non-null. ---
   /** Structured provenance from this librarian fact to its source event, with the verified quote. Null for legacy/heal/ingest facts. */
   source_pointer?: WikiSourcePointer | null;
@@ -974,6 +976,7 @@ export type WikiDiagnosticCode =
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
   | 'external_deletion_pending'
+  | 'supersede_scheduled_end_replaced'
   | 'external_deletion_discarded'
   | 'guidance_too_long'
   | 'guidance_resolver_failed'
@@ -1038,6 +1041,8 @@ export interface WikiDiagnosticDetail {
   oldestEnqueuedAt?: number;
   /** external_deletion_pending only: highest attempt count among pending rows. */
   maxAttempts?: number;
+  /** supersede_scheduled_end_replaced only: epoch ms of the scheduled end the supersede overwrote (a timestamp, not content). */
+  priorValidTo?: number;
   /** guidance_too_long only: length of the refused value in UTF-16 code units. */
   guidanceLength?: number;
   /** guidance_too_long only: which configured value was refused. */
@@ -1717,9 +1722,9 @@ export class WikiDraftNotFound extends Error {
   }
 }
 
-export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity' | 'already_expired' | 'invalid_interval';
+export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity' | 'already_expired' | 'invalid_interval' | 'not_superseded' | 'successor_live';
 
-/** Thrown by `supersede()` and `expire()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
+/** Thrown by `supersede()`, `expire()` and `reopen()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
 export class WikiSupersedeError extends Error {
   readonly code = 'WIKI_SUPERSEDE_REJECTED' as const;
   readonly reason: WikiSupersedeReason;

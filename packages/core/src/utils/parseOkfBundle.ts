@@ -291,6 +291,7 @@ function frontmatterToFact(
     ...optionalEpoch('valid_to', (frontmatter as any).valid_to),
     ...(typeof (frontmatter as any).superseded_by === 'string' ? { superseded_by: (frontmatter as any).superseded_by } : {}),
     ...optionalEpoch('superseded_at', (frontmatter as any).superseded_at),
+    ...optionalEpoch('prior_valid_to', (frontmatter as any).prior_valid_to),
     // Source pointer (specs/source-pointers §Export, import, and OKF): the
     // parse path has no diagnostic channel, so it reports through the result.
     // ABSENT key → the property is omitted (not null), so the import

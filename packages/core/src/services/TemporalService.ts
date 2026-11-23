@@ -5,6 +5,7 @@ import type { SearchService } from './SearchService';
 import type { EmbeddingService } from './EmbeddingService';
 import { generateId } from '../utils/ids';
 import { assertEpochMs } from '../utils/temporal';
+import { emitDiagnostic } from '../utils/diagnostics';
 
 export const HISTORY_MAX_DEPTH = 100;
 
@@ -23,7 +24,7 @@ export class TemporalService {
    * already exist. Throws WikiSupersedeError on any rule violation; the
    * caller's transaction then rolls back.
    */
-  async supersedeInTx(tx: SQLiteAdapter, entityId: string, oldId: string, newId: string, t: number, now: number): Promise<void> {
+  async supersedeInTx(tx: SQLiteAdapter, entityId: string, oldId: string, newId: string, t: number, now: number): Promise<{ replacedScheduledEnd: number | null }> {
     const old = await this.entryRepo.findTemporalRow(oldId, tx);
     if (!old || old.deleted_at != null) throw new WikiSupersedeError('not_found');
     if (old.entity_id !== entityId) throw new WikiSupersedeError('cross_entity');
@@ -46,10 +47,17 @@ export class TemporalService {
     const start = old.valid_from ?? old.created_at;
     if (t <= start) throw new WikiSupersedeError('invalid_interval');
 
-    await this.entryRepo.setTemporal(oldId, entityId, { valid_to: t, superseded_by: newId, superseded_at: now }, tx);
+    // D2: a scheduled (future) end is about to be overwritten; keep it in
+    // prior_valid_to so reopen() can restore it. Open-ended: key omitted.
+    const replacedScheduledEnd = old.valid_to;
+    await this.entryRepo.setTemporal(oldId, entityId, {
+      valid_to: t, superseded_by: newId, superseded_at: now,
+      ...(replacedScheduledEnd != null ? { prior_valid_to: replacedScheduledEnd } : {}),
+    }, tx);
     if (repl.valid_from == null) {
       await this.entryRepo.setTemporal(newId, entityId, { valid_from: t }, tx);
     }
+    return { replacedScheduledEnd };
   }
 
   async supersede(
@@ -88,6 +96,7 @@ export class TemporalService {
       ? assertEpochMs('replacement.valid_from', replacement.valid_from)
       : undefined;
 
+    let replacedScheduledEnd: number | null = null;
     await this.db.withTransactionAsync(async (tx) => {
       if (created) {
         await this.entryRepo.upsert(created, tx);
@@ -95,8 +104,14 @@ export class TemporalService {
           await this.entryRepo.setTemporal(created.id, entityId, { valid_from: newValidFrom }, tx);
         }
       }
-      await this.supersedeInTx(tx, entityId, oldId, newId, t, now);
+      ({ replacedScheduledEnd } = await this.supersedeInTx(tx, entityId, oldId, newId, t, now));
     });
+    if (replacedScheduledEnd != null) {
+      emitDiagnostic(this.options, {
+        code: 'supersede_scheduled_end_replaced', operation: 'supersede', trigger: 'call', entityId,
+        detail: { factId: oldId, priorValidTo: replacedScheduledEnd },
+      });
+    }
 
     await this.searchService.syncEntries(entityId, [oldId, newId]);
     if (created) {
@@ -130,6 +145,34 @@ export class TemporalService {
     });
     await this.searchService.syncEntries(entityId, [factId]);
     this.searchService.evictCache(entityId);
+  }
+
+  /**
+   * Return a superseded fact to live once its replacement is forgotten or gone
+   * (INTENT rule 12, specs/supersede-future-valid-to D4). Restores `valid_to`
+   * to `prior_valid_to` (null when none was recorded).
+   */
+  async reopen(entityId: string, factId: string): Promise<{ valid_to: number | null }> {
+    let restored: number | null = null;
+    await this.db.withTransactionAsync(async (tx) => {
+      const row = await this.entryRepo.findTemporalRow(factId, tx);
+      if (!row || row.deleted_at != null) throw new WikiSupersedeError('not_found', 'reopen()');
+      if (row.entity_id !== entityId) throw new WikiSupersedeError('cross_entity', 'reopen()');
+      if (row.superseded_by == null) throw new WikiSupersedeError('not_superseded', 'reopen()');
+      if (row.source_type === 'immutable_document') throw new WikiSupersedeError('immutable_target', 'reopen()');
+      // Direct successor only; its entity is not consulted and nothing about it
+      // is surfaced (INTENT rule 3). Forgotten or absent passes.
+      const successor = await this.entryRepo.findTemporalRow(row.superseded_by, tx);
+      if (successor && successor.deleted_at == null) throw new WikiSupersedeError('successor_live', 'reopen()');
+      restored = row.prior_valid_to;
+      const changes = await this.entryRepo.setTemporal(factId, entityId, {
+        valid_to: restored, superseded_by: null, superseded_at: null, prior_valid_to: null,
+      }, tx);
+      if (changes === 0) throw new WikiSupersedeError('cross_entity', 'reopen()');
+    });
+    await this.searchService.syncEntries(entityId, [factId]);
+    this.searchService.evictCache(entityId);
+    return { valid_to: restored };
   }
 
   async history(entityId: string, factId: string): Promise<WikiFact[]> {
