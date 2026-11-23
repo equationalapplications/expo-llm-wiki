@@ -349,3 +349,56 @@ describe('test 10: apply-time re-check', () => {
     expect(ofCode(t.diagnostics, 'source_event_gone')).toHaveLength(1);
   });
 });
+
+describe('test 11: dump round-trip', () => {
+  async function source() {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }) });
+    await t.wiki.runLibrarian('u');
+    return t;
+  }
+  const dTarget = () => mkOps([]);
+  const listOf = async (db: any) => (await rowOf(db, 'acme')).derived_events as string | null;
+
+  it('export -> import restores the list; a pre-v18 dump leaves a stored list untouched; a malformed key imports null with a factId-only diagnostic', async () => {
+    const src = await source();
+    const dump = await src.wiki.exportDump('u');
+    const exported = (dump.entities['u'].facts as any[]).find((f) => f.id === 'acme');
+    expect(exported.derived_events).toEqual(['evt_1']);
+
+    const t1 = dTarget();
+    await t1.wiki.setup();
+    await t1.wiki.importDump(dump);
+    expect(await listOf(t1.db)).toBe('["evt_1"]');
+    expect(ofCode(t1.diagnostics, 'derived_events_invalid')).toHaveLength(0);
+
+    // Pre-release dump (no key) over a stored list: untouched, no diagnostic.
+    const pre = JSON.parse(JSON.stringify(dump));
+    delete (pre.entities['u'].facts as any[]).find((f) => f.id === 'acme').derived_events;
+    await t1.wiki.importDump(pre);
+    expect(await listOf(t1.db)).toBe('["evt_1"]');
+    expect(ofCode(t1.diagnostics, 'derived_events_invalid')).toHaveLength(0);
+    // ...and on a fresh store a keyless dump imports a null list.
+    const t1b = dTarget();
+    await t1b.wiki.setup();
+    await t1b.wiki.importDump(pre);
+    expect(await listOf(t1b.db)).toBeNull();
+
+    // Malformed: imports null, one diagnostic with the fact id only.
+    const bad = JSON.parse(JSON.stringify(dump));
+    (bad.entities['u'].facts as any[]).find((f) => f.id === 'acme').derived_events = ['ok', 7];
+    const t2 = dTarget();
+    await t2.wiki.setup();
+    await t2.wiki.importDump(bad);
+    expect(await listOf(t2.db)).toBeNull();
+    const inv = ofCode(t2.diagnostics, 'derived_events_invalid');
+    expect(inv).toHaveLength(1);
+    expect((inv[0] as any).detail).toEqual({ factId: 'acme' });
+
+    // Explicit null over a stored list clears it (key present).
+    const nul = JSON.parse(JSON.stringify(dump));
+    (nul.entities['u'].facts as any[]).find((f) => f.id === 'acme').derived_events = null;
+    await t1.wiki.importDump(nul);
+    expect(await listOf(t1.db)).toBeNull();
+  });
+});
