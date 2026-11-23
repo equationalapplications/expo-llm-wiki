@@ -56,7 +56,7 @@ worker.stop();
 
 ## Upgrading to schema v18
 
-Schema v18 adds a nullable `prior_valid_to` column to facts. `supersede()` and `reopen()` now write
+Schema v18 adds a nullable `prior_valid_to` column to facts. `supersede()` (including the librarian's SUPERSEDE op, so the first background librarian pass after upgrade can hit it) and `reopen()` now write
 `UPDATE` outbox payloads that include the key `prior_valid_to` (alongside `valid_to`, `superseded_by`
 and `superseded_at`). If your `mapEvent` spreads a payload into a Prisma `update`, add a
 `prior_valid_to` column (`BigInt?` or equivalent) to your model, or drop keys your schema doesn't know
