@@ -64,7 +64,7 @@ fn create_valid_db(conn: &Connection) {
     conn.execute_batch(&format!("{ENTRIES_DDL}\n{EDGES_DDL}\n{META_DDL}"))
         .unwrap();
     conn.execute(
-        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '17')"),
+        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '18')"),
         [],
     )
     .unwrap();
@@ -135,7 +135,7 @@ fn missing_edges_table_fails() {
     conn.execute_batch(&format!("{ENTRIES_DDL}\n{META_DDL}"))
         .unwrap();
     conn.execute(
-        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '17')"),
+        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '18')"),
         [],
     )
     .unwrap();
@@ -168,7 +168,7 @@ fn missing_required_column_fails() {
     conn.execute_batch(&format!("{broken}\n{EDGES_DDL}\n{META_DDL}"))
         .unwrap();
     conn.execute(
-        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '17')"),
+        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '18')"),
         [],
     )
     .unwrap();
@@ -239,7 +239,7 @@ fn failed_validation_does_not_mutate_file_db() {
     // Also exercise the &Connection convenience wrapper on the valid DB.
     let conn = Connection::open(&path).unwrap();
     conn.execute(
-        &format!("UPDATE {PREFIX}meta SET value = '17' WHERE key = 'schema_version'"),
+        &format!("UPDATE {PREFIX}meta SET value = '18' WHERE key = 'schema_version'"),
         [],
     )
     .unwrap();

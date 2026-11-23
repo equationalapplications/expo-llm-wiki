@@ -219,6 +219,11 @@ describe('ops librarian end to end', () => {
     const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by FROM llm_wiki_entries WHERE id='seattle'`);
     expect(old.superseded_by).not.toBeNull();
     expect(old.valid_to).toBe(100);
+    const rec = await db.getFirstAsync<any>(`SELECT prior_valid_to FROM llm_wiki_entries WHERE id='seattle'`);
+    expect(rec.prior_valid_to).toBe(4000000000000);
+    const rep = ofCode(diagnostics, 'supersede_scheduled_end_replaced');
+    expect(rep).toHaveLength(1);
+    expect(rep[0]).toMatchObject({ operation: 'librarian', severity: 'info', detail: { factId: 'seattle', priorValidTo: 4000000000000 } });
   });
 
   it('UPDATE on a librarian_inferred target edits title/body in place', async () => {

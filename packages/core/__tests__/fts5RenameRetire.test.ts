@@ -8,6 +8,7 @@ import { createIndexStrategy } from '../src/services/search/createIndexStrategy'
 import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
 import { FTS5_STATE_KEY, FTS5_RETIRED_TABLES_KEY } from '../src/services/search/fts5Sql';
 import { probePendingWork } from '../src/db/sourceRefNormalize';
+import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
 import { withSerializedTransactions } from '../src/db/serializedAdapter';
 import { WikiTransactionError, type SQLiteAdapter } from '../src/types';
 
@@ -130,7 +131,7 @@ describe('rename-retire (#280 B4, 7(u))', () => {
     await liveStore(10);
     await swapTokenizer();
     await new Fts5IndexStrategy(db, P, meta).init();
-    await meta.setMeta('schema_version', '17', db);
+    await meta.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), db);
     await meta.setMeta('source_ref_normalize_stamp', JSON.stringify({ schema_version: 14, normalize_alg: 1 }), db);
     expect(await probePendingWork(db, meta, P)).toBeNull();
   });

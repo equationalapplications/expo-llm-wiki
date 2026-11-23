@@ -1,5 +1,6 @@
 import type { MemoryDump, WikiFact, WikiTask, WikiEvent, WikiEdge } from '../types';
 import { validateSourcePointerValue } from './sourcePointer';
+import { validateDerivedEventsValue } from './derivedEvents';
 import type { OkfFile, OkfFrontmatter, OkfFrontmatterValue } from '@equationalapplications/core-okf';
 import {
   parseConcept,
@@ -291,6 +292,7 @@ function frontmatterToFact(
     ...optionalEpoch('valid_to', (frontmatter as any).valid_to),
     ...(typeof (frontmatter as any).superseded_by === 'string' ? { superseded_by: (frontmatter as any).superseded_by } : {}),
     ...optionalEpoch('superseded_at', (frontmatter as any).superseded_at),
+    ...optionalEpoch('prior_valid_to', (frontmatter as any).prior_valid_to),
     // Source pointer (specs/source-pointers §Export, import, and OKF): the
     // parse path has no diagnostic channel, so it reports through the result.
     // ABSENT key → the property is omitted (not null), so the import
@@ -306,6 +308,19 @@ function frontmatterToFact(
         return {};
       }
       return { source_pointer: v };
+    })(),
+    // derived_events (specs/inplace-update-provenance §5): a well-formed list
+    // is restored; absent or empty omits the property (import presence rule);
+    // malformed omits it AND is reported by id + slug, never the raw value.
+    ...(() => {
+      const raw = (frontmatter as any).derived_events;
+      if (raw === undefined) return {};
+      const v = validateDerivedEventsValue(raw);
+      if (v === undefined) {
+        droppedPointerValues.push({ factId: id, reason: 'derived_events_malformed' });
+        return {};
+      }
+      return v ? { derived_events: v } : {};
     })(),
   };
 }

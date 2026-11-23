@@ -7,6 +7,7 @@ import { reanchorRebuildFingerprint } from '../services/search/fts5Progress';
 import { liveAtSql, type LiveMode } from '../utils/temporal';
 import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 import { parseStoredSourcePointer, serializeSourcePointer } from '../utils/sourcePointer';
+import { parseStoredDerivedEvents, serializeDerivedEvents } from '../utils/derivedEvents';
 
 /** Subset of temporal columns that {@link EntryRepository.setTemporal} may write (spec 2026-09-29 §4.3). */
 export type TemporalFields = {
@@ -14,6 +15,7 @@ export type TemporalFields = {
   valid_to?: number | null;
   superseded_by?: string | null;
   superseded_at?: number | null;
+  prior_valid_to?: number | null;
 };
 
 /** Lightweight projection used by TemporalService for supersession chain walks. */
@@ -26,6 +28,7 @@ export type TemporalRow = {
   valid_from: number | null;
   valid_to: number | null;
   superseded_by: string | null;
+  prior_valid_to: number | null;
 };
 
 export type EntryRowMetadata = {
@@ -69,6 +72,7 @@ function mapRowToFact(row: any): WikiFact {
   const now = Date.now();
   const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
   const sourcePointer = parseStoredSourcePointer(row.source_pointer);
+  const derivedEvents = parseStoredDerivedEvents(row.derived_events);
 
   const mapped = {
     id: row.id,
@@ -106,10 +110,14 @@ function mapRowToFact(row: any): WikiFact {
     ...(row.valid_to != null ? { valid_to: Number(row.valid_to) } : {}),
     ...(row.superseded_by != null ? { superseded_by: String(row.superseded_by) } : {}),
     ...(row.superseded_at != null ? { superseded_at: Number(row.superseded_at) } : {}),
+    ...(row.prior_valid_to != null ? { prior_valid_to: Number(row.prior_valid_to) } : {}),
     // Source pointer (specs/source-pointers): key appears only when non-null,
     // same temporal-fields pattern. Tolerant read: a malformed stored value
     // reads as null without throwing (test 1).
     ...(sourcePointer ? { source_pointer: sourcePointer } : {}),
+    // derived_events (specs/inplace-update-provenance §5): present only when
+    // non-empty; a malformed stored value reads as absent without throwing.
+    ...(derivedEvents ? { derived_events: derivedEvents } : {}),
   };
   return mapped as WikiFact;
 }
@@ -264,10 +272,11 @@ export class EntryRepository extends BaseRepository {
       last_verified_at: number | null;
       last_verified_by: string | null;
       source_pointer: string | null;
+      derived_events: string | null;
     }>(
       `SELECT id, entity_id, lifecycle_status, stale_after, generated_by,
               okf_sources, okf_verified, okf_usage_window,
-              last_verified_at, last_verified_by, source_pointer
+              last_verified_at, last_verified_by, source_pointer, derived_events
          FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
@@ -288,8 +297,8 @@ export class EntryRepository extends BaseRepository {
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window, source_pointer
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer, derived_events
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         body = excluded.body,
@@ -307,7 +316,8 @@ export class EntryRepository extends BaseRepository {
         embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
         embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
         embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
-        okf_type = excluded.okf_type
+        okf_type = excluded.okf_type,
+        derived_events = CASE WHEN ? THEN excluded.derived_events ELSE derived_events END
       WHERE ${this.prefix}entries.entity_id = excluded.entity_id`,
       [
         fact.id,
@@ -339,6 +349,11 @@ export class EntryRepository extends BaseRepository {
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
         serializeSourcePointer(fact.source_pointer),
+        serializeDerivedEvents(fact.derived_events),
+        // derived_events is writable on conflict (the librarian's in-place
+        // UPDATE merges events into it), but only when the caller supplied the
+        // key: an undefined key leaves a stored list untouched.
+        fact.derived_events !== undefined ? 1 : 0,
       ],
     );
 
@@ -378,6 +393,12 @@ export class EntryRepository extends BaseRepository {
           last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
           last_verified_by: existingRow.last_verified_by ?? null,
           source_pointer: parseStoredSourcePointer(existingRow.source_pointer),
+          ...(fact.derived_events === undefined
+            ? (() => {
+                const stored = parseStoredDerivedEvents(existingRow.derived_events);
+                return stored ? { derived_events: stored } : {};
+              })()
+            : {}),
         }
       : null;
     await this.outbox.push({
@@ -462,6 +483,7 @@ export class EntryRepository extends BaseRepository {
     fact: WikiFact,
     tx: SQLiteAdapter,
     sourcePointerPresent = false,
+    derivedEventsPresent = false,
   ): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
     const tagsJson = JSON.stringify(fact.tags);
@@ -491,8 +513,8 @@ export class EntryRepository extends BaseRepository {
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
         deleted_at, embedding_blob, embedding, okf_type,
         lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
-        okf_sources, okf_verified, okf_usage_window, source_pointer
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        okf_sources, okf_verified, okf_usage_window, source_pointer, derived_events
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -521,7 +543,8 @@ export class EntryRepository extends BaseRepository {
         okf_sources = excluded.okf_sources,
         okf_verified = excluded.okf_verified,
         okf_usage_window = excluded.okf_usage_window,
-        source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE source_pointer END`,
+        source_pointer = CASE WHEN ? THEN excluded.source_pointer ELSE source_pointer END,
+        derived_events = CASE WHEN ? THEN excluded.derived_events ELSE derived_events END`,
       [
         fact.id,
         fact.entity_id,
@@ -550,9 +573,13 @@ export class EntryRepository extends BaseRepository {
         fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
         serializeSourcePointer(fact.source_pointer),
+        serializeDerivedEvents(fact.derived_events),
         // The presence flag binds to the SET clause's CASE, AFTER the INSERT
         // values above.
         sourcePointerPresent ? 1 : 0,
+        // derived_events follows the same presence-flag pattern: a pre-v18
+        // dump (no key) never nulls a stored list.
+        derivedEventsPresent ? 1 : 0,
       ],
     );
 
@@ -638,20 +665,39 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
-   * Shared JSON match predicate for source_pointer event ids
-   * (specs/forget-by-event-id §D1). Every JSON call sits under the single
+   * Shared JSON match predicate for an event id
+   * (specs/forget-by-event-id §D1, widened by specs/inplace-update-provenance
+   * §4): a row matches when its `source_pointer` names the event OR its
+   * `derived_events` list contains it. Every JSON call sits under its own
    * `json_valid` guard: unguarded JSON functions RAISE on malformed text, and
    * three-valued logic forces evaluation of AND operands after a NULL-guarded
    * term — a two-term form is only as safe as the planner's term-splitting.
+   * The `json_each` term additionally requires `json_type = 'array'` (a JSON
+   * object or scalar would otherwise iterate its members). The event id binds
+   * TWICE (pointer term, then derived_events term); use `eventMatchArgs`.
    * The tombstone guard (`deleted_at IS NULL`) is added per-method.
    */
-  static readonly POINTER_EVENT_MATCH_SQL = `CASE WHEN json_valid(source_pointer)
+  static readonly EVENT_MATCH_SQL = `((CASE WHEN json_valid(source_pointer)
     THEN json_type(source_pointer, '$.event_id') = 'text'
          AND json_extract(source_pointer, '$.event_id') = ?
-    ELSE 0 END`;
+    ELSE 0 END)
+    OR
+    (CASE WHEN json_valid(derived_events)
+    THEN (CASE WHEN json_type(derived_events) = 'array'
+          THEN EXISTS (SELECT 1 FROM json_each(derived_events) WHERE json_each.type = 'text' AND json_each.value = ?)
+          ELSE 0 END)
+    ELSE 0 END))`;
+
+  /** Bind values for `EVENT_MATCH_SQL` after an `entity_id = ?` term: the event id twice. */
+  static eventMatchArgs(entityId: string, eventId: string): [string, string, string] {
+    return [entityId, eventId, eventId];
+  }
+
+  /** Old name kept as an alias (tests and external references). */
+  static readonly POINTER_EVENT_MATCH_SQL = EntryRepository.EVENT_MATCH_SQL;
 
   /**
-   * IDs of the entity's entries whose source_pointer names the event id.
+   * IDs of the entity's entries whose source_pointer names the event id or whose derived_events list contains it.
    * `includeDeleted = true` returns live + tombstoned rows (the forget
    * enumeration superset for index sync and the ledger backstop).
    */
@@ -663,7 +709,7 @@ export class EntryRepository extends BaseRepository {
   ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`;
-    const args: unknown[] = [entityId, eventId];
+    const args: unknown[] = EntryRepository.eventMatchArgs(entityId, eventId);
     if (!includeDeleted) sql += ` AND deleted_at IS NULL`;
     const rows = await executor.getAllAsync<{ id: string }>(sql, args);
     return rows.map((r) => r.id);
@@ -674,7 +720,7 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ n: number }>(
       `SELECT COUNT(*) AS n FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId],
+      EntryRepository.eventMatchArgs(entityId, eventId),
     );
     return row?.n ?? 0;
   }
@@ -693,11 +739,11 @@ export class EntryRepository extends BaseRepository {
     const now = Date.now();
     const idsToDelete = await executor.getAllAsync<{ id: string }>(
       `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [entityId, eventId],
+      EntryRepository.eventMatchArgs(entityId, eventId),
     );
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL AND ${EntryRepository.POINTER_EVENT_MATCH_SQL}`,
-      [now, now, entityId, eventId],
+      [now, now, ...EntryRepository.eventMatchArgs(entityId, eventId)],
     );
     for (const row of idsToDelete) {
       await this.outbox.push({
@@ -1105,7 +1151,7 @@ export class EntryRepository extends BaseRepository {
     }
   }
 
-  /** Spec §4: write any subset of the four temporal columns. Absent key = untouched; null = clear. */
+  /** Spec §4: write any subset of the five temporal columns. Absent key = untouched; null = clear. */
   async setTemporal(
     id: string,
     entityId: string,
@@ -1113,7 +1159,7 @@ export class EntryRepository extends BaseRepository {
     tx: SQLiteAdapter,
     opts?: { outbox?: boolean },
   ): Promise<number> {
-    const keys = (['valid_from', 'valid_to', 'superseded_by', 'superseded_at'] as const).filter((k) => k in fields);
+    const keys = (['valid_from', 'valid_to', 'superseded_by', 'superseded_at', 'prior_valid_to'] as const).filter((k) => k in fields);
     if (keys.length === 0) return 0;
     const executor = this.getExecutor(tx);
     const result = await executor.runAsync(
@@ -1131,7 +1177,7 @@ export class EntryRepository extends BaseRepository {
   async findTemporalRow(id: string, tx?: SQLiteAdapter): Promise<TemporalRow | null> {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<any>(
-      `SELECT id, entity_id, source_type, deleted_at, created_at, valid_from, valid_to, superseded_by
+      `SELECT id, entity_id, source_type, deleted_at, created_at, valid_from, valid_to, superseded_by, prior_valid_to
        FROM ${this.prefix}entries WHERE id = ?`,
       [id],
     );
@@ -1145,6 +1191,7 @@ export class EntryRepository extends BaseRepository {
       valid_from: row.valid_from != null ? Number(row.valid_from) : null,
       valid_to: row.valid_to != null ? Number(row.valid_to) : null,
       superseded_by: row.superseded_by != null ? String(row.superseded_by) : null,
+      prior_valid_to: row.prior_valid_to != null ? Number(row.prior_valid_to) : null,
     };
   }
 

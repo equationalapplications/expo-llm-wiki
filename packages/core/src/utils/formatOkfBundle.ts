@@ -105,10 +105,13 @@ function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
     ...(f.valid_to != null ? { valid_to: f.valid_to } : {}),
     ...(f.superseded_by != null ? { superseded_by: f.superseded_by } : {}),
     ...(f.superseded_at != null ? { superseded_at: f.superseded_at } : {}),
+    ...(f.prior_valid_to != null ? { prior_valid_to: f.prior_valid_to } : {}),
     // Source pointer (specs/source-pointers): map only when non-null; null slots omitted.
     ...(sourcePointerFrontmatter(f.source_pointer)
       ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
       : {}),
+    // derived_events (specs/inplace-update-provenance §5): optional list, only when non-empty.
+    ...(f.derived_events && f.derived_events.length > 0 ? { derived_events: f.derived_events } : {}),
   };
 }
 
@@ -156,6 +159,8 @@ function factFrontmatterV1(f: WikiFact): OkfFrontmatter {
     ...(sourcePointerFrontmatter(f.source_pointer)
       ? { source_pointer: sourcePointerFrontmatter(f.source_pointer) }
       : {}),
+    // derived_events (specs/inplace-update-provenance §5): optional list, only when non-empty.
+    ...(f.derived_events && f.derived_events.length > 0 ? { derived_events: f.derived_events } : {}),
   };
 }
 

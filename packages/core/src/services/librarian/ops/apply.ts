@@ -5,6 +5,7 @@ import { normalizeTitleKey, type EdgeDrop } from '../../../utils/ontology';
 import { edgeDropDiagnostic, type DiagnosticBuffer } from '../../../utils/diagnostics';
 import { checkGrounding, groundingOutcome, type GroundingVerdict } from '../../../utils/grounding';
 import { generateId } from '../../../utils/ids';
+import { dedupeEventIds } from '../../../utils/derivedEvents';
 import { TemporalService } from '../../TemporalService';
 import type { LibrarianDeps, LibrarianPassContext } from '../types';
 import type { GatedCandidate } from './gate';
@@ -64,6 +65,31 @@ function buildSourcePointer(
 }
 
 /**
+ * §2 UPDATE in place: the existing list plus the candidate's contributing
+ * event, deduplicated; an id equal to the pointer's event is not added (it is
+ * already the pointer). Returns the list to write, or undefined when there is
+ * no change to make (key left absent so a stored list is untouched).
+ */
+function mergeDerivedEvents(existing: WikiFact, contributing: string | null): string[] | undefined {
+  if (contributing === null || contributing === existing.source_pointer?.event_id) return undefined;
+  const prior = existing.derived_events ?? [];
+  if (prior.includes(contributing)) return undefined;
+  return dedupeEventIds([...prior, contributing]);
+}
+
+/**
+ * §2 UPDATE converted to SUPERSEDE: the replacement's merged text rests on the
+ * target, so it inherits the target's pointer event and list, minus its own
+ * pointer event. Empty result = key absent.
+ */
+function inheritedDerivedEvents(target: WikiFact | undefined, ownEventId: string | null): { derived_events?: string[] } {
+  if (!target) return {};
+  const list = dedupeEventIds([target.source_pointer?.event_id, ...(target.derived_events ?? [])])
+    .filter((id) => id !== ownEventId);
+  return list.length > 0 ? { derived_events: list } : {};
+}
+
+/**
  * One transaction, mirrored after legacy's order (spec §5.5). The caller has
  * already split candidates into `gated` (gate decision + optional op) and the
  * smaller `rejected` / `failed` sets; this module is the single write seam.
@@ -111,7 +137,11 @@ export async function applyOps(
     }
     const pendingEdges: Array<{ sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }> = [];
 
-    const insert = async (g: GatedCandidate, draft: boolean, validFrom: number, overrides?: { title?: string; body?: string }): Promise<string> => {
+    const insert = async (
+      g: GatedCandidate, draft: boolean, validFrom: number,
+      overrides?: { title?: string; body?: string },
+      inheritFrom?: WikiFact,
+    ): Promise<string> => {
       const fact = g.candidate.fact;
       const title = overrides?.title ?? fact.title;
       const body = overrides?.body ?? fact.body;
@@ -142,6 +172,9 @@ export async function applyOps(
         created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
         okf_type: normalized.okf_type,
         source_pointer: pointer,
+        // §2: only an UPDATE converted to SUPERSEDE inherits (the merged text
+        // rests on the target); ADD and plain SUPERSEDE carry no list.
+        ...(inheritedDerivedEvents(inheritFrom, pointer?.event_id ?? null)),
         ...g2?.trust,
         ...(draft ? { lifecycle_status: 'draft' as const } : {}),
       };
@@ -149,7 +182,7 @@ export async function applyOps(
       await deps.entryRepo.setTemporal(id, entityId, { valid_from: validFrom }, tx);
       // Rule 6 fix (spec §Ops path + §Diagnostics): a fact that landed without
       // its pointer is reported, not swallowed. Candidates the gate rejects or
-      // merges never reach insert(), so they emit nothing.
+      // merges never reach insert(), so they emit nothing (merges report at the UPDATE branch).
       if (g.candidate.pointerUnresolved !== null) {
         input.diagnostics.push({
           ...diagBase,
@@ -166,7 +199,21 @@ export async function applyOps(
       return id;
     };
 
+    // §3: drop candidates whose source event no longer exists (a host-side
+    // delete the engine's locks cannot see). One indexed SELECT per pass.
+    const sourceIds = [...new Set(input.gated.map((g) => g.candidate.sourceEventId).filter((x): x is string => x !== null))];
+    const presentIds = sourceIds.length > 0 ? await deps.eventRepo.findExistingIds(entityId, sourceIds, tx) : new Set<string>();
+    const gatedLive: GatedCandidate[] = [];
     for (const g of input.gated) {
+      const ev = g.candidate.sourceEventId;
+      if (ev !== null && !presentIds.has(ev)) {
+        input.diagnostics.push({ ...diagBase, code: 'source_event_gone', detail: { itemIndex: g.candidate.index, sourceRef: ev } });
+        continue;
+      }
+      gatedLive.push(g);
+    }
+
+    for (const g of gatedLive) {
       const idx = g.candidate.index;
       const vf = g.candidate.validFrom;
       if (g.decision.kind === 'noop') continue;
@@ -191,11 +238,24 @@ export async function applyOps(
         const [existing] = await deps.entryRepo.findByIds([op.targetId], [entityId], tx);
         if (existing) {
           const newTitle = op.title ?? g.candidate.fact.title;
+          // §2: record the contributing event beside the (unchanged) pointer.
+          // An unattributable candidate leaves the list as is and is reported,
+          // where this merge used to be silent (rule 6).
+          const contributing = g.candidate.sourceEventId;
+          if (contributing === null && g.candidate.pointerUnresolved !== null) {
+            input.diagnostics.push({
+              ...diagBase,
+              code: 'source_pointer_unresolved',
+              detail: { factId: existing.id, itemIndex: idx, reason: g.candidate.pointerUnresolved },
+            });
+          }
+          const derived = mergeDerivedEvents(existing, contributing);
           await deps.entryRepo.upsert({
             ...existing,
             title: newTitle,
             body: op.body ?? g.candidate.fact.body,
             updated_at: now,
+            ...(derived ? { derived_events: derived } : {}),
           }, tx);
           // Keep the pass-local index in step with the row (as insert() does),
           // so later candidates' edges resolve the new title, not the old one.
@@ -215,15 +275,28 @@ export async function applyOps(
       // just the candidate's raw text.
       const overrides = op.op === 'UPDATE' ? { title: op.title, body: op.body } : undefined;
       if (target.source_type === 'immutable_document') {
-        const id = await insert(g, true, supersedeFrom, overrides);
+        const docTarget = op.op === 'UPDATE'
+          ? (await deps.entryRepo.findByIds([op.targetId], [entityId], tx))[0]
+          : undefined;
+        const id = await insert(g, true, supersedeFrom, overrides, docTarget);
         input.diagnostics.push({ ...diagBase, code: 'contradicts_document', detail: { factId: id, itemIndex: idx } });
         continue;
       }
-      const newId = await insert(g, false, supersedeFrom, overrides);
+      const inheritFrom = op.op === 'UPDATE'
+        ? (await deps.entryRepo.findByIds([op.targetId], [entityId], tx))[0]
+        : undefined;
+      const newId = await insert(g, false, supersedeFrom, overrides, inheritFrom);
       try {
-        await temporal.supersedeInTx(tx, entityId, op.targetId, newId, supersedeFrom, now);
+        const { replacedScheduledEnd } = await temporal.supersedeInTx(tx, entityId, op.targetId, newId, supersedeFrom, now);
         supersededIds.push(op.targetId);
         input.diagnostics.push({ ...diagBase, code: 'librarian_superseded', detail: { factId: op.targetId, replacementId: newId } });
+        if (replacedScheduledEnd != null) {
+          input.diagnostics.push({
+            ...diagBase,
+            code: 'supersede_scheduled_end_replaced',
+            detail: { factId: op.targetId, priorValidTo: replacedScheduledEnd },
+          });
+        }
       } catch (err) {
         if (!(err instanceof WikiSupersedeError)) throw err;
         input.diagnostics.push({
