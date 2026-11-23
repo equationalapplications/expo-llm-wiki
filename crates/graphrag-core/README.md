@@ -44,7 +44,7 @@ silent reinterpretation.
 
 `schema_check::validate_schema_conn` requires the `llm_wiki_entries`,
 `llm_wiki_edges`, and `llm_wiki_meta` tables and the
-`llm_wiki_meta.schema_version = 11` marker. Validation is read-only: the
+`llm_wiki_meta.schema_version = 18` marker. Validation is read-only: the
 engine never migrates or mutates the host schema. A wrong or missing version
 is an error.
 

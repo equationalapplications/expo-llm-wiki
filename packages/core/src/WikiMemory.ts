@@ -4,7 +4,7 @@ import { emitDiagnostic } from './utils/diagnostics';
 import { setupDatabaseWithGate } from './db/migrationGate';
 import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
-import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex } from './db/migrations';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex, createEntriesDeletedIndex } from './db/migrations';
 import {
   WikiOptions,
   MemoryBundle,
@@ -452,10 +452,11 @@ export class WikiMemory {
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
-      // One transaction: a crash must never leave schema_version=14 without the index,
+      // One transaction: a crash must never leave schema_version without its indexes,
       // since no migration would rebuild it on the next open.
       await this.db.withTransactionAsync(async (tx) => {
         await createLegacySourceTypeIndex(tx, this.prefix);
+        await createEntriesDeletedIndex(tx, this.prefix);
         await writeNormalizeStamp(this.metadataRepo, tx);
         await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), tx);
       });
@@ -1186,7 +1187,10 @@ export class WikiMemory {
    * End `oldId`'s validity and link it to its replacement (spec §4.3). One
    * transaction. Throws `WikiSupersedeError` for missing, foreign, already
    * superseded, already expired, immutable-document, or cyclic targets, and
-   * for an inverted or empty interval (`invalid_interval`).
+   * for an inverted or empty interval (`invalid_interval`). When the old
+   * fact carried a future `valid_to`, that scheduled end is overwritten but
+   * kept in `prior_valid_to` (restored by `reopen()`) and reported as the
+   * `supersede_scheduled_end_replaced` diagnostic.
    */
   async supersede(
     entityId: string,
@@ -1208,6 +1212,21 @@ export class WikiMemory {
    */
   async expire(entityId: string, factId: string, options?: { at?: number }): Promise<void> {
     return this.temporalService.expire(entityId, factId, options);
+  }
+
+  /**
+   * Return a superseded fact to live once its replacement has been forgotten
+   * or hard-deleted (INTENT rule 12). Clears `superseded_by`/`superseded_at`
+   * and restores `valid_to` to the scheduled end `supersede()` overwrote
+   * (`prior_valid_to`), or null when the fact was open-ended. Resolves with
+   * the restored `valid_to`. Throws `WikiSupersedeError` for a missing or
+   * foreign fact, one that is not superseded (an `expire()`-ended fact is
+   * not reopened), an immutable-document fact, or `successor_live` while the
+   * direct replacement is still live. A restored end that has already passed
+   * leaves the fact expired.
+   */
+  async reopen(entityId: string, factId: string): Promise<{ valid_to: number | null }> {
+    return this.temporalService.reopen(entityId, factId);
   }
 
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */

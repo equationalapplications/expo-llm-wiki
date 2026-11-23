@@ -530,6 +530,9 @@ export class ImportExportService {
           valid_to: fact.valid_to ?? null,
           superseded_by: fact.superseded_by ?? null,
           superseded_at: fact.superseded_at ?? null,
+          // prior_valid_to (spec D5): replace semantics like the four siblings;
+          // null whenever the row is not superseded (the column's invariant).
+          prior_valid_to: fact.superseded_by == null ? null : (fact.prior_valid_to ?? null),
         }, tx, { outbox: false });
 
         if (blobData != null) {

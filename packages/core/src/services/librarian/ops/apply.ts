@@ -289,7 +289,14 @@ export async function applyOps(
         : undefined;
       const newId = await insert(g, false, supersedeFrom, overrides, inheritFrom);
       try {
-        await temporal.supersedeInTx(tx, entityId, op.targetId, newId, supersedeFrom, now);
+        const { replacedScheduledEnd } = await temporal.supersedeInTx(tx, entityId, op.targetId, newId, supersedeFrom, now);
+        if (replacedScheduledEnd != null) {
+          input.diagnostics.push({
+            ...diagBase,
+            code: 'supersede_scheduled_end_replaced',
+            detail: { factId: op.targetId, priorValidTo: replacedScheduledEnd },
+          });
+        }
       } catch (err) {
         if (!(err instanceof WikiSupersedeError)) throw err;
         input.diagnostics.push({

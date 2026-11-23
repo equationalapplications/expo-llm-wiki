@@ -37,6 +37,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       valid_to INTEGER,
       superseded_by TEXT,
       superseded_at INTEGER,
+      prior_valid_to INTEGER,
       source_pointer TEXT,
       derived_events TEXT
     );

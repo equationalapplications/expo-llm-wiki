@@ -47,6 +47,7 @@ const wiki = createWiki(db, {
 | `embedding_failed` | `embed()` failed for a fact |
 | `hook_failed` | A host hook (for example `onEmbeddingPersisted`) failed |
 | `background_job_failed` | An auto-run librarian or heal job failed |
+| `supersede_scheduled_end_replaced` | A supersede overwrote a fact's future-dated `valid_to` (`severity: 'info'`; `operation: 'supersede'` or `'librarian'`; `detail.factId`, `detail.priorValidTo`). The old end is kept in `prior_valid_to`; `reopen()` restores it. See [Temporal](/expo-llm-wiki/guides/temporal-facts/#rules) |
 | `external_deletion_pending` | Removals are still owed to your vector index (`operation: 'externalDeletion'`; `detail.count`, `detail.oldestEnqueuedAt`, `detail.maxAttempts`). On the first `setup()` with a hook, a count with `maxAttempts: 0` and an old `oldestEnqueuedAt` is usually the backlog from before the store had an index; see [Adding an index to an existing store](/expo-llm-wiki/guides/deleting-data/#adding-an-index-to-an-existing-store). See also [Deleting data](/expo-llm-wiki/guides/deleting-data/#run-and-watch-the-removals) |
 | `external_deletion_discarded` | Owed removals were dropped without a call because of `forceDeleteIgnoreRankerHook` (`detail.count`) |
 | `heal_skipped` | Heal skipped work |

@@ -71,7 +71,7 @@ const EDGES_DDL: &str = "CREATE TABLE IF NOT EXISTS llm_wiki_edges (
       UNIQUE(entity_id, source_id, target_id, edge_type)
     );";
 
-/// Verbatim `llm_wiki_meta` DDL; schema_version must equal 17 (REQ-SQL-04).
+/// Verbatim `llm_wiki_meta` DDL; schema_version must equal 18 (REQ-SQL-04).
 const META_DDL: &str = "CREATE TABLE IF NOT EXISTS llm_wiki_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

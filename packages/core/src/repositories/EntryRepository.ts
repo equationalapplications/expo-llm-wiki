@@ -15,6 +15,7 @@ export type TemporalFields = {
   valid_to?: number | null;
   superseded_by?: string | null;
   superseded_at?: number | null;
+  prior_valid_to?: number | null;
 };
 
 /** Lightweight projection used by TemporalService for supersession chain walks. */
@@ -27,6 +28,7 @@ export type TemporalRow = {
   valid_from: number | null;
   valid_to: number | null;
   superseded_by: string | null;
+  prior_valid_to: number | null;
 };
 
 export type EntryRowMetadata = {
@@ -108,6 +110,7 @@ function mapRowToFact(row: any): WikiFact {
     ...(row.valid_to != null ? { valid_to: Number(row.valid_to) } : {}),
     ...(row.superseded_by != null ? { superseded_by: String(row.superseded_by) } : {}),
     ...(row.superseded_at != null ? { superseded_at: Number(row.superseded_at) } : {}),
+    ...(row.prior_valid_to != null ? { prior_valid_to: Number(row.prior_valid_to) } : {}),
     // Source pointer (specs/source-pointers): key appears only when non-null,
     // same temporal-fields pattern. Tolerant read: a malformed stored value
     // reads as null without throwing (test 1).
@@ -1148,7 +1151,7 @@ export class EntryRepository extends BaseRepository {
     }
   }
 
-  /** Spec §4: write any subset of the four temporal columns. Absent key = untouched; null = clear. */
+  /** Spec §4: write any subset of the five temporal columns. Absent key = untouched; null = clear. */
   async setTemporal(
     id: string,
     entityId: string,
@@ -1156,7 +1159,7 @@ export class EntryRepository extends BaseRepository {
     tx: SQLiteAdapter,
     opts?: { outbox?: boolean },
   ): Promise<number> {
-    const keys = (['valid_from', 'valid_to', 'superseded_by', 'superseded_at'] as const).filter((k) => k in fields);
+    const keys = (['valid_from', 'valid_to', 'superseded_by', 'superseded_at', 'prior_valid_to'] as const).filter((k) => k in fields);
     if (keys.length === 0) return 0;
     const executor = this.getExecutor(tx);
     const result = await executor.runAsync(
@@ -1174,7 +1177,7 @@ export class EntryRepository extends BaseRepository {
   async findTemporalRow(id: string, tx?: SQLiteAdapter): Promise<TemporalRow | null> {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<any>(
-      `SELECT id, entity_id, source_type, deleted_at, created_at, valid_from, valid_to, superseded_by
+      `SELECT id, entity_id, source_type, deleted_at, created_at, valid_from, valid_to, superseded_by, prior_valid_to
        FROM ${this.prefix}entries WHERE id = ?`,
       [id],
     );
@@ -1188,6 +1191,7 @@ export class EntryRepository extends BaseRepository {
       valid_from: row.valid_from != null ? Number(row.valid_from) : null,
       valid_to: row.valid_to != null ? Number(row.valid_to) : null,
       superseded_by: row.superseded_by != null ? String(row.superseded_by) : null,
+      prior_valid_to: row.prior_valid_to != null ? Number(row.prior_valid_to) : null,
     };
   }
 

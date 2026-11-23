@@ -444,14 +444,45 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 18,
-    description: 'Schema v18: derived_events on entries (in-place update provenance)',
+    description: 'Partial index on entries(entity_id, deleted_at) for prune and tombstone probes; nullable prior_valid_to column recording the scheduled end a supersede overwrote; nullable derived_events column listing the events an in-place librarian merge drew on',
     run: async (db, prefix) => {
-      // v18 is shared by several pending changes (owner ruling 2026-11-23);
-      // each contributes one named, idempotent helper called from here.
+      // Shared v18 (owner ruling 2026-11-23): #443, #451 and #450 land in ONE
+      // schema version. This body only calls named, idempotent helpers, so a
+      // later PR appends one helper call here. Do not inline DDL. The three PRs
+      // land in ONE push to main (stacked; only the top PR merges). If a release
+      // ever ships v18 before they land, the rest go in v19 instead.
+      await createEntriesDeletedIndex(db, prefix);
+      await addPriorValidToColumn(db, prefix);
       await addDerivedEventsColumn(db, prefix);
     },
   },
 ];
+
+/**
+ * v18 DDL (supersede-future-valid-to D1): nullable `prior_valid_to INTEGER` on
+ * entries. Idempotent via a PRAGMA table_info guard (v13/v16 pattern); must run
+ * outside any explicit transaction (ALTER TABLE ADD COLUMN). No backfill:
+ * nothing to backfill from. Exported so the v18 body stays a one-line call.
+ */
+export async function addPriorValidToColumn(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+  if (!cols.some((c) => c.name === 'prior_valid_to')) {
+    await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN prior_valid_to INTEGER`);
+  }
+}
+
+/**
+ * Partial index serving every `deleted_at IS NOT NULL` prune/tombstone probe
+ * (specs/prune-deleted-at-index). Created only by v18 and the fresh-store path,
+ * never by setupDatabase's every-open DDL, so the migration gate can defer its
+ * build out of a caller's `migrations: 'refuse'` open. Idempotent.
+ */
+export async function createEntriesDeletedIndex(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS ${prefix}entries_deleted_idx ON ${prefix}entries(entity_id, deleted_at) ` +
+      `WHERE deleted_at IS NOT NULL`,
+  );
+}
 
 /**
  * v18 (specs/inplace-update-provenance §1): nullable derived_events TEXT on
@@ -463,8 +494,7 @@ export async function addDerivedEventsColumn(db: SQLiteAdapter, prefix: string):
   const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
   if (!cols.some((c) => c.name === 'derived_events')) {
     await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN derived_events TEXT`);
-  }
-}
+  }}
 
 /**
  * Partial index covering the legacy source_type probe. Created only by v14 and
