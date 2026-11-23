@@ -1,6 +1,6 @@
 # In-place update provenance — `derived_events` on librarian facts
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted, with one owner change: the per-update receipt is not shipped here, see Owner rulings)
+**Status:** Implemented (2026-11-23, PR #469; owner-approved 2026-11-23, with the per-update receipt deferred to roadmap step 13)
 **Date:** 2026-11-23
 **Intent check:** INTENT rule 12 (the librarian "may rewrite a fact the
 engine inferred earlier, in place, without keeping the old text"; "per-fact
@@ -295,7 +295,7 @@ erasure, and `dryRun` shows the count first. (Open question 1.)
   `importDump`'s fact literal forwards it (`ImportExportService.ts:484`
   pattern); import validates a present key: `null` or an array of
   non-empty strings; anything else imports as null and emits a new
-  diagnostic `derived_events_invalid` `{ factId }`. Absent key: untouched
+  diagnostic `derived_events_invalid` `{ factId }` (buffered and emitted only after the import transaction commits; a rolled-back import emits none). Absent key: untouched
   (pre-release dump). `exportDump({ includeForgotten })` semantics are
   unchanged.
 - OKF: `formatOkfBundle` emits an optional `derived_events` frontmatter

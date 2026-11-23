@@ -473,7 +473,8 @@ export class ImportExportService {
         const hasDerivedEventsKey = rawDerived !== undefined;
         const derivedValidated = hasDerivedEventsKey ? validateDerivedEventsValue(rawDerived) : null;
         if (derivedValidated === undefined) {
-          emitDiagnostic(this.options, {
+          // Buffered: emitted only after the import transaction commits.
+          refusalDiagnostics.push({
             code: 'derived_events_invalid',
             operation: 'importDump',
             trigger: 'call',

@@ -362,7 +362,7 @@ describe('test 11: dump round-trip', () => {
 
   it('export -> import restores the list; a pre-v18 dump leaves a stored list untouched; a malformed key imports null with a factId-only diagnostic', async () => {
     const src = await source();
-    const dump = await src.wiki.exportDump('u');
+    const dump = await src.wiki.exportDump(['u']);
     const exported = (dump.entities['u'].facts as any[]).find((f) => f.id === 'acme');
     expect(exported.derived_events).toEqual(['evt_1']);
 
@@ -453,7 +453,7 @@ describe('tests 15-16: growth and vocabulary', () => {
       await db.withTransactionAsync((tx) => repo.upsert(mkFact({ derived_events: list }), tx));
     }
     expect((await repo.findByIds(['F']))[0].derived_events).toHaveLength(200);
-    const dump = await wiki.exportDump('u');
+    const dump = await wiki.exportDump(['u']);
     expect((dump.entities['u'].facts as any[])[0].derived_events).toEqual(ids);
     const okf = formatOkfBundle(dump as any);
     const back = parseOkfBundle('u', okf.files);
@@ -467,5 +467,24 @@ describe('tests 15-16: growth and vocabulary', () => {
       expect(SEVERITY[code]).toBe('warn');
       expect(MESSAGE[code].length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('derived_events_invalid is emitted after commit only', () => {
+  it('a rolled-back import emits no derived_events_invalid', async () => {
+    const t = mkOps([]);
+    await t.wiki.setup();
+    const f = (id: string, over: any) => ({
+      id, entity_id: 'u', title: 't', body: 'b', tags: [], confidence: 'inferred',
+      source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+      created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0, deleted_at: null, ...over,
+    });
+    const dump = {
+      version: 1, generatedAt: 0,
+      entities: { u: { facts: [f('a', { derived_events: [7] }), f('b', { source_ref: '   ' })], tasks: [], events: [], edges: [] } },
+    } as any;
+    await expect(t.wiki.importDump(dump)).rejects.toThrow(/invalid source_ref/);
+    expect(ofCode(t.diagnostics, 'derived_events_invalid')).toHaveLength(0);
+    expect(await t.db.getAllAsync(`SELECT id FROM ${P}entries`)).toHaveLength(0);
   });
 });
