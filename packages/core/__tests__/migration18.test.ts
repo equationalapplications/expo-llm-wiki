@@ -108,12 +108,12 @@ describe('prune queries use entries_deleted_idx', () => {
     for (const c of r.calls) expect(await plan(r.db, c)).toContain(`USING INDEX ${IDX}`);
   });
 
-  it('bulkDeletePruned chunk still resolves through an index and removes the rows', async () => {
+  it('bulkDeletePruned chunk searches the partial index on a sparse backlog and removes the rows', async () => {
     const r = await populated();
     const ids = ['id1', 'id1001', 'id2001', 'id3001'];
     await r.entries.bulkDeletePruned('e1', r.now, ids, r.adapter);
     const del = r.calls.find((c) => c.sql.startsWith('DELETE'))!;
-    expect(await plan(r.db, del)).toMatch(new RegExp(`USING INDEX (${IDX}|sqlite_autoindex_${P}entries_1)`));
+    expect(await plan(r.db, del)).toContain(`USING INDEX ${IDX}`);
     expect((await r.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE deleted_at IS NOT NULL`))!.n).toBe(0);
   });
 

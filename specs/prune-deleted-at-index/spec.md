@@ -1,6 +1,6 @@
 # Partial index on `entries(entity_id, deleted_at)` for prune
 
-**Status:** Reviewed
+**Status:** Implemented (2026-11-23, PR #468)
 
 Owner-approved as written, 2026-11-23 (the spec raised no open questions). Shared-v18 ruling: see Proposed change 2.
 **Date:** 2026-11-23
@@ -73,11 +73,11 @@ Caveat observed, re-verified at implementation (2026-11-23): for query 3 the pla
 
    Shared v18 structure (owner ruling 2026-11-23): this change, #451 (`prior_valid_to` column) and #450 (`derived_events` column) share ONE schema version, v18. This PR merges first and creates the v18 migration. The v18 body only calls named, exported, idempotent helpers (`createEntriesDeletedIndex` here, `IF NOT EXISTS`), so each later PR appends one helper call (PRAGMA-guarded for a column) to the same body and bumps nothing further. The Rust crate's `REQUIRED_SCHEMA_VERSION` goes 17 to 18 in this PR (`crates/graphrag-core/tests/schema_parity.rs` compares it to the engine's `CURRENT_SCHEMA_VERSION`); the later PRs add no further bump.
 
-3. **Gate behavior.** v18 becomes a pending migration on every existing store. `refuse` throws as for any pending migration; `auto` and `allow` run it. The build is one pass over the table (the partial index writes only tombstones), so it is cheap, but the spec does not claim it is instant on very large stores; measured at implementation (2026-11-23, better-sqlite3 in-memory, 100,000 rows, 0.1% soft-deleted): the index build took about 27 ms. A file-backed store on slow flash will be slower; the number is a floor, not a promise.
+3. **Gate behavior.** v18 becomes a pending migration on every existing store. `refuse` and `auto` both throw `WikiMigrationRequiredError` (`migrationGate.ts` throws for any pending `schema_migration` unless the policy is `allow`); only `allow` runs it. A host on `auto` must open once with `setup({ migrations: 'allow' })`, the same as for v16 and v17. v18 is shared with #469 and #470, whose features make the release a minor, not a patch. The build is one pass over the table (the partial index writes only tombstones), so it is cheap, but the spec does not claim it is instant on very large stores; measured at implementation (2026-11-23, better-sqlite3 in-memory, 100,000 rows, 0.1% soft-deleted): the index build took about 27 ms. A file-backed store on slow flash will be slower; the number is a floor, not a promise.
 
 4. **Export/import impact: none expected.** `ImportExportService` serializes facts, not indexes or `schema_version`; a bundle exported at v17 imports into a v18 store and the reverse, because the index is invisible to the bundle format. The implementation PR confirms with a round-trip test rather than assuming.
 
-5. **Semver.** Perf improvement with no API or behavior change: `perf:` commit type, patch release. No `BREAKING CHANGE` footer. Schema version moves 17 to 18, which is additive under rule 2; an older engine opening a v18 store sees an unknown extra index and ignores it.
+5. **Semver.** Perf improvement with no API or behavior change: `perf:` commit type; on its own a patch release, but v18 is shared with #469 and #470 whose features make the release a minor. No `BREAKING CHANGE` footer. Schema version moves 17 to 18, which is additive under rule 2; an older engine opening a v18 store sees an unknown extra index and ignores it.
 
 Out of scope: an index on `tasks(deleted_at)`; changing the prune queries themselves; host-side probes (SynapseTree) which benefit automatically once the index exists, and no longer need their workaround.
 
