@@ -179,3 +179,386 @@ describe('meter reservation: through runOntologyBackfill', () => {
     expect(par.result.remaining).toBe(seq.result.remaining);
   });
 });
+
+// ---- Test plan 4: default-path equivalence against an in-test copy of the old meter ----
+
+/** Verbatim copy of the pre-#475 UsageMeter and the old wrapper's check-then-charge sequence. */
+class OldMeter {
+  used = 0;
+  estimated = false;
+  constructor(readonly budget?: number) {}
+  get remaining() { return this.budget === undefined ? Infinity : Math.max(0, this.budget - this.used); }
+  fits(e: number) { return e <= this.remaining; }
+  record(r: { inputTokens: number; outputTokens: number; estimated: boolean }) {
+    this.used += r.inputTokens + r.outputTokens;
+    if (r.estimated) this.estimated = true;
+  }
+}
+
+describe('meter reservation: concurrency-1 equivalence with the old meter', () => {
+  type Step = { estimate: number; usage?: { i: number; o: number; estimated: boolean }; throws?: boolean };
+  const u = (i: number, o: number, estimated = false) => ({ i, o, estimated });
+  const table: Array<{ name: string; budget: number | undefined; steps: Step[] }> = [
+    { name: 'unbounded', budget: undefined, steps: [{ estimate: 1e6, usage: u(5, 5) }] },
+    { name: 'exact fit then refuse', budget: 100, steps: [{ estimate: 60, usage: u(60, 40) }, { estimate: 1, usage: u(1, 1) }] },
+    { name: 'probe 250 / 60 / 110', budget: 250, steps: Array.from({ length: 4 }, () => ({ estimate: 60, usage: u(60, 50) })) },
+    { name: 'estimated usage flag', budget: 500, steps: [{ estimate: 10, usage: u(10, 3, true) }, { estimate: 10, usage: u(10, 3) }] },
+    { name: 'provider throws charge nothing', budget: 100, steps: [{ estimate: 60, throws: true }, { estimate: 60, usage: u(60, 10) }] },
+    { name: 'actual above budget', budget: 100, steps: [{ estimate: 50, usage: u(50, 300) }, { estimate: 1, usage: u(1, 1) }] },
+    { name: 'estimate above whole budget', budget: 50, steps: [{ estimate: 51, usage: u(51, 1) }] },
+    { name: 'zero budget', budget: 0, steps: [{ estimate: 0, usage: u(0, 0) }, { estimate: 1, usage: u(1, 0) }] },
+  ];
+
+  for (const row of table) {
+    it(row.name, () => {
+      const oldM = new OldMeter(row.budget);
+      const newM = new UsageMeter(row.budget);
+      for (const step of row.steps) {
+        // old: check, charge
+        let oldErr: WikiBudgetExhausted | undefined;
+        if (!oldM.fits(step.estimate)) oldErr = new WikiBudgetExhausted(step.estimate, oldM.remaining);
+        else if (!step.throws) oldM.record({ inputTokens: step.usage!.i, outputTokens: step.usage!.o, estimated: step.usage!.estimated });
+        // new: reserve, settle/release (hold = 2x estimate, as callClassify)
+        let newErr: WikiBudgetExhausted | undefined;
+        try {
+          const h = newM.reserve(step.estimate, step.estimate * 2);
+          if (step.throws) newM.release(h);
+          else newM.settle(h, { inputTokens: step.usage!.i, outputTokens: step.usage!.o, estimated: step.usage!.estimated });
+        } catch (e) {
+          newErr = e as WikiBudgetExhausted;
+        }
+        expect(newErr?.requiredEstimate).toBe(oldErr?.requiredEstimate);
+        expect(newErr?.remaining).toBe(oldErr?.remaining);
+        expect(newErr?.message).toBe(oldErr?.message);
+        expect(newM.used).toBe(oldM.used);
+        expect(newM.estimated).toBe(oldM.estimated);
+        expect(newM.remaining).toBe(oldM.remaining);
+        expect(newM.reserved).toBe(0);
+      }
+    });
+  }
+});
+
+describe('meter reservation: default-config runPendingMaintenance pin', () => {
+  // Inline snapshots were recorded on the pre-change meter (commit 794315f4's src) and must not change.
+  const BUDGET_MID = 500;
+  async function run(tokenBudget?: number) {
+    const db = openTestDatabase();
+    const diags: any[] = [];
+    const generateText = vi.fn(async () => JSON.stringify({ facts: [], tasks: [] }));
+    const wiki = createWiki(db, {
+      llmProvider: { generateText },
+      config: { maintenance: 'deferred', librarian: { strategy: 'ops' }, reportLlmUsage: true },
+      onDiagnostic: (d: any) => diags.push(d),
+    } as any);
+    await wiki.setup();
+    for (const id of ['a', 'b', 'c']) await wiki.write(id, { event_type: 'observation', summary: `hello ${id} `.repeat(20) });
+    const r = await wiki.runPendingMaintenance({ tokenBudget });
+    return {
+      tokensUsed: r.tokensUsed, estimated: r.estimated, remaining: r.remaining, stoppedReason: r.stoppedReason,
+      perEntity: r.perEntity,
+      diag: diags.map((d) => [d.code, d.operation, d.entityId, d.detail]),
+    };
+  }
+
+  it('unbounded', async () => {
+    expect(await run()).toMatchInlineSnapshot(`
+      {
+        "diag": [
+          [
+            "llm_usage",
+            "librarian",
+            "a",
+            {
+              "estimated": true,
+              "inputTokens": 222,
+              "outputTokens": 6,
+            },
+          ],
+          [
+            "librarian_gate",
+            "librarian",
+            "a",
+            {
+              "gateAdd": 0,
+              "gateAmbiguous": 0,
+              "gateNoop": 0,
+            },
+          ],
+          [
+            "llm_usage",
+            "librarian",
+            "b",
+            {
+              "estimated": true,
+              "inputTokens": 222,
+              "outputTokens": 6,
+            },
+          ],
+          [
+            "librarian_gate",
+            "librarian",
+            "b",
+            {
+              "gateAdd": 0,
+              "gateAmbiguous": 0,
+              "gateNoop": 0,
+            },
+          ],
+          [
+            "llm_usage",
+            "librarian",
+            "c",
+            {
+              "estimated": true,
+              "inputTokens": 222,
+              "outputTokens": 6,
+            },
+          ],
+          [
+            "librarian_gate",
+            "librarian",
+            "c",
+            {
+              "gateAdd": 0,
+              "gateAmbiguous": 0,
+              "gateNoop": 0,
+            },
+          ],
+        ],
+        "estimated": true,
+        "perEntity": [
+          {
+            "entityId": "a",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 1,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "b",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 1,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "c",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 1,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+        ],
+        "remaining": null,
+        "stoppedReason": {
+          "reason": "complete",
+        },
+        "tokensUsed": 684,
+      }
+    `);
+  });
+  it('bounded, exhausted mid-run', async () => {
+    expect(await run(BUDGET_MID)).toMatchInlineSnapshot(`
+      {
+        "diag": [
+          [
+            "llm_usage",
+            "librarian",
+            "a",
+            {
+              "estimated": true,
+              "inputTokens": 222,
+              "outputTokens": 6,
+            },
+          ],
+          [
+            "librarian_gate",
+            "librarian",
+            "a",
+            {
+              "gateAdd": 0,
+              "gateAmbiguous": 0,
+              "gateNoop": 0,
+            },
+          ],
+        ],
+        "estimated": true,
+        "perEntity": [
+          {
+            "entityId": "a",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 1,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "b",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 0,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "c",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 0,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+        ],
+        "remaining": 272,
+        "stoppedReason": {
+          "reason": "budget_exhausted",
+        },
+        "tokensUsed": 228,
+      }
+    `);
+  });
+  it('bounded, too small', async () => {
+    expect(await run(5)).toMatchInlineSnapshot(`
+      {
+        "diag": [],
+        "estimated": false,
+        "perEntity": [
+          {
+            "entityId": "a",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 0,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "b",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 0,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+          {
+            "entityId": "c",
+            "factsWritten": 0,
+            "healPasses": 0,
+            "librarianPasses": 0,
+            "ontologyBackfillPasses": 0,
+            "reembedded": false,
+            "typed": 0,
+          },
+        ],
+        "remaining": 5,
+        "stoppedReason": {
+          "entityId": "a",
+          "job": "librarian",
+          "reason": "budget_too_small",
+          "requiredEstimate": 444,
+        },
+        "tokensUsed": 0,
+      }
+    `);
+  });
+});
+
+// ---- Test plan 7: stop classification at concurrency 4 ----
+
+describe('meter reservation: stop classification', () => {
+  it('requiredEstimate is the call own estimate, never the hold; remaining is unreserved', async () => {
+    const options = { llmProvider: { generateText: async () => '', classify: vi.fn() }, config: {} } as unknown as WikiOptions;
+    const meter = new UsageMeter(250);
+    meter.reserve(60, 240); // in-flight call holding 2x
+    const err = await callClassify(options, ctxFor(meter), requestWithEstimate(60)).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBudgetExhausted);
+    expect(err.requiredEstimate).toBe(60);
+    expect(err.requiredEstimate).not.toBe(120);
+    expect(err.remaining).toBe(10);
+    expect(err.requiredEstimate).toBeLessThanOrEqual(250); // within the whole budget: budget_exhausted, not too_small
+  });
+
+  it('runPendingMaintenance at chunkConcurrency 4 with a bounded budget: exhausted by in-flight holds is budget_exhausted, never budget_too_small', { timeout: 120000 }, async () => {
+    const classify = async (r: ClassifyRequest): Promise<ClassifyResponse> => {
+      await tick();
+      return {
+        answers: { okf_type: { kind: 'choice', choice: 'person', confidence: 0.9, probabilities: { person: 0.9 } } },
+        usage: { inputTokens: estimateOf(r), outputTokens: 50 },
+      } as ClassifyResponse;
+    };
+    const facts = Array.from({ length: 12 }, (_, i) => ({ title: `Fact ${String(i).padStart(2, '0')}`, body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }));
+    const run = async (budget?: number) => {
+      const db = openTestDatabase();
+      const wiki = createWiki(db, {
+        llmProvider: { generateText: async () => JSON.stringify({ facts, tasks: [] }), classify },
+        config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' }, systemOne: { typeOnWrite: 'auto' }, chunkConcurrency: 4 },
+      } as any);
+      await wiki.setup();
+      await wiki.setOntologyManifest('u', MANIFEST, { mode: 'strict' });
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at, occurred_at) VALUES ('evt_1','u','observation','x',100,90)`);
+      return wiki.runPendingMaintenance({ jobs: ['librarian'], tokenBudget: budget });
+    };
+    const full = await run();
+    expect(full.stoppedReason.reason).toBe('complete');
+    let exhausted = 0;
+    for (const budget of [full.tokensUsed - 1, full.tokensUsed - 150, full.tokensUsed - 400, full.tokensUsed - 800]) {
+      const r = await run(budget);
+      expect(r.stoppedReason.reason).toBe('budget_exhausted');
+      expect(r.tokensUsed).toBeLessThanOrEqual(budget + 0); // holds stop concurrent calls from overshooting this budget
+      exhausted++;
+    }
+    expect(exhausted).toBe(4);
+    const tiny = await run(1);
+    expect(tiny.stoppedReason.reason).toBe('budget_too_small');
+  });
+});
+
+// ---- Test plan 8: settle / release through the provider path ----
+
+describe('meter reservation: provider paths', () => {
+  it('a classify provider that throws after the reservation releases the hold and charges nothing', async () => {
+    const meter = new UsageMeter(250);
+    const classify = vi.fn(async () => {
+      expect(meter.reserved).toBe(120); // hold is live while the provider runs
+      throw new Error('boom');
+    });
+    const options = { llmProvider: { generateText: async () => '', classify }, config: {} } as unknown as WikiOptions;
+    await expect(callClassify(options, ctxFor(meter), requestWithEstimate(60))).rejects.toThrow('boom');
+    expect(meter.reserved).toBe(0);
+    expect(meter.used).toBe(0);
+    expect(meter.remaining).toBe(250);
+  });
+
+  it('a provider reporting actual above the hold: actual is charged, remaining clamps at 0, the next call is refused', async () => {
+    const meter = new UsageMeter(250);
+    const classify = vi.fn(async () => ({ answers: {}, usage: { inputTokens: 100, outputTokens: 200 } }) as unknown as ClassifyResponse);
+    const options = { llmProvider: { generateText: async () => '', classify }, config: {} } as unknown as WikiOptions;
+    await callClassify(options, ctxFor(meter), requestWithEstimate(60)); // hold 120, actual 300
+    expect(meter.used).toBe(300);
+    expect(meter.reserved).toBe(0);
+    expect(meter.remaining).toBe(0);
+    await expect(callClassify(options, ctxFor(meter), requestWithEstimate(60))).rejects.toBeInstanceOf(WikiBudgetExhausted);
+    expect(classify).toHaveBeenCalledTimes(1);
+  });
+
+  it('through classifyFactsForWrite a throwing provider charges nothing and leaves no hold', async () => {
+    const classify = vi.fn(async () => { throw new Error('boom'); });
+    const options = { llmProvider: { generateText: async () => '', classify }, config: { chunkConcurrency: 4 } } as unknown as WikiOptions;
+    const meter = new UsageMeter(1_000_000);
+    const facts = Array.from({ length: 6 }, (_, i) => ({ id: `f${i}`, title: 'fact', body: 'body' }));
+    const out = await classifyFactsForWrite(options, { entityId: 'e1', trigger: 'call', operation: 'librarian', meter }, facts as any, MANIFEST, 0.5);
+    expect(out.every((o) => o.kind === 'threw')).toBe(true);
+    expect([meter.reserved, meter.used]).toEqual([0, 0]);
+  });
+});

@@ -451,6 +451,15 @@ Targeted vitest only; each item names the file it extends.
    `tokensUsed` reports 300; the next call is refused; `remaining` is 0, not
    negative.
 
+As landed (2026-11-23): item 4's old-meter copy compares the meter and the
+check-then-charge sequence (not the old wrappers); the default-config
+`runPendingMaintenance` pin is three inline snapshots recorded on the
+pre-change source. Item 7's concurrency-4 scheduler case runs through
+write-time typing (`typeOnWrite: 'auto'`, 12 facts), plus a direct
+`callClassify` assertion that `requiredEstimate` is the call's own estimate.
+Item 8 runs through `callClassify` and `classifyFactsForWrite` with fake
+providers.
+
 ## Rejected alternatives
 
 - **Reserve the input estimate only** (the issue's literal proposal): leaves
