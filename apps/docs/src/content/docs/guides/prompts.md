@@ -97,7 +97,9 @@ plain-string overrides working.
 - **The ontology block**, when ontology mode is `strict` or `emergent`, for ingest, librarian,
   and backfill. The one exception: when [write-time typing](/expo-llm-wiki/guides/ontologies/#type-on-write)
   (`systemOne.typeOnWrite: 'auto'`) is engaged for an entity, the librarian's prompt carries no
-  ontology block, and `getInstructions` shows exactly that. Ingest and backfill are unchanged.
+  ontology block, and when ingest-time typing (`systemOne.typeOnIngest: 'auto'`) is engaged, the
+  ingest prompt carries none. `getInstructions` shows exactly that for `librarian` and `ingest`.
+  Backfill is unchanged.
 - **The evidence instruction**, when [grounding](/expo-llm-wiki/guides/drafts-and-grounding/) is
   on, for each writer in `grounding.writers`. Your override doesn't need to ask for evidence.
 

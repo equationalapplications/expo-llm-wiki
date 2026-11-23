@@ -218,7 +218,7 @@ createWiki(db, {
 });
 ```
 
-It applies to the librarian only, both strategies, and engages only when the provider has a
+It applies to the librarian only, both strategies (ingest has its own key, below), and engages only when the provider has a
 `classify` function, the entity's ontology mode is `strict` or `emergent`, and the manifest has
 1 to 254 node types and no `none_of_these` slug. Otherwise the librarian runs exactly as before.
 When engaged, each fact the librarian is about to insert gets the same `choice` question the
@@ -248,6 +248,44 @@ diagnostics (`node_type_assigned` with `writer: 'classifier'` and a `confidence`
 `classification_abstained`, `classification_low_confidence`, `classification_invalid`,
 `context_overflow_skipped`), and `runPendingMaintenance` reports `typedOnWrite` per entity beside
 the backfill's `typed`.
+
+#### Ingest
+
+`ingestDocument()` has its own opt-in, `systemOne.typeOnIngest: 'auto'` (default `'llm'`, which
+changes nothing). It is a separate key from `typeOnWrite`: setting one does not turn on the other,
+and a host that wants both sets both. It engages under the same four conditions (a `classify`
+function, mode `strict` or `emergent`, a representable manifest) and reads the same
+`systemOne.minConfidence.typing` floor. When engaged, the call extracts every chunk without the
+ontology block in the prompt, then asks `classify` one `choice` question per extracted fact that
+the model did not already type with a valid slug, before anything is written. An accepted answer
+types the row as it is created; a decline, a low-confidence answer, an invalid answer or a failed
+call writes the fact untyped (no cooldown stamp) so the backfill still reaches it. The result
+gains a `typing` counters object. Receipts are the same diagnostics as above, with `operation:
+'ingest'` and `detail.sourceRef`. Separately, and for every host, a fact the model types itself at
+ingest now also gets a `node_type_assigned` receipt with `writer: 'llm'`.
+
+`ingestDocument()` carries no token budget, so ingest-time classify calls are exactly as unmetered
+as the call's chunk calls: there is no `budget_exhausted` here, and the spend scales with the
+facts the model extracted, not with the document's chunks. Each call is reported through the
+`llm_usage` diagnostic (`operation: 'ingest'`) when `reportLlmUsage` is on. If a budget is ever
+added to `ingestDocument()`, the classify fan-out under `chunkConcurrency` will share the
+overshoot tracked in #475 (see [Maintenance](/expo-llm-wiki/guides/maintenance/)).
+
+The three disclosures above apply to ingest, sharper for documents:
+
+- **No manifest-drawn edges, and ingest is where document edges come from.** A fact the classifier
+  types at ingest carries no outgoing edges, and backfill never adds them later. It can still be an
+  edge *target*, including for sibling facts the model typed itself in the same ingest. A host that
+  wants edges between a document's own facts keeps `typeOnIngest: 'llm'`.
+- **Extraction quality is unmeasured, more so for documents.** The ontology block is the
+  extractor's guide to what counts as a fact; engaged, the model extracts without it. Compare
+  extraction on your own documents, with your own model, before and after.
+- **Cost is unmeasured.** Shorter chunk prompts, plus one classify call per extracted fact
+  (including a call spent on a fact then skipped as a duplicate on a retry), with no budget. The net
+  cost may go either way; no number is claimed.
+
+In `emergent` mode an engaged ingest sends no `ontology_updates` invitation, so documents propose
+no new types for that call; the backfill's generative path still does.
 
 [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) uses this with a
 Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.

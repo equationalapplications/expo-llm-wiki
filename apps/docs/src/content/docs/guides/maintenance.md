@@ -99,6 +99,8 @@ backfill, and the run stops as `budget_exhausted` (or `deadline` if the deadline
 backfill, a librarian unit can run past `deadlineMs` by the length of its in-flight calls; the
 deadline is checked between units. The per-entity report gains `typedOnWrite`.
 
+Ingest-time typing (`systemOne.typeOnIngest: 'auto'`) is outside this budget: `ingestDocument()` is a host call, not a maintenance unit, so its classify calls are reported per call through `llm_usage` and counted on the call's result (`typing`), not in this report.
+
 ## Reembed
 
 ```ts
