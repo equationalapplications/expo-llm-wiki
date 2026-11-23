@@ -1,6 +1,6 @@
 # Spec — Step 14: Ingest-time typing
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Implemented (2026-11-23, PR #478)
 **Date:** 2026-11-23
 **Intent check:** Rule 1 (the classifier is the host's `llmProvider.classify`;
 core adds no provider, key or network client). Rule 2 (no schema change:
@@ -277,7 +277,17 @@ untyped and surfaces as the door's own `node_type_dropped`.
   the person door (`WikiMemory.upsertGraph`, `:1321`) is untouched and keeps
   its receipts there. The receipts a default host sees are the same codes
   with the same details, produced one frame earlier; Test plan 1(c) pins
-  that. The comment at `:908-910` is rewritten to say so. `titleIndex` and
+  that. The comment at `:908-910` is rewritten to say so.
+  *As built:* the full path calls `normalizeForWrite` twice per fact. A
+  slot-time call (the manifest as merged so far) supplies the edge drops, the
+  staged edges and the title-index type, as before; a second call after the
+  loop, against the final in-transaction manifest and mode, supplies the
+  door receipts and the row's canonical-or-empty slug, and its receipts are
+  pushed just before `upsertGraphCore`, the position the core emitted them
+  in. This keeps default hosts byte-identical in the emergent case where a
+  later chunk's `ontology_updates` introduces a slug an earlier chunk's fact
+  used (the core resolved raw slugs against the final manifest); pinned in
+  `ingestTypingCompat.test.ts`. `titleIndex` and
   `rawEdgeRequests` (`:942-946`) read the same `normalized`, so a
   classifier-typed fact enters the title index typed (and may be an edge
   target in the same ingest) and stages no outgoing edges.
