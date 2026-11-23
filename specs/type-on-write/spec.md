@@ -1,6 +1,6 @@
 # Spec — Step 13: Type on write
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Intent check:** Rule 1 (the classifier is the host's `llmProvider.classify`;
 core adds no provider, key or network client). Rule 2 (no schema change at
@@ -667,21 +667,29 @@ recorded at lane open; the suite passes as a whole.
    and `buildInstructionTemplates().ontologyBackfill` equal their recorded
    fixtures on the appended and the placeholder branch; (c) the
    `librarianLegacyParity` snapshot is unchanged (never run with `-u`).
+   **Answer (2026-11-23): Reuse the `'typing'` chain, 0.5 default.**
+
 2. **Split holds under change.** A test mutates the write appendix (a
    module mock returning different text) and asserts the backfill prompt is
    unchanged; and vice versa. A type-level test (`// @ts-expect-error`)
    asserts a `WriteOntologyPromptContext` is rejected by
    `buildOntologyBackfillPrompt` and an `OntologyPromptContext` by
    `buildOpsExtractPrompt`.
+   **Answer (2026-11-23): Do not stamp.**
+
 3. **Resolver.** `resolveSystemOneTypeOnWrite`: unset → `'llm'`;
    `'auto'`/`'llm'` pass through; invalid warns once and resolves `'llm'`;
    the floor read is `resolveTypingMinConfidence` (a configured
    `minConfidence.typing: 0` is honored — `??` not `||`).
+   **Answer (2026-11-23): Engage in `'emergent'` too.**
+
 4. **Engagement predicate.** Each of §2's four conditions alone disables the
    step: no classify call, today's appendix sent (prompt equals test 1's
    fixture), no new receipt. 254 slugs plus the sentinel engages; 255 does
    not; a manifest carrying `none_of_these` does not. The backfill site
    imports the same predicate and its existing boundary tests stay green.
+   **Answer (2026-11-23): Yes.**
+
 5. **Engaged prompt.** Under engagement the librarian system prompt (both
    strategies) equals the mode-`'off'` prompt for the same inputs, byte for
    byte, with guidance and grounding present; `selectBatch`'s reserve
@@ -689,6 +697,8 @@ recorded at lane open; the suite passes as a whole.
    placeholder override has its ontology placeholders stripped;
    `getInstructions().librarian` equals the engaged prompt while
    `.ontologyBackfill` is unchanged.
+   **Answer (2026-11-23): `typedOnWrite?` beside `typed`.**
+
 6. **Accepted type reaches the row.** Ops and legacy: a classifier answer
    at or above the floor stores `okf_type` on the inserted row, emits one
    `node_type_assigned { writer: 'classifier', confidence }` with the
@@ -696,6 +706,8 @@ recorded at lane open; the suite passes as a whole.
    from `findUntypedByEntityId`. A model-volunteered valid slug is not
    asked and receipts `writer: 'llm'`. No edge row is written for a
    write-typed fact (§10).
+   **Answer (2026-11-23): Receipts plus internal id lists; `runLibrarian()` stays `void`.**
+
 7. **Every non-accept outcome.** Abstain, below-floor (`confidence` exactly
    equal to the floor is accepted; `floor − ε` is not), `choice_not_offered`,
    `kind_mismatch`, malformed, thrown, and context-overflow answers each:
@@ -703,6 +715,8 @@ recorded at lane open; the suite passes as a whole.
    the §8 receipt, and leave the fact eligible for an immediate backfill
    pass (assert `countUntypedByEntityId(...).eligible` counts it). The
    sentinel at confidence `1.0` is an abstain, not an accept.
+   **Answer (2026-11-23): Ship here.**
+
 8. **Budget.** A meter that admits extraction and resolution but exhausts
    during typing: the first facts are typed, the rest are written untyped,
    `typing.unattempted` counts them, `LibrarianResult.budgetStop` is
@@ -799,9 +813,12 @@ Rejected alternatives:
 
 ## Open questions for Kurt
 
-Each carries the recommended default and a one-line reason. Nothing below
-is ruled; the spec is written to the defaults so a "yes to all" needs no
-rewrite.
+Each carries the recommended default and a one-line reason. **Owner
+ruling 2026-11-23: every recommended default is accepted** (answers
+recorded per question below). Owner note 2026-11-23: the
+`librarian_rewritten` / `librarian_superseded` receipts shipped here are the
+single per-update receipt; PR #469 (issue #450) dropped its proposed
+`librarian_updated` in favour of them.
 
 1. **Floor posture at the write site.** Reuse the `'typing'` chain with its
    `0.5` default (recommended), or require an explicit
@@ -841,3 +858,4 @@ rewrite.
    and let step 14 decide widen-vs-sibling (recommended), or pre-declare
    that it will cover ingest? — Step 14 has its own gate and spec; this spec
    should not rule for it.
+   **Answer (2026-11-23): Leave documented as librarian-only; step 14 decides.**
