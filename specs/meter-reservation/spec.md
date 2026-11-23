@@ -1,6 +1,6 @@
 # Meter reservation: reserve budget before each metered call
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Implemented (2026-11-23, PR #479)
 **Date:** 2026-11-23
 **Intent check:** Rule 7 ("Every model call in a maintenance run draws from
 one token budget the host can set"): this spec makes that sentence true when
