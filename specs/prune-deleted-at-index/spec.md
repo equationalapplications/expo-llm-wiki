@@ -1,6 +1,6 @@
 # Partial index on `entries(entity_id, deleted_at)` for prune
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Intent check:** Checked against `INTENT.md` 2026-11-23. Rule 2 (your database stays yours): "Schema migrations add columns, tables and indexes; they never drop a column or a table that holds your facts." This change adds one engine-owned index under the host's prefix, drops nothing, rewrites no row, and a host can still defer it with `setup({ migrations: 'refuse' })`. Rule 11 (benchmarks back claims): the claim here is a query plan, not retrieval accuracy or cost; the spec states plan evidence and makes no accuracy claim. Rule 13 (erasure): the index narrows which rows the erase walk finds; it changes no deletion semantics. Rule 10: this spec precedes implementation. No contradiction with INTENT found.
 
@@ -54,7 +54,7 @@ erase tombstone count:        SCAN llm_wiki_entries USING COVERING INDEX llm_wik
 
 Column order and WHERE clause: `(entity_id, deleted_at) WHERE deleted_at IS NOT NULL`. The planner accepts the partial index for every query above because each one states `deleted_at IS NOT NULL` verbatim, which SQLite needs to prove the partial predicate. A future query that filtered only on `deleted_at <= ?` would not match the index, so the `IS NOT NULL` term must stay. `entity_id` leads because 1-3 are always entity-scoped equality probes; `deleted_at` second makes the cutoff a range seek instead of a post-filter. Queries 4 and 5 have no `entity_id` predicate, so the planner scans the whole partial index (covering, since `entity_id` and `deleted_at` are both in it), and it holds only tombstones, so the scan is bounded by the soft-deleted row count, not the table.
 
-Caveat observed: for query 3 the planner switches from the primary key to the new index. With a 500-id `IN` list either is cheap, and the partial index is no larger than the tombstone set, but the implementation PR must re-verify that plan and that the hard-delete chunk is not slower on a namespace with a very large tombstone backlog.
+Caveat observed, re-verified at implementation (2026-11-23): for query 3 the planner switches from the primary key to the new index when tombstones are sparse. Measured on 20,000 rows in one entity, a 500-id `IN` chunk, 200 repetitions per variant (scratch script, not committed): at 0.1% tombstones the planner's index plan ran 0.43 ms against 0.47 ms with `INDEXED BY` the primary key; at 5% tombstones 3.8 ms against 3.5 ms; at 50% and 100% the planner chooses the primary key itself (ANALYZE statistics show the partial index no longer selective). Forcing `NOT INDEXED` (a full scan) was 5 to 19 ms. No regression beyond noise, so the query keeps its shape and takes no `INDEXED BY` or `NOT INDEXED` hint; a hint would also pin a plan the planner already corrects when the backlog is large.
 
 ## Proposed change
 
@@ -69,6 +69,8 @@ Caveat observed: for query 3 the planner switches from the primary key to the ne
 
 2. **Fresh-install parity, mirroring v14 (`createLegacySourceTypeIndex`), not the every-open `schema.ts` DDL.** Export a small `createEntriesDeletedIndex(db, prefix)` from `migrations.ts`, call it from v18, and call it in the fresh-store transaction in `WikiMemory.setup()` next to `createLegacySourceTypeIndex` (`WikiMemory.ts:458`), inside the same transaction that stamps `schema_version`, so a crash cannot leave the stamp without the index. It is deliberately not added to `schema.ts` `setupDatabase` (the every-open block near `schema.ts:43-46` and `:225`): that block runs before the migration gate decides, so on an existing large store an every-open `CREATE INDEX` would build the index inside a caller's `setup({ migrations: 'refuse' })` open, defeating the gate (rule 2's deferral promise). The v14 docstring records the same reasoning. The `entries_temporal_idx` pattern (every-open, column-gated) does not fit: the column here always exists (it is in the base `CREATE TABLE`), so there is nothing to gate on, and the build cost is the reason to keep it out.
 
+   Shared v18 structure (owner ruling 2026-11-23): this change, #451 (`prior_valid_to` column) and #450 (`derived_events` column) share ONE schema version, v18. This PR merges first and creates the v18 migration. The v18 body only calls named, exported, idempotent helpers (`createEntriesDeletedIndex` here, `IF NOT EXISTS`), so each later PR appends one helper call (PRAGMA-guarded for a column) to the same body and bumps nothing further. The Rust crate's `REQUIRED_SCHEMA_VERSION` goes 17 to 18 in this PR (`crates/graphrag-core/tests/schema_parity.rs` compares it to the engine's `CURRENT_SCHEMA_VERSION`); the later PRs add no further bump.
+
 3. **Gate behavior.** v18 becomes a pending migration on every existing store. `refuse` throws as for any pending migration; `auto` and `allow` run it. The build is one pass over the table (the partial index writes only tombstones), so it is cheap, but the spec does not claim it is instant on very large stores; the implementation PR measures the build on a 100k-row table and records the number.
 
 4. **Export/import impact: none expected.** `ImportExportService` serializes facts, not indexes or `schema_version`; a bundle exported at v17 imports into a v18 store and the reverse, because the index is invisible to the bundle format. The implementation PR confirms with a round-trip test rather than assuming.
@@ -77,12 +79,23 @@ Caveat observed: for query 3 the planner switches from the primary key to the ne
 
 Out of scope: an index on `tasks(deleted_at)`; changing the prune queries themselves; host-side probes (SynapseTree) which benefit automatically once the index exists, and no longer need their workaround.
 
+## Open questions (answered 2026-11-23, owner)
+
+All recommended defaults accepted:
+
+1. Index shape `(entity_id, deleted_at) WHERE deleted_at IS NOT NULL`, created by v18 and the fresh-store path, not by `schema.ts` every-open DDL: accepted.
+2. `tasks(deleted_at)` stays out of scope (follow-up if the probe shows there): accepted.
+3. `perf:` commit type, patch release, no `BREAKING CHANGE` footer: accepted.
+4. Hard-delete chunk plan switch: re-verified, no regression, no hint (see "Caveat observed").
+5. Schema version: shared v18 with #451 and #450, this PR first (see Proposed change 2).
+
 ## Files touched
 
 - `packages/core/src/db/migrations.ts`: v18 entry and `createEntriesDeletedIndex`.
 - `packages/core/src/WikiMemory.ts`: call it in the fresh-store transaction (import already present for the sibling helper).
 - `packages/core/__tests__/sourceRefNormalize.test.ts` (lines ~85-123) and `packages/core/__tests__/setupBudget.test.ts` (lines ~67-98): hard-coded `17` for `CURRENT_SCHEMA_VERSION`, last migration version and the `schema_version` meta value become 18. `migration17.test.ts` uses `>=` and needs no edit. `fts5RenameRetire.test.ts:133` writes `'17'` as an arbitrary stamp for a probe and should be re-read, but does not obviously need a change.
 - New `packages/core/__tests__/migration18.test.ts` (see test plan).
+- `crates/graphrag-core/src/schema_check.rs`: `REQUIRED_SCHEMA_VERSION` 17 to 18 (parity test).
 - No change to `schema.ts`, to any repository query, to public types, or to docs beyond this spec's Status line when it flips.
 
 ## Test plan
