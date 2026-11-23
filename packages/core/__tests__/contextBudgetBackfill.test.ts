@@ -115,6 +115,43 @@ describe('declared backfill boundary (spec test 4)', () => {
       expect(len).toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
     }
   });
+
+  it('B1-control: the B1 pair splits under legacy (no context section)', async () => {
+    const { db, wiki, generateText } = await makeWiki({});
+    const half = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS / 2 - 60);
+    await seedEntry(db, { id: 'fact_half1', body: half, updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_half2', body: half, updatedAt: 200 });
+    generateText.mockImplementation(answerWithIdsInPrompt(['fact_half1', 'fact_half2']));
+    await wiki.runOntologyBackfill('e1');
+    expect(generateText.mock.calls.length).toBe(2);
+    for (const [prompts] of generateText.mock.calls) {
+      const payload = `${prompts.systemPrompt}\n${prompts.userPrompt}`;
+      const present = ['fact_half1', 'fact_half2'].filter((id) => payload.includes(id));
+      expect(present.length).toBe(1);
+      expect(prompts.systemPrompt.length + prompts.userPrompt.length)
+        .toBeLessThanOrEqual(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    }
+  });
+
+  it('B2-control: the B2 pair has the same two-call shape under legacy', async () => {
+    // Identical shape to B2 by design: B2 is an upper-bracket pin and does not
+    // discriminate the lower bound (each fact is an oversized singleton under
+    // legacy). The lower bound is covered by B1 plus B1-control.
+    const { db, wiki, generateText } = await makeWiki({});
+    const half = 'x'.repeat(cap / 2 - 60);
+    await seedEntry(db, { id: 'fact_half1', body: half, updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_half2', body: half, updatedAt: 200 });
+    generateText.mockImplementation(answerWithIdsInPrompt(['fact_half1', 'fact_half2']));
+    await wiki.runOntologyBackfill('e1');
+    expect(generateText.mock.calls.length).toBe(2);
+    for (const [prompts] of generateText.mock.calls) {
+      const payload = `${prompts.systemPrompt}\n${prompts.userPrompt}`;
+      const present = ['fact_half1', 'fact_half2'].filter((id) => payload.includes(id));
+      expect(present.length).toBe(1);
+      expect(prompts.systemPrompt.length + prompts.userPrompt.length)
+        .toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    }
+  });
 });
 
 describe('no silent fallback (spec test 5)', () => {
