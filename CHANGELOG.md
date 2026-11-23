@@ -1,3 +1,26 @@
+## [9.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.14.1...v9.15.0) (2026-11-23)
+
+### Features
+
+* **core:** librarian_rewritten / librarian_superseded receipts (type-on-write §9, INTENT rule 12) ([3c79177](https://github.com/equationalapplications/expo-llm-wiki/commit/3c79177b2092abec501197e065513fc18e8dd17b))
+* **core:** shared typing module for write-time typing (type-on-write §2, §3, §13) ([1162895](https://github.com/equationalapplications/expo-llm-wiki/commit/11628959cc16ce2c3d5750ce6668de2da94ff086))
+* **core:** split write and backfill ontology prompt templates (type-on-write §5) ([176e366](https://github.com/equationalapplications/expo-llm-wiki/commit/176e366454deba8f4344420ed93588c4197a6eda))
+* **core:** systemOne.typeOnWrite key and resolver (type-on-write §1) ([8977547](https://github.com/equationalapplications/expo-llm-wiki/commit/89775471392fc6c3cea054ee45d158e157093e84))
+* **core:** type on write for the legacy librarian (type-on-write §3, §4, §8) ([f968ad7](https://github.com/equationalapplications/expo-llm-wiki/commit/f968ad722f1211eebc2c4e7e18534b3788082d7d))
+* **core:** type on write for the ops librarian, typedOnWrite counter, engaged getInstructions (type-on-write §3-§8) ([197f666](https://github.com/equationalapplications/expo-llm-wiki/commit/197f666ffaa0029cf910caf76eae211ed7d97238))
+
+### Bug Fixes
+
+* **core:** public write builders keep accepting OntologyPromptContext; spec and docs folds (type-on-write §5) ([75b1261](https://github.com/equationalapplications/expo-llm-wiki/commit/75b126132fa0f57ed4a13f86fbc6ffbbb748c79c))
+* **core:** stop scheduler run on typing exhaustion, no contradictory door receipts, drop internal export (type-on-write §6, §8) ([87c33dc](https://github.com/equationalapplications/expo-llm-wiki/commit/87c33dcc087c1aabc7e7b8419642591aea180492))
+
+## [9.14.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.14.0...v9.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* **core:** classify llama.rn "Context is full" as context overflow (spec s3, s5) ([4949e85](https://github.com/equationalapplications/expo-llm-wiki/commit/4949e8544a623bc6ad0dd8c7f6716d9cc6f911c5))
+* **core:** word-bound the "context is full" pattern (spec §3, review r1) ([c74a9c4](https://github.com/equationalapplications/expo-llm-wiki/commit/c74a9c4e02e7551d8143aea96b827e995b790f7b))
+
 ## [9.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.13.0...v9.14.0) (2026-11-22)
 
 ### Features
