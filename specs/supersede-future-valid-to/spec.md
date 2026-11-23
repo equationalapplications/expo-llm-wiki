@@ -1,6 +1,6 @@
 # supersede() keeps a record of an overwritten scheduled end, and reopen() restores a superseded fact
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Anchor:** issue #451 (`core-llm-wiki: supersede overwrites a future valid_to
 with no record; no reopen API`), filed from SynapseTree's forget-erasure
@@ -385,28 +385,39 @@ reason; 5 and 13 pin existing behavior and pass before and after.
 
 ## Open questions for Kurt
 
-- **Q1 — INTENT rule 12 amendment.** Rule 12 says "Four host verbs".
+- **Q1 [ANSWERED: default accepted 2026-11-23] — INTENT rule 12 amendment.** Rule 12 says "Four host verbs".
   Default: amend to five in this PR, adding `reopen()` ("returns a
   superseded fact to live once its replacement is forgotten or gone")
   and extending the glossary's Superseded entry; dated amendment note.
   *Reason:* the rule enumerates the verbs, so a new verb is a text
   change that INTENT's own step 7 says must go through an amendment.
-- **Q2 — reopen scope.** Default: superseded facts only;
+- **Q2 [ANSWERED: default accepted 2026-11-23] — reopen scope.** Default: superseded facts only;
   `expire()`-ended facts reject with `not_superseded`. *Reason:* the
   expire spec's non-goals ruled out `unexpire()`, and widening it is a
   separate decision.
-- **Q3 — successor guard.** Default: the direct successor must be
+- **Q3 [ANSWERED: default accepted 2026-11-23] — successor guard.** Default: the direct successor must be
   forgotten or gone; a live one rejects `successor_live`; the forward
   chain beyond it is not walked. *Reason:* prevents the double-live
   state without the engine guessing the host's intent for longer chains.
-- **Q4 — host-transaction overload.** Default: none now; `reopen()`
+- **Q4 [ANSWERED: default accepted 2026-11-23] — host-transaction overload.** Default: none now; `reopen()`
   opens its own transaction like `expire()`. *Reason:* the one precedent
   (`upsertGraph`) hands the post-commit resync to the host, and the
   filing host's flow is already two separate engine calls.
-- **Q5 — diagnostic on overwrite.** Default: emit
+- **Q5 [ANSWERED: default accepted 2026-11-23] — diagnostic on overwrite.** Default: emit
   `supersede_scheduled_end_replaced` at `info` on both paths. *Reason:*
   on the librarian path a diagnostic is the only way a host learns a
   scheduled end it declared was changed (rule 6).
-- **Q6 — name.** Default: `reopen()`. *Reason:* the issue's own word,
+- **Q6 [ANSWERED: default accepted 2026-11-23] — name.** Default: `reopen()`. *Reason:* the issue's own word,
   and it reads as a state verb beside `supersede`/`expire`/`forget`;
   `unsupersede()` is the alternative.
+
+## Schema coordination (owner ruling 2026-11-23)
+
+Three pending changes share ONE schema version, v18: PR #468 (#443,
+partial index; merges first and creates v18), this PR (#470), and PR #469
+(#450). Until #468 merges, this branch implements its column as v18 with
+the DDL in its own named, exported, idempotent helper
+(`addPriorValidToColumn`) that the v18 migration body calls, so that
+rebasing onto #468 reduces to adding one helper call to its v18 body. The
+Rust `REQUIRED_SCHEMA_VERSION` 17 to 18 bump is the same edit #468 makes;
+the rebase dedupes it.
