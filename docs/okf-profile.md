@@ -248,6 +248,8 @@ The reference implementation is `deriveEventId` in `@equationalapplications/core
 | `valid_to` | `number` | OPTIONAL | Optional; epoch ms; temporal validity, see core README → Temporal facts. |
 | `superseded_by` | `string` | OPTIONAL | Optional; id (of the superseding fact); temporal validity, see core README → Temporal facts. |
 | `superseded_at` | `number` | OPTIONAL | Optional; epoch ms; temporal validity, see core README → Temporal facts. |
+| `prior_valid_to` | `number` | OPTIONAL | Optional; epoch ms; the scheduled `valid_to` a supersede overwrote; restored by `reopen()`. Absent when none was recorded. |
+| `source_pointer` | `object` | OPTIONAL | Optional; structured provenance (source event and verified quote) on librarian facts; see the source-pointers spec. |
 
 **`timestamp` still rides along.** `llm-wiki/2` export emits `timestamp` alongside `generated.at` on every concept, not only on the `llm-wiki/1` path — a deliberate, permanent back-compat choice so a naive v0.1-only reader stays fully functional against a v0.2 bundle without understanding flow-mapping syntax at all. `generated.at` is canonical; if a document somehow carries both with different values (a hand-edited or transitional bundle), `generated.at` wins on import.
 

@@ -60,7 +60,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   can carry: the event it came from (`event_id`) plus, when grounding
   permits, the verified quote. When the librarian merges new text into
   an UPDATE or SUPERSEDE, the stored body may rest on more than the
-  named event; the pointer is not re-attributed. The quote survives the
+  named event; the pointer is not re-attributed, and the fact's
+  `derived_events` list names the further events a merge drew on. The quote survives the
   event's prune and travels with the fact through export and the
   outbox; it is content, not an edit path.
 - **Librarian** — the maintenance pass that reads recent events and writes
@@ -103,7 +104,10 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   store, marked, until the retention window ends; its text is history
   the host chose to keep, not a forgotten row. Erase never shortens
   the host's chosen window for it; once that window ends, an aged
-  superseded fact becomes forgotten like any other.
+  superseded fact becomes forgotten like any other. `reopen()` returns a
+  replaced fact (not an archive) to live (or, if its restored scheduled
+  end has already passed, to an archive) once its replacement is
+  forgotten or gone.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
   or through the chain or source paths), or one a heal pass removed.
   Between that deletion and the hard delete it is soft-deleted: present
@@ -330,11 +334,15 @@ A fact is exactly one of: **live** (stored and readable), **superseded**
 (stored, marked, retained by the host's policy), **forgotten**
 (soft-deleted; an instruction awaiting a hard delete) or **gone**
 (hard-deleted by prune — the rows are deleted but the text may still be
-recovered from the raw database file). Four host verbs move a fact
+recovered from the raw database file). Five host verbs move a fact
 between states; the engine's own maintenance can also move one, as
 described below: `supersede`/`expire` end a fact's validity (supersede names a
 replacement; `expire()` ends a fact's validity without a replacement —
-an archive, not a deletion); `forget()` forgets it;
+an archive, not a deletion); `reopen()` returns a superseded fact to live
+(or, if its restored scheduled end has already passed, to an archive)
+once its replacement is forgotten or gone (it undoes a supersession, not
+an `expire()` archive, and restores the scheduled end `supersede` replaced);
+`forget()` forgets it;
 `runPrune` applies the retention windows that turn superseded into
 forgotten and forgotten into gone on the host's schedule; `erase()`
 takes every forgotten fact in scope past gone, verified by what the
@@ -448,6 +456,30 @@ break the erasure promise through the export door.
 
 ## Amendments
 
+- 2026-11-23 — The glossary's Source pointer entry gains one sentence: an
+  ops librarian fact's `derived_events` list names the further events an
+  in-place merge drew on, beside the pointer that is not re-attributed.
+  A note on rule 12: the record of which events a rewritten fact absorbed
+  now exists, so `forget({ eventId })` finds wording that survived inside a
+  fact pointing at another event; the per-update receipts shipped with
+  roadmap step 13 (PR #471). Recorded with
+  `specs/inplace-update-provenance/` (issue #450, PR #469); the follow-up
+  `forget-event-exclusion` is issue #472. Owner ruling, 2026-11-23. Why: a
+  host cannot honor an erasure request against wording it cannot find. No
+  rule text changed.
+- 2026-11-23 — Rule 12's "Four host verbs" becomes five: `reopen()`
+  returns a superseded fact to live (or, if its restored scheduled end
+  has already passed, to an archive) once its replacement is forgotten or
+  gone. It undoes a supersession only; an `expire()` archive is not
+  reopened, and it restores the scheduled end `supersede` replaced (kept
+  in the fact's `prior_valid_to`). The glossary's Superseded entry gains
+  a sentence naming it. No promise changes: the verb moves a fact toward
+  live over text the host already retains, and `forget`, prune and
+  `erase()` are untouched. Why: the owner ruled on 2026-11-23 (spec
+  `specs/supersede-future-valid-to/`, Q1, PR #470, issue #451) that a host
+  erasing a replacement needs a verb that restores the predecessor with
+  the engine's own outbox, search and cache handling, and rule 12
+  enumerates the verbs, so a new verb is an amendment.
 - 2026-11-23 — Rule 12's "today" sentence changes: the librarian now
   reports which facts it rewrites in place or supersedes, by id only, in
   per-fact diagnostics (`librarian_rewritten`, `librarian_superseded`;

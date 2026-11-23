@@ -54,6 +54,16 @@ worker.stop();
 3. Successful event IDs go to `markOutboxEventsProcessed()`, which deletes them.
 4. If a full batch drained without errors, the worker polls again immediately to catch up.
 
+## Upgrading to schema v18
+
+Schema v18 adds a nullable `prior_valid_to` column to facts. `supersede()` (including the librarian's SUPERSEDE op, so the first background librarian pass after upgrade can hit it) and `reopen()` now write
+`UPDATE` outbox payloads that include the key `prior_valid_to` (alongside `valid_to`, `superseded_by`
+and `superseded_at`). If your `mapEvent` spreads a payload into a Prisma `update`, add a
+`prior_valid_to` column (`BigInt?` or equivalent) to your model, or drop keys your schema doesn't know
+before the write. Otherwise Prisma throws `Unknown argument`. Schema v18 also adds a nullable `derived_events` column to facts (a JSON array of event ids). The
+librarian's in-place `UPDATE` payloads carry the key `derived_events`, so the same rule applies: add
+a `derived_events` column (`String?` or equivalent) or drop the key before the write.
+
 ## Config
 
 | Field | Default | Description |
