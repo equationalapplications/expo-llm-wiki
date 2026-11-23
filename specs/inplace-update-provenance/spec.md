@@ -1,6 +1,6 @@
 # In-place update provenance — `derived_events` on librarian facts
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted, with one owner change: the per-update receipt is not shipped here, see Owner rulings)
 **Date:** 2026-11-23
 **Intent check:** INTENT rule 12 (the librarian "may rewrite a fact the
 engine inferred earlier, in place, without keeping the old text"; "per-fact
@@ -8,8 +8,7 @@ pass reports are planned") and rule 13 (erasure is verifiable; "forget wins
 over re-ingest") are the rules this spec serves: a host cannot honor an
 erasure request against wording it cannot find. Rule 2 (additive schema:
 one nullable column, no drop, no semantic change to an existing column).
-Rule 6 (honest reporting: one new receipt and one new diagnostic, both
-content-free; a merge of an unattributable candidate stops being silent).
+Rule 6 (honest reporting: two new content-free diagnostics; a merge of an unattributable candidate stops being silent).
 Rule 5 is untouched (document facts are never rewritten; the UPDATE path
 already refuses them, `apply.ts:194`). Rule 7: no new model call. Rule 10:
 this spec's Status flips in the implementing PR; the two specs whose
@@ -20,6 +19,39 @@ re-attributed") stays true; whether it gains one sentence naming the list is
 an open question below, because INTENT edits are the owner's.
 
 Issue: [#450](https://github.com/equationalapplications/expo-llm-wiki/issues/450).
+
+## Owner rulings (2026-11-23)
+
+These bind the sections below; where a section's text still names a
+superseded design, this block wins.
+
+1. **No per-update receipt here.** This spec's proposed
+   `librarian_updated` receipt (old §6) is dropped. Roadmap step 13
+   (`specs/type-on-write/`, PR #471) ships `librarian_rewritten
+   { factId }` and `librarian_superseded { factId, replacementId }` at the
+   same `apply.ts` branches; this spec defers to those. This spec keeps
+   `source_event_gone` and `source_pointer_unresolved`. Test 2's receipt
+   assertion and old Open question 5 are void.
+   **Answer: yes (default accepted 2026-11-23).**
+
+
+2. **One schema version, v18, three pending changes.** PR #468 (#443,
+   partial index; merges first and creates v18), PR #470 (#451,
+   `prior_valid_to`) and this PR share v18. This PR implements its column
+   as v18 now, with the DDL in its own named, exported, idempotent
+   (PRAGMA-guarded) helper (`addDerivedEventsColumn`) called from the v18
+   migration body, so a later rebase reduces to adding one helper call.
+   Rust `REQUIRED_SCHEMA_VERSION` 17 to 18 in this PR.
+   **Answer: no (default accepted 2026-11-23).**
+
+
+3. **Open question 7:** the follow-up issue for `forget-event-exclusion`
+   is filed: [#472](https://github.com/equationalapplications/expo-llm-wiki/issues/472).
+   **Answer: yes, keep the re-check (default accepted 2026-11-23).**
+
+
+4. **Open question 6:** the INTENT dated amendment (glossary sentence plus
+   a rule-12 note, no rule text change) lands in this PR, citing PR #469.
 
 ## Problem
 
@@ -268,17 +300,15 @@ erasure, and `dryRun` shows the count first. (Open question 1.)
   slug `derived_events_malformed` (ids and a slug only; no values).
   (Open question 4.)
 
-### 6. One receipt: `librarian_updated`
+### 6. No per-update receipt (owner ruling 2026-11-23)
 
-Per in-place UPDATE, the pass emits `librarian_updated` `{ factId,
-sourceRef: <contributing eventId or omitted when unresolved>, itemIndex
-}`, buffered in the pass `DiagnosticBuffer` like every other apply-stage
-diagnostic so a budget stop discards it with the pass. Naming follows the
-heal receipts (`heal_deleted`, `heal_downgraded`); the 2026-09-29 design
-promised a `fact_updated` event at §5.5 that was never built, and this
-receipt is its as-landed form (that spec gets the note). The receipt is
-the live signal; the column is the durable record. INTENT rule 12's
-"per-fact pass reports are planned" sentence covers it. (Open question 5.)
+This spec ships no `librarian_updated` receipt. Roadmap step 13
+(`specs/type-on-write/`, PR #471) ships `librarian_rewritten { factId }` and
+`librarian_superseded { factId, replacementId }` at the in-place UPDATE and
+the UPDATE-as-SUPERSEDE branches of `apply.ts`; the live per-update signal
+is theirs. The column is the durable record. This spec's diagnostics are
+`source_pointer_unresolved` (§2, unattributable merge) and
+`source_event_gone` (§3).
 
 ### 7. What this spec does not do (and the split)
 
@@ -309,16 +339,16 @@ Core (`packages/core/src/`):
 - `db/schema.ts` — `derived_events TEXT` on entries.
 - `db/migrations.ts` — v18 (`CURRENT_SCHEMA_VERSION` derives to 18).
 - `types.ts` — `WikiFact.derived_events?`, diagnostic codes
-  `librarian_updated`, `source_event_gone`, `derived_events_invalid`;
+  `source_event_gone`, `derived_events_invalid`;
   `ForgetParams.eventId` JSDoc gains the derived sentence.
 - `utils/sourcePointer.ts` (or a sibling `derivedEvents.ts`) —
   serialize/parse/validate helpers.
-- `utils/diagnostics.ts` — message templates and severities for the three
-  codes.
+- `utils/diagnostics.ts` — message templates and severities for the two
+  new codes.
 - `repositories/EntryRepository.ts` — column in both upserts and the row
   mapper; widened `POINTER_EVENT_MATCH_SQL` (rename to
   `EVENT_MATCH_SQL` with the old name kept as an alias for tests).
-- `services/librarian/ops/apply.ts` — §2 writers, §3 re-check, §6 receipt,
+- `services/librarian/ops/apply.ts` — §2 writers, §3 re-check,
   unresolved-merge diagnostic.
 - `services/ImportExportService.ts` — import literal and validation.
 - `utils/formatOkfBundle.ts`, `utils/parseOkfBundle.ts` — frontmatter key.
@@ -328,15 +358,14 @@ Core (`packages/core/src/`):
 Rust: `crates/graphrag-core/src/schema_check.rs` (pin 18).
 
 Specs: this file; as-landed notes in `specs/forget-by-event-id/spec.md`
-(§D1, §D4), `specs/source-pointers/spec.md` (§One pointer),
-`docs/superpowers/specs/2026-09-29-competitive-memory-design.md` (§5.5
-`fact_updated`).
+(§D1, §D4), `specs/source-pointers/spec.md` (§One pointer). The 2026-09-29
+`fact_updated` note is step 13's, not this spec's.
 
 Docs (`apps/docs/src/content/docs/`): `guides/deleting-data.md` (Forget
 section: `forget({ eventId })` matches derived facts; erasure recipe step 2:
 the repeat-after-pass caveat and the direct-SQL race), `guides/maintenance.md`
 (Librarian strategies: UPDATE records contributing events),
-`guides/diagnostics.md` (three codes), `guides/okf.md` (frontmatter key),
+`guides/diagnostics.md` (two codes), `guides/okf.md` (frontmatter key),
 `reference/types.md` (`WikiFact.derived_events`), `reference/glossary.md`
 (one line under Source pointer), `README.md` provenance bullet (one clause).
 `docs/ROADMAP.md`: no step; the roadmap carries order, and this is
@@ -354,8 +383,7 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
    `schema_parity` passes.
 2. UPDATE in place: fact F (pointer E1) merged with a candidate from E2
    reads back `derived_events: ['E2']`; pointer and `created_at` unchanged;
-   `updated_at` advanced; `librarian_updated` receipt carries `factId` and
-   `sourceRef: 'E2'`.
+   `updated_at` advanced. (No receipt assertion: see Owner rulings 1.)
 3. Dedupe: a second merge from E2 leaves `['E2']`; a merge from E1 (the
    pointer's event) adds nothing.
 4. Unresolved candidate merged in place: list unchanged,
@@ -389,6 +417,8 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
     `publicExports.test.ts` updated.
 
 ## Open questions for Kurt
+   **Answer: reuse the list with the slug (default accepted 2026-11-23).**
+
 
 1. **Should `forget({ eventId })` delete facts that merely absorbed the
    event, by default?** Default: yes, same selector, no flag. Reason:
@@ -411,16 +441,24 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
    spec's `fact_updated`?** Default: `librarian_updated`. Reason: the
    shipped heal receipts set the `<pass>_<verb>` convention; the older
    name was never built.
+   **Answer: void. The receipt is not shipped here; step 13's `librarian_rewritten` / `librarian_superseded` cover it (Owner rulings 1).**
+
+
 6. **INTENT edits in the implementing PR?** Default: one dated amendment
    noting (i) the glossary "Source pointer" entry gains a sentence naming
-   `derived_events`, and (ii) rule 12's "per-fact pass reports are
-   planned" gains the librarian receipt beside the heal ones; no rule
-   text changes. Reason: INTENT is the top authority and only the owner
+   `derived_events`, and (ii) a rule-12 note that the durable record
+   of which events a rewritten fact absorbed now exists, with the live
+   per-update receipts landing in roadmap step 13; no rule text changes. Reason: INTENT is the top authority and only the owner
    edits it; the spec does not presume.
+   **Answer: yes (default accepted 2026-11-23); the amendment lands in this PR, citing PR #469.**
+
+
 7. **Open the follow-up `forget-event-exclusion` spec now (as an issue)
    or wait for this PR to land?** Default: file the issue now, spec after
    this merges. Reason: it changes two ruled decisions and deserves its
    own stop; this PR's §3 seam is designed for it.
+   **Answer: filed now as [#472](https://github.com/equationalapplications/expo-llm-wiki/issues/472); the spec follows after this merges.**
+
 
 ## Plan sketch
 
@@ -429,7 +467,7 @@ existing file better (`forgetEventId.test.ts`, `opsLibrarian.test.ts`,
 2. `WikiFact.derived_events`, row mapper, both `upsert` paths (presence
    flag on import), outbox payload check; test 13.
 3. `apply.ts` UPDATE-in-place writer + dedupe + unresolved-merge
-   diagnostic + `librarian_updated` receipt; tests 2, 3, 4.
+   diagnostic; tests 2, 3, 4.
 4. `apply.ts` UPDATE-as-SUPERSEDE inheritance; plain SUPERSEDE untouched;
    tests 5, 6.
 5. Widened `EVENT_MATCH_SQL`; `forget` and dry-run inherit; tests 7, 9;
