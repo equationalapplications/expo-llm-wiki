@@ -1,3 +1,10 @@
+## [9.14.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.14.0...v9.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* **core:** classify llama.rn "Context is full" as context overflow (spec s3, s5) ([4949e85](https://github.com/equationalapplications/expo-llm-wiki/commit/4949e8544a623bc6ad0dd8c7f6716d9cc6f911c5))
+* **core:** word-bound the "context is full" pattern (spec §3, review r1) ([c74a9c4](https://github.com/equationalapplications/expo-llm-wiki/commit/c74a9c4e02e7551d8143aea96b827e995b790f7b))
+
 ## [9.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.13.0...v9.14.0) (2026-11-22)
 
 ### Features
