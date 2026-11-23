@@ -1,6 +1,6 @@
 # supersede() keeps a record of an overwritten scheduled end, and reopen() restores a superseded fact
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Implemented (2026-11-23, PR #470; owner-approved 2026-11-23, all open-question defaults accepted)
 **Date:** 2026-11-23
 **Anchor:** issue #451 (`core-llm-wiki: supersede overwrites a future valid_to
 with no record; no reopen API`), filed from SynapseTree's forget-erasure
