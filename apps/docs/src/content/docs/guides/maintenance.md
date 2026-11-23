@@ -87,6 +87,18 @@ retention clocks and by how your host persists diagnostics — heal receipts arr
 [Heal clocks and auditability](/expo-llm-wiki/reference/configuration/#heal-clocks-and-auditability)
 for the full clock set, the `healSystemPrompt` caveat, and the withheld-delete/restatement case.
 
+The librarian reports its own destructive moves the same way (ops strategy): `librarian_rewritten`
+(`detail.factId` is the fact rewritten in place, whose previous text was not kept) and
+`librarian_superseded` (`detail.factId` is the fact that was ended, `detail.replacementId` its
+replacement). Both are `info`, fire in every mode, and carry ids only, never text.
+
+With `systemOne.typeOnWrite: 'auto'` the librarian also makes one classify call per fact before it
+writes. Those calls draw from the same `tokenBudget` as the pass's other calls. If the budget runs
+out during typing, the pass still writes its facts, leaves the unasked ones untyped for the
+backfill, and the exhaustion shows up as `budget_exhausted` at the next unit. Like heal and
+backfill, a librarian unit can run past `deadlineMs` by the length of its in-flight calls; the
+deadline is checked between units. The per-entity report gains `typedOnWrite`.
+
 ## Reembed
 
 ```ts

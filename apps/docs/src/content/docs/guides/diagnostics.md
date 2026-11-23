@@ -55,6 +55,8 @@ const wiki = createWiki(db, {
 | `classification_low_confidence` / `classification_invalid` | A classifier backfill answer was rejected |
 | `context_overflow_skipped` | An item's prompt overflowed the model's context window and the item was skipped. Emitted by heal, generative ontology backfill, classifier backfill, and the ops librarian (extract and resolve). `detail` is `{ factId }` for a fact, `{ sourceRef }` for a librarian event, or `{ itemIndex }` for an ops-resolve candidate |
 | `librarian_gate` / `librarian_op_rejected` / `resolve_failed` / `contradicts_document` | Outcomes of the ops librarian |
+| `librarian_rewritten` / `librarian_superseded` | The ops librarian rewrote an engine-inferred fact in place (`detail.factId`), or ended a fact's validity with a replacement (`detail.factId`, `detail.replacementId`). Ids only, never text |
+| `node_type_assigned` | A fact got an ontology node type (`detail.okfType`, `detail.writer`: `'classifier'`, `'llm'` or `'inherited'`). The librarian emits it at the write door for model-typed facts (`'llm'`) and for classifier-typed facts under `systemOne.typeOnWrite: 'auto'` (`'classifier'`, with `detail.confidence`) |
 | `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one |
 | `source_pointer_invalid` | A dump import met a malformed source pointer value and stored a null pointer (OKF frontmatter reports malformed pointers differently: check `dropped_pointer_values` on the `parseOkfBundle` result) |
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |

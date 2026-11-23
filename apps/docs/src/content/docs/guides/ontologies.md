@@ -205,6 +205,50 @@ await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the ge
   `none_of_these` slug, or no `classify` function means the generative path is used. The slug
   cannot be declared: `setOntologyManifest` rejects it and emergent merges drop it.
 
+### Type on write
+
+The classifier can also type a fact at the moment the librarian writes it, instead of waiting for
+a backfill pass. Opt in with `systemOne.typeOnWrite: 'auto'` (default `'llm'`, which changes
+nothing):
+
+```ts
+createWiki(db, {
+  llmProvider: { generateText, classify },
+  config: { systemOne: { typeOnWrite: 'auto' } },
+});
+```
+
+It applies to the librarian only, both strategies, and engages only when the provider has a
+`classify` function, the entity's ontology mode is `strict` or `emergent`, and the manifest has
+1 to 254 node types and no `none_of_these` slug. Otherwise the librarian runs exactly as before.
+When engaged, each fact the librarian is about to insert gets the same `choice` question the
+backfill asks, metered against the same token budget as the pass's other calls, and the ontology
+block is **not** sent in the librarian's prompt for that pass. An answer is applied only at or
+above the `systemOne.minConfidence.typing` floor; a decline, a low-confidence answer, an invalid
+answer or a failed call writes the fact untyped (no cooldown stamp), so the backfill still reaches
+it. `systemOne.onLowConfidence` is not read here.
+
+Three things to know before turning it on:
+
+- **No manifest-drawn edges.** A fact typed on write carries no edges. The classifier is asked no
+  edge question, the engaged prompt carries no manifest so the model proposes none, and because a
+  typed fact never re-enters the backfill pool, backfill will not add outgoing edges to it later
+  either. It can still be the *target* of edges drawn from other facts. Use `typeOnWrite: 'llm'`
+  (and the generative backfill) when you want outgoing edges.
+- **Extraction quality is unmeasured.** While engaged, the model extracts facts without seeing the
+  ontology block. The engine makes no claim that it extracts the same facts either way. Compare
+  extraction on your own data, with your own model, before and after.
+- **Cost is unmeasured.** The prompt gets shorter and the pass gains one classify call per fact
+  (including a call spent on a fact that is then updated in place or skipped as a duplicate). The
+  net cost may go either way; no number is claimed.
+
+In `emergent` mode the engaged librarian sends no `ontology_updates` invitation, so it proposes no
+new types for that pass; the backfill's generative path still does. Receipts reuse existing
+diagnostics (`node_type_assigned` with `writer: 'classifier'` and a `confidence`,
+`classification_abstained`, `classification_low_confidence`, `classification_invalid`,
+`context_overflow_skipped`), and `runPendingMaintenance` reports `typedOnWrite` per entity beside
+the backfill's `typed`.
+
 [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) uses this with a
 Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.
 
