@@ -1,6 +1,8 @@
 # Partial index on `entries(entity_id, deleted_at)` for prune
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Reviewed
+
+Owner-approved as written, 2026-11-23 (the spec raised no open questions). Shared-v18 ruling: see Proposed change 2.
 **Date:** 2026-11-23
 **Intent check:** Checked against `INTENT.md` 2026-11-23. Rule 2 (your database stays yours): "Schema migrations add columns, tables and indexes; they never drop a column or a table that holds your facts." This change adds one engine-owned index under the host's prefix, drops nothing, rewrites no row, and a host can still defer it with `setup({ migrations: 'refuse' })`. Rule 11 (benchmarks back claims): the claim here is a query plan, not retrieval accuracy or cost; the spec states plan evidence and makes no accuracy claim. Rule 13 (erasure): the index narrows which rows the erase walk finds; it changes no deletion semantics. Rule 10: this spec precedes implementation. No contradiction with INTENT found.
 
@@ -71,23 +73,13 @@ Caveat observed, re-verified at implementation (2026-11-23): for query 3 the pla
 
    Shared v18 structure (owner ruling 2026-11-23): this change, #451 (`prior_valid_to` column) and #450 (`derived_events` column) share ONE schema version, v18. This PR merges first and creates the v18 migration. The v18 body only calls named, exported, idempotent helpers (`createEntriesDeletedIndex` here, `IF NOT EXISTS`), so each later PR appends one helper call (PRAGMA-guarded for a column) to the same body and bumps nothing further. The Rust crate's `REQUIRED_SCHEMA_VERSION` goes 17 to 18 in this PR (`crates/graphrag-core/tests/schema_parity.rs` compares it to the engine's `CURRENT_SCHEMA_VERSION`); the later PRs add no further bump.
 
-3. **Gate behavior.** v18 becomes a pending migration on every existing store. `refuse` throws as for any pending migration; `auto` and `allow` run it. The build is one pass over the table (the partial index writes only tombstones), so it is cheap, but the spec does not claim it is instant on very large stores; the implementation PR measures the build on a 100k-row table and records the number.
+3. **Gate behavior.** v18 becomes a pending migration on every existing store. `refuse` throws as for any pending migration; `auto` and `allow` run it. The build is one pass over the table (the partial index writes only tombstones), so it is cheap, but the spec does not claim it is instant on very large stores; measured at implementation (2026-11-23, better-sqlite3 in-memory, 100,000 rows, 0.1% soft-deleted): the index build took about 27 ms. A file-backed store on slow flash will be slower; the number is a floor, not a promise.
 
 4. **Export/import impact: none expected.** `ImportExportService` serializes facts, not indexes or `schema_version`; a bundle exported at v17 imports into a v18 store and the reverse, because the index is invisible to the bundle format. The implementation PR confirms with a round-trip test rather than assuming.
 
 5. **Semver.** Perf improvement with no API or behavior change: `perf:` commit type, patch release. No `BREAKING CHANGE` footer. Schema version moves 17 to 18, which is additive under rule 2; an older engine opening a v18 store sees an unknown extra index and ignores it.
 
 Out of scope: an index on `tasks(deleted_at)`; changing the prune queries themselves; host-side probes (SynapseTree) which benefit automatically once the index exists, and no longer need their workaround.
-
-## Open questions (answered 2026-11-23, owner)
-
-All recommended defaults accepted:
-
-1. Index shape `(entity_id, deleted_at) WHERE deleted_at IS NOT NULL`, created by v18 and the fresh-store path, not by `schema.ts` every-open DDL: accepted.
-2. `tasks(deleted_at)` stays out of scope (follow-up if the probe shows there): accepted.
-3. `perf:` commit type, patch release, no `BREAKING CHANGE` footer: accepted.
-4. Hard-delete chunk plan switch: re-verified, no regression, no hint (see "Caveat observed").
-5. Schema version: shared v18 with #451 and #450, this PR first (see Proposed change 2).
 
 ## Files touched
 
