@@ -310,6 +310,24 @@ export function resolveSystemOneHealScreen(config: WikiConfig | undefined): 'aut
 }
 
 /**
+ * Write-time typing mode (specs/type-on-write §1): `systemOne.typeOnWrite` →
+ * `'llm'`. A present non-`'auto'`/non-`'llm'` value warns once and is treated
+ * as unset. No legacy chain and no call option. The write site reads the
+ * existing `'typing'` floor (`resolveTypingMinConfidence`).
+ */
+export function resolveSystemOneTypeOnWrite(config: WikiConfig | undefined): 'auto' | 'llm' {
+  const typeOnWrite = config?.systemOne?.typeOnWrite;
+  if (typeOnWrite !== undefined && !isTypingMode(typeOnWrite)) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.typeOnWrite\` is ${formatConfigValue(typeOnWrite)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+    return 'llm';
+  }
+  return typeOnWrite ?? 'llm';
+}
+
+/**
  * Heal-screen floor (specs/heal-screening-system-one §3): returns the
  * `systemOne.minConfidence.healScreen` floor only when the heal-screen mode
  * resolves `'auto'` and the floor is a finite number in [0.5, 1]. There is no

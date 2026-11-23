@@ -771,3 +771,41 @@ describe('public export surface (step 12)', () => {
     expect(idx.resolveHealScreenMinConfidence({ systemOne: { healScreen: 'llm', minConfidence: { healScreen: 0.8 } } })).toBeUndefined();
   });
 });
+
+describe('resolveSystemOneTypeOnWrite (type-on-write §1)', () => {
+  beforeEach(async () => {
+    const { __resetWarnOnceForTests } = await import('../src/utils/engineDefaults');
+    __resetWarnOnceForTests();
+  });
+
+  it("defaults to 'llm' for unset config, {} and {systemOne:{}}", async () => {
+    const { resolveSystemOneTypeOnWrite } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneTypeOnWrite(undefined)).toBe('llm');
+    expect(resolveSystemOneTypeOnWrite({})).toBe('llm');
+    expect(resolveSystemOneTypeOnWrite({ systemOne: {} })).toBe('llm');
+  });
+
+  it("passes 'auto' and 'llm' through; typing never changes the result", async () => {
+    const { resolveSystemOneTypeOnWrite } = await import('../src/utils/engineDefaults');
+    expect(resolveSystemOneTypeOnWrite({ systemOne: { typeOnWrite: 'auto' } })).toBe('auto');
+    expect(resolveSystemOneTypeOnWrite({ systemOne: { typeOnWrite: 'llm' } })).toBe('llm');
+    expect(resolveSystemOneTypeOnWrite({ systemOne: { typing: 'auto' } })).toBe('llm');
+  });
+
+  it("an invalid value warns exactly once naming systemOne.typeOnWrite and resolves 'llm'", async () => {
+    const { resolveSystemOneTypeOnWrite } = await import('../src/utils/engineDefaults');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = { systemOne: { typeOnWrite: 'hybrid' as never } } as WikiConfig;
+    expect(resolveSystemOneTypeOnWrite(config)).toBe('llm');
+    expect(resolveSystemOneTypeOnWrite(config)).toBe('llm');
+    const hits = warn.mock.calls.filter(([m]) => String(m).includes('systemOne.typeOnWrite'));
+    expect(hits.length).toBe(1);
+    warn.mockRestore();
+  });
+
+  it('the write-site floor is the typing chain; an explicit 0 is honored (?? not ||)', async () => {
+    const { resolveTypingMinConfidence } = await import('../src/utils/engineDefaults');
+    expect(resolveTypingMinConfidence({ systemOne: { typeOnWrite: 'auto' } })).toBe(0.5);
+    expect(resolveTypingMinConfidence({ systemOne: { typeOnWrite: 'auto', minConfidence: { typing: 0 } } })).toBe(0);
+  });
+});
