@@ -95,7 +95,7 @@ replacement). Both are `info`, fire in every mode, and carry ids only, never tex
 With `systemOne.typeOnWrite: 'auto'` the librarian also makes one classify call per fact before it
 writes. Those calls draw from the same `tokenBudget` as the pass's other calls. If the budget runs
 out during typing, the pass still writes its facts, leaves the unasked ones untyped for the
-backfill, and the run stops with `stoppedReason: 'budget_exhausted'`. Like heal and
+backfill, and the run stops as `budget_exhausted` (or `deadline` if the deadline lapsed during the pass). Like heal and
 backfill, a librarian unit can run past `deadlineMs` by the length of its in-flight calls; the
 deadline is checked between units. The per-entity report gains `typedOnWrite`.
 

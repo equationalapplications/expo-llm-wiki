@@ -104,8 +104,8 @@ export class MaintenanceScheduler {
    * `budget_too_small` > `complete`. `budget_too_small` means a job's smallest
    * unit needs more than the WHOLE budget — that job is skipped this run and
    * the run continues; `budget_exhausted` means a unit needs more than what
-   * REMAINS — the run stops. The token budget meters `generateText` calls
-   * only; embeddings are never metered.
+   * REMAINS — the run stops. The token budget meters generation and classify
+   * calls; embeddings are never metered.
    */
   async run(opts: RunPendingMaintenanceOptions = {}): Promise<RunPendingMaintenanceResult> {
     if (
