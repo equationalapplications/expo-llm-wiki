@@ -33,7 +33,7 @@ Add one pattern to `CONTEXT_OVERFLOW_PATTERNS`, with a comment naming the provid
 
 ```ts
 // llama.rn (RNLlamaJSI.cpp): prompt >= n_ctx with ctx_shift off
-/context is full/i,
+/\bcontext is full\b/i,
 ```
 
 Nothing else changes. The ordering rules (rate-limit guard first, overflow before truncation and config) are untouched.
