@@ -1,6 +1,6 @@
 # Recognize llama.rn "Context is full" as context overflow
 
-**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
+**Status:** Implemented (2026-11-23, PR #467)
 **Date:** 2026-11-23
 **Branch:** `spec/context-is-full-overflow`
 **Issue:** #437
