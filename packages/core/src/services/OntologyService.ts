@@ -3,6 +3,7 @@ import type {
   OntologyManifest,
   OntologyMode,
   OntologyPromptContext,
+  WriteOntologyPromptContext,
   OntologyUpdates,
   ExtractedFactWithOntology,
   ExtractedFactEdge,
@@ -12,7 +13,7 @@ import type {
 import { WikiStrictOntologyViolation } from '../types';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { EdgeRepository } from '../repositories/EdgeRepository';
-import { buildOntologyPromptAppendix } from '../prompts/ontology';
+import { buildOntologyPromptAppendix, buildWriteOntologyAppendix } from '../prompts/ontology';
 import {
   emptyManifest,
   normalizeTitleKey,
@@ -90,6 +91,21 @@ export class OntologyService {
     if (mode === 'off') return null;
     const manifestJson = JSON.stringify(manifest, null, 2);
     return buildOntologyPromptAppendix(mode, manifestJson);
+  }
+
+  /**
+   * Ontology prompt context for the WRITE builders (specs/type-on-write §5).
+   * `null` when the mode is `'off'` or when write-time typing is `engaged`
+   * (the classifier types the fact, so the manifest leaves the write prompt).
+   * Backfill keeps `buildPromptContext`.
+   */
+  async buildWritePromptContext(
+    entityId: string,
+    opts: { engaged: boolean },
+  ): Promise<WriteOntologyPromptContext | null> {
+    const { mode, manifest } = await this.getEffectiveState(entityId);
+    if (mode === 'off' || opts.engaged) return null;
+    return buildWriteOntologyAppendix(mode, JSON.stringify(manifest, null, 2));
   }
 
   async mergeEmergentUpdates(

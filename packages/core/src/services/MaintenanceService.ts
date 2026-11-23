@@ -1,6 +1,6 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
 import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
-import { normalizeTitleKey, isReservedAbstainSlug, typeSatisfies, ONTOLOGY_ABSTAIN_SENTINEL } from '../utils/ontology';
+import { normalizeTitleKey, isReservedAbstainSlug, typeSatisfies } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic, nodeTypeReceipts, shouldEmitOntologyReceipt } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
@@ -37,6 +37,7 @@ import { FTS5_RETIRED_TABLES_KEY, FTS5_STATE_KEY, isRetiredTableName, fts5Ledger
 import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm, callClassify } from '../utils/llmCall';
+import { CLASSIFIER_MAX_CHOICES, isManifestRepresentable, buildTypingQuestion } from './typing/typeOnWrite';
 import { WikiBudgetExhausted, UsageMeter } from '../utils/usage';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
@@ -52,13 +53,9 @@ export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export { ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS } from '../utils/contextCaps';
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Upper bound on one classifier choice question (specs/system-one-config §5):
- * manifest slugs plus the abstain sentinel. A manifest with more slugs than
- * the cap allows, or carrying the reserved sentinel slug, falls back to the
- * generative path for the pass.
- */
-export const CLASSIFIER_MAX_CHOICES = 255 as const;
+// The classifier choice-question cap now lives in the shared typing module
+// (specs/type-on-write §13); re-exported here so existing imports keep working.
+export { CLASSIFIER_MAX_CHOICES };
 
 // Heal constants live in `utils/healConstants` so PromptService and
 // MaintenanceService cannot drift apart on the anchor cap formula
@@ -2302,14 +2299,10 @@ export class MaintenanceService {
       : undefined;
     const edgeSiteMode: 'auto' | 'llm' = edgeMode === 'auto' && typeof edgeMinConfidence === 'number' ? 'auto' : 'llm';
     if (classifierMode === 'auto' && typeof classify === 'function') {
-      const slugs = effectiveManifest.node_types.map((n) => n.type);
       // Sentinel-reserved manifests and over-cap manifests fall back to the
       // generative path (§5): the question could not represent them faithfully.
-      if (
-        slugs.length > 0 &&
-        slugs.length + 1 <= CLASSIFIER_MAX_CHOICES &&
-        !slugs.some((s) => isReservedAbstainSlug(s))
-      ) {
+      // One predicate shared with the write site (specs/type-on-write §2).
+      if (isManifestRepresentable(effectiveManifest)) {
         const classifierRun = await this._runClassifierBackfill(
           entityId, candidates, effectiveManifest, now, recheckCutoff, options?.meter, trigger,
           shortlistK, edgeSiteMode, edgeMinConfidence,
@@ -2660,17 +2653,8 @@ export class MaintenanceService {
     const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
     const concurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1 ? Math.floor(rawConcurrency) : 1;
 
-    // Manifest descriptions are host-authored ontology vocabulary, not fact content.
-    // The abstain sentinel is appended last (§5): a classifier that trusts none of
-    // the manifest slugs can decline instead of guessing.
-    const question: ClassifierQuestion = {
-      kind: 'choice',
-      options: [...manifest.node_types.map((n) => n.type), ONTOLOGY_ABSTAIN_SENTINEL],
-      instructions:
-        'Choose the ontology node type that best describes this fact, or choose '
-        + `"${ONTOLOGY_ABSTAIN_SENTINEL}" if none of the listed types fits.\n`
-        + manifest.node_types.map((n) => `- ${n.type}: ${n.description}`).join('\n'),
-    };
+    // One question text shared with the write site (specs/type-on-write §13).
+    const question: ClassifierQuestion = buildTypingQuestion(manifest);
 
     type Outcome =
       | {

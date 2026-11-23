@@ -104,8 +104,8 @@ export class MaintenanceScheduler {
    * `budget_too_small` > `complete`. `budget_too_small` means a job's smallest
    * unit needs more than the WHOLE budget — that job is skipped this run and
    * the run continues; `budget_exhausted` means a unit needs more than what
-   * REMAINS — the run stops. The token budget meters `generateText` calls
-   * only; embeddings are never metered.
+   * REMAINS — the run stops. The token budget meters generation and classify
+   * calls; embeddings are never metered.
    */
   async run(opts: RunPendingMaintenanceOptions = {}): Promise<RunPendingMaintenanceResult> {
     if (
@@ -189,7 +189,11 @@ export class MaintenanceScheduler {
           if (!r.processedThrough) { st.librarian = false; continue; }
           st.report.librarianPasses++;
           st.report.factsWritten += r.factsWritten;
+          if (r.typing) st.report.typedOnWrite = (st.report.typedOnWrite ?? 0) + r.typing.typed;
           progressed = true;
+          // Budget exhausted during write-time typing: the pass wrote its facts and
+          // recorded them above; the run stops as exhausted rather than 'complete'.
+          if ((r.typing?.unattempted ?? 0) > 0) { stopped = exhaustedStop(); break rounds; }
           const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
           if ((await this.eventRepo.countAfter(entityId, wm)) === 0) st.librarian = false;
           continue;

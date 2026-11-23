@@ -352,12 +352,13 @@ same way.
 *Why:* hosts build privacy promises on these words, and a delete whose
 text can still be read back out of the database file is not finished.
 A taxonomy with a state between asked and done keeps the honest one
-visible. Today the librarian reports how many facts it forgets or
-rewrites, not which (per-fact librarian pass reports are planned);
-heal reports which: every model-directed move emits a per-fact
-receipt (`heal_deleted` / `heal_downgraded`, with `applied`,
+visible. Today heal reports which: every model-directed move emits a
+per-fact receipt (`heal_deleted` / `heal_downgraded`, with `applied`,
 `applied_unscreened`, or `below_floor` reasons) and `HealResult`
-carries the changed-id lists. Today forget,
+carries the changed-id lists. The librarian also reports which: each
+fact it rewrites in place or supersedes emits a per-fact receipt
+(`librarian_rewritten` / `librarian_superseded`), by id and never by
+text. Today forget,
 prune and supersession exist; `forget()`
 leaves the file recoverable (spec `specs/forget-erasure/`,
 canary-reproducible), which is why `erase()` exists and claims
@@ -447,6 +448,13 @@ break the erasure promise through the export door.
 
 ## Amendments
 
+- 2026-11-23 — Rule 12's "today" sentence changes: the librarian now
+  reports which facts it rewrites in place or supersedes, by id only, in
+  per-fact diagnostics (`librarian_rewritten`, `librarian_superseded`;
+  step 13, `specs/type-on-write/`). Why: the rule promised the librarian's
+  per-fact pass report would follow the engine's own destructive edits, and
+  step 13 ships it. No promise changes; the sentence stops saying the
+  report is only planned.
 - 2026-11-20 — Rule 11 is retitled "Benchmarks back claims and gate the
   native engine" and gains a paragraph: the engine runs whatever model
   the host hands it, puts no benchmark in front of that choice, and

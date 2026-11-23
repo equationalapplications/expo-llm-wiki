@@ -7,6 +7,12 @@ import { WikiSearchUnavailableError } from '../../../types';
 import { runResolve } from './resolve';
 import { resolveContextBudget } from '../../../config/context';
 import { applyOps } from './apply';
+import { resolveTypingMinConfidence } from '../../../utils/engineDefaults';
+import {
+  canEngageWriteTyping, classifyFactsForWrite, emptyTypingCounters, tallyTypingOutcome,
+  volunteeredTypeResolves, type TypingOutcome,
+} from '../../typing/typeOnWrite';
+import type { GatedCandidate } from './gate';
 
 /**
  * Op-based, similarity-gated librarian (spec §5.2–§5.7, §10.3). Extract
@@ -31,7 +37,13 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
   await deps.seedWatermark(entityId);
   const wm = await deps.getWatermark(entityId);
-  const sel = await selectBatch(deps, entityId, wm, ctx.meter, ctx.guidance, resolveContextBudget(deps.options.config));
+  // Write-time typing (specs/type-on-write §2): resolved once per pass. The same
+  // `engaged` value feeds the selectBatch reserve estimate and the extract prompt,
+  // so the estimate is computed from the prompt actually sent.
+  const typingState = deps.ontologyService ? await deps.ontologyService.getEffectiveState(entityId) : undefined;
+  const engaged = typingState !== undefined
+    && canEngageWriteTyping(deps.options.config, deps.options.llmProvider, typingState.mode, typingState.manifest);
+  const sel = await selectBatch(deps, entityId, wm, ctx.meter, ctx.guidance, resolveContextBudget(deps.options.config), engaged);
   if ('budgetStop' in sel) return { processedThrough: null, factsWritten: 0, budgetStop: sel.budgetStop };
   if (sel.batch.length === 0) return { processedThrough: null, factsWritten: 0 };
 
@@ -45,7 +57,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
   let ex;
   try {
-    ex = await runExtract(deps, ctx, sel.batch);
+    ex = await runExtract(deps, ctx, sel.batch, engaged);
   } catch (err) {
     if (err instanceof WikiBudgetExhausted) {
       return { processedThrough: null, factsWritten: 0, budgetStop: { requiredEstimate: err.requiredEstimate } };
@@ -87,7 +99,33 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
     return { processedThrough: null, factsWritten: 0, budgetStop: res.budgetStop };
   }
 
-  const { written, updatedIds } = await applyOps(deps, ctx, {
+  // Typing step (§3): between resolve and the transaction. Candidates are exactly
+  // the set applyOps will insert (not gate-NOOP, not resolve-NOOP); an
+  // UPDATE-in-place candidate is asked and its answer unused (disclosed). No
+  // database write; a budget stop here never discards the pass (§3).
+  const typingCounters = engaged ? emptyTypingCounters() : undefined;
+  const typingOutcomes = new Map<GatedCandidate, TypingOutcome>();
+  if (engaged && typingState && typingCounters) {
+    const failed = new Set(res.failed);
+    const rejected = new Set(res.rejected);
+    const asked = gated.filter((g) => {
+      if (g.decision.kind === 'noop') return false;
+      if (volunteeredTypeResolves((g.candidate.fact as { okf_type?: unknown }).okf_type, typingState.manifest)) return false;
+      if (g.decision.kind === 'add' || failed.has(g)) return true;
+      const op = res.ops.get(g);
+      if (rejected.has(g) || !op) return true;
+      return op.op !== 'NOOP';
+    });
+    const outcomes = await classifyFactsForWrite(
+      deps.options,
+      { entityId, trigger, meter: ctx.meter, operation: 'librarian' },
+      asked.map((g) => g.candidate.fact), typingState.manifest, resolveTypingMinConfidence(deps.options.config),
+    );
+    asked.forEach((g, n) => { typingOutcomes.set(g, outcomes[n]); tallyTypingOutcome(typingCounters, outcomes[n]); });
+  }
+
+  const { written, updatedIds, supersededIds } = await applyOps(deps, ctx, {
+    typing: typingCounters ? { outcomes: typingOutcomes, counters: typingCounters } : undefined,
     gated,
     ops: res.ops,
     rejected: res.rejected,
@@ -119,5 +157,8 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   return {
     processedThrough: { at: last.created_at, id: last.id },
     factsWritten: written.length + updatedIds.length,
+    ...(typingCounters ? { typing: typingCounters } : {}),
+    rewrittenIds: updatedIds,
+    supersededIds,
   };
 };

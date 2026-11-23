@@ -33,6 +33,7 @@ export {
   resolveSystemOneResolve,
   resolveResolveMinConfidence,
   resolveSystemOneHealScreen,
+  resolveSystemOneTypeOnWrite,
   resolveHealScreenMinConfidence,
   warnOnce,
   DEFAULT_TYPING_MIN_CONFIDENCE,

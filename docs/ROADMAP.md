@@ -293,6 +293,8 @@ prune and event-retention clocks a host must set to audit them.
 
 ### Step 13 — Type on write — PLANNED
 
+Done — merged 2026-11-23, PR #471, spec [type-on-write](../specs/type-on-write/spec.md)
+
 Facts get typed when the librarian writes them, inside the same
 host-passed budget, instead of waiting for a maintenance pass. The
 write path's instruction templates split from the backfill's own in
