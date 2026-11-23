@@ -1285,7 +1285,9 @@ export interface MemoryDump {
    * Source-pointer parse report (specs/source-pointers §Export, import, and OKF).
    * Present ONLY when `parseOkfBundle` dropped a malformed `source_pointer`
    * value: entry ids and a reason slug — never raw pointer values, because a
-   * pointer can carry quote text. Export-only metadata; `importDump` ignores it.
+   * pointer can carry quote text. Also carries `derived_events_malformed`
+   * entries for a dropped OKF `derived_events` list. Export-only metadata;
+   * `importDump` ignores it.
    */
   dropped_pointer_values?: Array<{ factId: string; reason: string }>;
 }

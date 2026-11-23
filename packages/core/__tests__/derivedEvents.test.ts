@@ -51,6 +51,7 @@ describe('test 8 (helper level): derived_events parsing', () => {
     expect(parseStoredDerivedEvents('not json')).toBeNull();
     expect(parseStoredDerivedEvents('{"a":1}')).toBeNull();
     expect(parseStoredDerivedEvents('[1,2]')).toBeNull();
+    expect(parseStoredDerivedEvents('["E2",5]')).toEqual(['E2']);
     expect(parseStoredDerivedEvents('[""]')).toBeNull();
     expect(parseStoredDerivedEvents('[]')).toBeNull();
     expect(parseStoredDerivedEvents('["E1","E2","E1"]')).toEqual(['E1', 'E2']);
@@ -486,5 +487,35 @@ describe('derived_events_invalid is emitted after commit only', () => {
     await expect(t.wiki.importDump(dump)).rejects.toThrow(/invalid source_ref/);
     expect(ofCode(t.diagnostics, 'derived_events_invalid')).toHaveLength(0);
     expect(await t.db.getAllAsync(`SELECT id FROM ${P}entries`)).toHaveLength(0);
+  });
+});
+
+describe('round-1 folds', () => {
+  it('a partly valid stored list keeps its string ids; the next merge extends it', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_7",5]' });
+    await t.wiki.runLibrarian('u');
+    expect(JSON.parse((await rowOf(t.db, 'acme')).derived_events)).toEqual(['evt_7', 'evt_1']);
+  });
+
+  it('disclosure pin: an unresolved in-place merge is reported but NOT found by forget({ eventId })', async () => {
+    const t = mkOps([() => ({ facts: [CAND()], tasks: [] }), () => UPD]);
+    await seedTarget(t, { pointer: JSON.stringify({ event_id: 'evt_0' }) });
+    await t.wiki.runLibrarian('u');
+    expect((await rowOf(t.db, 'acme')).title).toBe('User is a principal engineer at Acme');
+    expect(ofCode(t.diagnostics, 'source_pointer_unresolved')).toHaveLength(1);
+    expect(await t.wiki.forget('u', { eventId: 'evt_1' }, { dryRun: true })).toEqual({ deleted: { entries: 0, tasks: 0 } });
+    expect((await rowOf(t.db, 'acme')).deleted_at).toBeNull();
+  });
+
+  it('UPDATE on an immutable_document target stores a draft replacement that inherits the target provenance', async () => {
+    const t = mkOps([() => ({ facts: [CAND('e1')], tasks: [] }), () => UPD]);
+    await seedTarget(t, { source_type: 'immutable_document', pointer: JSON.stringify({ event_id: 'evt_0' }), derived: '["evt_3"]' });
+    await t.wiki.runLibrarian('u');
+    expect(ofCode(t.diagnostics, 'contradicts_document')).toHaveLength(1);
+    const repl = await t.db.getFirstAsync<any>(`SELECT * FROM ${P}entries WHERE id != 'acme'`);
+    expect(repl.lifecycle_status).toBe('draft');
+    expect(JSON.parse(repl.derived_events)).toEqual(['evt_0', 'evt_3']);
+    expect((await rowOf(t.db, 'acme')).superseded_by).toBeNull();
   });
 });

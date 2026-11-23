@@ -20,8 +20,8 @@ export function validateDerivedEventsValue(v: unknown): string[] | null | undefi
 }
 
 /**
- * Tolerant stored-value read for the row mappers: a malformed stored value
- * reads as null without throwing.
+ * Tolerant stored-value read for the row mappers: a stored value that is not an array
+ * reads as null without throwing; non-string elements of an array are dropped.
  */
 export function parseStoredDerivedEvents(raw: unknown): string[] | null {
   if (typeof raw !== 'string') return null;
@@ -31,8 +31,11 @@ export function parseStoredDerivedEvents(raw: unknown): string[] | null {
   } catch {
     return null;
   }
-  const v = validateDerivedEventsValue(parsed);
-  return v === undefined ? null : v;
+  // Tolerant: keep the valid string elements of a partly valid list so a
+  // later merge extends it rather than overwriting (and losing) them.
+  if (!Array.isArray(parsed)) return null;
+  const kept = dedupeEventIds(parsed.filter((x): x is string => typeof x === 'string'));
+  return kept.length === 0 ? null : kept;
 }
 
 /** Serialize for storage; null/undefined/empty -> null. */

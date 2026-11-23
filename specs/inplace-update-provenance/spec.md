@@ -198,6 +198,8 @@ restore; null is the honest value. `crates/graphrag-core/src/schema_check.rs:20`
 selects named columns (`hydrate.rs:42`), so the added column does not
 change its reads.
 
+As landed disclosure: `derived_events` is complete only for attributable merges. An in-place UPDATE whose candidate has no resolvable `source_event` merges wording without recording it (reported via `source_pointer_unresolved`), and a candidate labelled E2 whose text drew on E1 from the same batch records only E2. A partly valid stored list keeps its string ids on read (non-strings are dropped), so the next merge extends it.
+
 Semantics: "the stored wording of this fact also rests on these events,
 beyond the one named by `source_pointer`." It is a contribution ledger,
 not a second pointer: no quote, no position. `source_pointer` keeps its
@@ -244,7 +246,10 @@ Any candidate whose `sourceEventId` is not returned is **dropped whole**:
 no insert, no UPDATE, no SUPERSEDE, no NOOP bookkeeping, and the pass emits
 a new content-free diagnostic `source_event_gone` `{ itemIndex, sourceRef:
 <eventId> }` per dropped candidate (`sourceRef` already carries an event
-id in `context_overflow_skipped`, `extract.ts:223`). Candidates with an
+id in `context_overflow_skipped`, `extract.ts:223`). As landed: the check is per-label by design: it tests only the candidates' own
+`sourceEventId`s (`IN (<those ids>)`), not every event of the batch, because a
+candidate is attributed only to the event it names and the engine cannot know
+which other batch events its text drew on. Candidates with an
 unresolved pointer cannot be attributed and are not dropped; the spec and
 the guide say so. The watermark is unaffected: it is a `(created_at, id)`
 position, not a foreign key, and the batch's last event may legitimately

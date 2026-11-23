@@ -35,6 +35,8 @@ Forgotten facts disappear from reads immediately.
 fact whose `derived_events` list contains it. A fact the librarian merged event text into is
 deleted whole: the engine cannot take one event's wording back out, so use `dryRun` to see the
 count first. It does not delete the event row, and facts merged before schema v18 carry no list.
+A merge the model did not attribute to an event is reported (`source_pointer_unresolved`) but is
+not findable by `forget({ eventId })`; if you need full coverage, forget those facts by `entryId`.
 
 ## Hard delete: prune
 
@@ -164,8 +166,9 @@ When a subject asks you to erase their data (a GDPR Art. 17 request), the sequen
    the facts that rest on an event but leaves the event row, so an event the librarian has not
    read yet can be read by a later pass: repeat `forget({ eventId })` after every pass until the
    event is gone. Do not delete event rows with direct SQL while a librarian pass may be running;
-   the pass drops candidates from a vanished event (`source_event_gone`), but wording it already
-   merged stays until you forget the event. The way to delete an entity's events on request is
+   the pass drops candidates whose own source event vanished (`source_event_gone`), but wording it already
+   merged stays until you forget the event. A merge the model did not attribute
+   (`source_pointer_unresolved`) is not findable by event id; forget those facts by `entryId`. The way to delete an entity's events on request is
    `clearAll({ includeEvents: true })` (see [Wipe an entity completely](#wipe-an-entity-completely)).
 3. **`forget({ sourceRef })` for every stored document of the subject** (see
    [the source store guide](/expo-llm-wiki/guides/source-store/)).
