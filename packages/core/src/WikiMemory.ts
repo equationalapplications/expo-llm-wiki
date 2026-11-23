@@ -452,7 +452,7 @@ export class WikiMemory {
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
-      // One transaction: a crash must never leave schema_version=14 without the index,
+      // One transaction: a crash must never leave schema_version without its indexes,
       // since no migration would rebuild it on the next open.
       await this.db.withTransactionAsync(async (tx) => {
         await createLegacySourceTypeIndex(tx, this.prefix);

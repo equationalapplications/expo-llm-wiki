@@ -62,6 +62,31 @@ describe('migration v18: partial index on entries(entity_id, deleted_at)', () =>
   });
 });
 
+describe('v18 gate under auto and custom prefix', () => {
+  it("'auto' on a v17 store throws WikiMigrationRequiredError and builds no index", async () => {
+    const db = await fresh();
+    await rollBackTo17(db);
+    await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'auto' })).rejects.toMatchObject({
+      name: 'WikiMigrationRequiredError',
+    });
+    expect(await indexSql(db)).toBeNull();
+    expect(await version(db)).toBe('17');
+  });
+
+  it('a non-default tablePrefix gets <prefix>entries_deleted_idx on fresh and upgrade', async () => {
+    const db = openTestDatabase();
+    const opts = { ...stubOptions, config: { tablePrefix: 'zz_' } } as WikiOptions;
+    await new WikiMemory(db, opts).setup();
+    const name = async () => (await db.getFirstAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'zz_entries_deleted_idx'`))?.name ?? null;
+    expect(await name()).toBe('zz_entries_deleted_idx');
+    await db.execAsync('DROP INDEX zz_entries_deleted_idx');
+    await db.runAsync(`UPDATE zz_meta SET value = '17' WHERE key = 'schema_version'`);
+    await new WikiMemory(db, opts).setup();
+    expect(await name()).toBe('zz_entries_deleted_idx');
+  });
+});
+
 describe('prune queries use entries_deleted_idx', () => {
   type Call = { sql: string; args: unknown[] };
   function recording(db: SQLiteAdapter): { adapter: SQLiteAdapter; calls: Call[] } {
@@ -130,7 +155,30 @@ describe('prune queries use entries_deleted_idx', () => {
   });
 });
 
+describe('erase tombstone count plan', () => {
+  it('the SQL erase step 9 really runs scans the covering partial index', async () => {
+    const db = openTestDatabase();
+    const seen: string[] = [];
+    const adapter: SQLiteAdapter = {
+      ...db,
+      execAsync: (sql) => db.execAsync(sql),
+      runAsync: (sql, a) => db.runAsync(sql, a),
+      getAllAsync: (sql, a) => db.getAllAsync(sql, a),
+      getFirstAsync: (sql, a) => { if (sql.includes('COUNT(*)') && sql.includes('deleted_at IS NOT NULL')) seen.push(sql); return db.getFirstAsync(sql, a); },
+      withTransactionAsync: (fn) => db.withTransactionAsync(fn),
+    };
+    const wiki = new WikiMemory(adapter, stubOptions);
+    await wiki.setup();
+    await wiki.erase();
+    expect(seen.length).toBeGreaterThan(0);
+    const rows = await db.getAllAsync<{ detail: string }>(`EXPLAIN QUERY PLAN ${seen[0]}`);
+    expect(rows.map((r) => r.detail).join(' | ')).toContain(`SCAN ${P}entries USING COVERING INDEX ${IDX}`);
+  });
+});
+
 describe('export/import across v17 and v18 stores', () => {
+  // Smoke test only: bundles carry neither indexes nor schema_version, so this
+  // cannot detect an index difference; it guards that the stamp does not leak in.
   it('a fact survives an export from a v17-stamped store into a fresh v18 store', async () => {
     const a = await fresh();
     await rollBackTo17(a);
