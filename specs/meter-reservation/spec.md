@@ -1,6 +1,6 @@
 # Meter reservation: reserve budget before each metered call
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-23; all open-question defaults accepted)
 **Date:** 2026-11-23
 **Intent check:** Rule 7 ("Every model call in a maintenance run draws from
 one token budget the host can set"): this spec makes that sentence true when
@@ -468,7 +468,7 @@ Targeted vitest only; each item names the file it extends.
 
 ## Open questions for Kurt
 
-Each has a recommended default; none is decided here.
+Owner-approved 2026-11-23; all open-question defaults accepted. Each question below is answered by its stated default.
 
 1. **Hold size for `classify`.** Options: (a) input estimate only, per the
    issue (probe still spends 440 of 250); (b) input estimate x 2 (probe spends
