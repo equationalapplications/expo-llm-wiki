@@ -254,10 +254,8 @@ the next pass (Rejected alternatives). The scheduler sees exhaustion at the
 next unit's pre-flight exactly as it does today
 (`MaintenanceScheduler.ts:184-188`). The scheduler also stops the run as
 exhausted right after recording a pass whose `typing.unattempted > 0`. The
-meter is checked before each call and charged after, so with
-`chunkConcurrency` N up to N-1 in-flight classify calls can overshoot it
-(visible in `tokensUsed`); the classifier backfill has the same
-pre-existing pattern (follow-up issue #475).
+meter reserves budget for each classify call before it starts, so parallel calls
+cannot all claim the same headroom (`specs/meter-reservation`).
 
 ### 4. How an accepted type reaches the row
 

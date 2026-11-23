@@ -439,6 +439,9 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   (`llmCall.ts:29-31`); the meter records real input plus output
   (`usage.ts:39`). Overshoot is therefore bounded only by in-flight
   concurrency (`chunkConcurrency`), not by any estimate.
+  *(2026-11-23: in-flight calls are now held against the budget before they
+  start; see `specs/meter-reservation`. A single call's own output can still
+  pass the budget.)*
 - **Early probe (metered):** on the FIRST context-overflow error, `extract.ts`
   runs one minimal-prompt probe before the halving/segmentation retry tree,
   memoized once per pass and metered like every other model call (INTENT
@@ -596,7 +599,7 @@ claims until measurement exists.
   launches and waits for in-flight calls to settle. Two tests: (a) a stub
   throws `WikiBudgetExhausted` on call 2 (injected, NOT meter-driven —
   with concurrency 4 every task pre-flights the same meter state before
-  any records, so a real meter cannot produce this shape) with
+  any records, so a real meter cannot produce this shape; 2026-11-23: with reservations it can, see `specs/meter-reservation`) with
   concurrency 4 — calls 1, 3, and 4 all settle and persist; (b) a real
   meter with a pinned budget (concretely: the full request estimate —
   state plus instructions — of the smallest fact's call) and differing

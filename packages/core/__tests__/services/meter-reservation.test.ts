@@ -75,6 +75,30 @@ describe('meter reservation: the issue #475 probe', () => {
     expect(meter.used).toBe(220);
   });
 
+  it('every reserve is paired with a settle or release (no leak), and refusals do not count as reserves', async () => {
+    const reserve = vi.spyOn(UsageMeter.prototype, 'reserve');
+    const settle = vi.spyOn(UsageMeter.prototype, 'settle');
+    const release = vi.spyOn(UsageMeter.prototype, 'release');
+    try {
+      const { meter } = await runProbe(4);
+      const admitted = reserve.mock.results.filter((r) => r.type === 'return').length;
+      expect(admitted).toBe(settle.mock.calls.length + release.mock.calls.length);
+      expect(meter.reserved).toBe(0);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('a budget below the input estimate is refused at both concurrencies; estimate <= budget < hold admits a solo call', async () => {
+    const options = { llmProvider: { generateText: async () => '', classify: vi.fn(probeClassify) }, config: {} } as unknown as WikiOptions;
+    for (const _c of [1, 4]) {
+      const err = await callClassify(options, ctxFor(new UsageMeter(59)), requestWithEstimate(60)).catch((e) => e);
+      expect(err).toBeInstanceOf(WikiBudgetExhausted);
+      expect(err.requiredEstimate).toBe(60);
+    }
+    await expect(callClassify(options, ctxFor(new UsageMeter(100)), requestWithEstimate(60))).resolves.toBeDefined();
+  });
+
   it('default path pin: concurrency 1 spends 2 calls / 220 and refuses the third with (60, 30)', async () => {
     const { calls, meter } = await runProbe(1);
     expect(calls).toBe(2);

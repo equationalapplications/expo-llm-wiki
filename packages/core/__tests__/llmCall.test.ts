@@ -64,3 +64,19 @@ describe('callLlm', () => {
     });
   });
 });
+describe('callLlm reservation hygiene', () => {
+  it('provider throw, malformed result: no reservation, no charge', async () => {
+    const m1 = new UsageMeter(10_000);
+    await expect(callLlm({ llmProvider: { generateText: async () => { throw new Error('boom'); } } } as unknown as WikiOptions, { ...ctx, meter: m1 }, prompts)).rejects.toThrow('boom');
+    expect([m1.reserved, m1.used]).toEqual([0, 0]);
+    const m2 = new UsageMeter(10_000);
+    const bad = { generateText: async () => '', generateTextWithUsage: async () => ({}) };
+    await expect(callLlm({ llmProvider: bad } as unknown as WikiOptions, { ...ctx, meter: m2 }, prompts)).rejects.toThrow(TypeError);
+    expect([m2.reserved, m2.used]).toEqual([0, 0]);
+  });
+  it('success leaves no reservation', async () => {
+    const m = new UsageMeter(10_000);
+    await callLlm({ llmProvider: { generateText: async () => 'ok' } } as unknown as WikiOptions, { ...ctx, meter: m }, prompts);
+    expect(m.reserved).toBe(0);
+  });
+});
