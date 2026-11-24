@@ -175,3 +175,71 @@ describe('history()', () => {
     expect((await wiki.history('e1', 'solo')).map((f) => f.id)).toEqual(['solo']);
   });
 });
+describe('supersede() records a replaced scheduled end (specs/supersede-future-valid-to D2/D3)', () => {
+  const FUTURE = Date.now() + 7 * 86_400_000;
+  const prior = (id: string) =>
+    db.getFirstAsync<any>(`SELECT prior_valid_to FROM llm_wiki_entries WHERE id = ?`, [id]).then((r) => r.prior_valid_to);
+
+  async function withDiag() {
+    const diagnostics: any[] = [];
+    const d = openTestDatabase();
+    const w = new WikiMemory(d, { llmProvider: { generateText: async () => '{}' }, onDiagnostic: (x: any) => diagnostics.push(x) } as never);
+    await w.setup();
+    return { d, w, diagnostics };
+  }
+
+  it('stores prior_valid_to and reports once for a future valid_to', async () => {
+    const { d, w, diagnostics } = await withDiag();
+    await d.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at) VALUES ('old','e1','t','b',100,100)`);
+    await w.expire('e1', 'old', { at: FUTURE });
+    await w.supersede('e1', 'old', { title: 'SF', body: 'b' }, { validFrom: 5_000 });
+    const row = await d.getFirstAsync<any>(`SELECT valid_to, prior_valid_to FROM llm_wiki_entries WHERE id='old'`);
+    expect(row).toEqual({ valid_to: 5_000, prior_valid_to: FUTURE });
+    const rep = diagnostics.filter((x) => x.code === 'supersede_scheduled_end_replaced');
+    expect(rep).toHaveLength(1);
+    expect(rep[0]).toMatchObject({ severity: 'info', operation: 'supersede', trigger: 'call', entityId: 'e1', detail: { factId: 'old', priorValidTo: FUTURE } });
+  });
+
+  it('open-ended supersede leaves prior_valid_to null and emits nothing', async () => {
+    const { d, w, diagnostics } = await withDiag();
+    await d.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at) VALUES ('old','e1','t','b',100,100)`);
+    await w.supersede('e1', 'old', { title: 'SF', body: 'b' }, { validFrom: 5_000 });
+    expect((await d.getFirstAsync<any>(`SELECT prior_valid_to FROM llm_wiki_entries WHERE id='old'`)).prior_valid_to).toBeNull();
+    expect(diagnostics.filter((x) => x.code === 'supersede_scheduled_end_replaced')).toHaveLength(0);
+  });
+
+  it('a rejected supersede (already_expired) records nothing and emits nothing', async () => {
+    const { d, w, diagnostics } = await withDiag();
+    await d.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at, valid_to) VALUES ('old','e1','t','b',100,100,${FUTURE})`);
+    // future end is read, then the supersede is rejected (replacement not_found)
+    await expect(w.supersede('e1', 'old', 'missing')).rejects.toMatchObject({ reason: 'not_found' });
+    const r = await d.getFirstAsync<any>(`SELECT valid_to, prior_valid_to, superseded_by FROM llm_wiki_entries WHERE id='old'`);
+    expect(r).toEqual({ valid_to: FUTURE, prior_valid_to: null, superseded_by: null });
+    expect(diagnostics.filter((x) => x.code === 'supersede_scheduled_end_replaced')).toHaveLength(0);
+    await insert('old2');
+    await db.runAsync(`UPDATE llm_wiki_entries SET valid_to = 200 WHERE id = 'old2'`);
+    await expect(wiki.supersede('e1', 'old2', { title: 'x', body: 'y' })).rejects.toMatchObject({ reason: 'already_expired' });
+    expect(await prior('old2')).toBeNull();
+  });
+
+  it('outbox UPDATE payload for supersede carries prior_valid_to', async () => {
+    const d = openTestDatabase();
+    const w = new WikiMemory(d, { llmProvider: { generateText: async () => '{}' }, config: { enableOutbox: true } });
+    await w.setup();
+    await d.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at) VALUES ('old','e1','t','b',100,100)`);
+    await w.expire('e1', 'old', { at: FUTURE });
+    await d.runAsync(`DELETE FROM llm_wiki_outbox`);
+    await w.supersede('e1', 'old', { title: 'SF', body: 'b' }, { validFrom: 5_000 });
+    const rows = await d.getAllAsync<any>(`SELECT payload FROM llm_wiki_outbox WHERE record_id = 'old' AND operation = 'UPDATE'`);
+    expect(rows.map((r) => JSON.parse(r.payload)).some((p) => p.prior_valid_to === FUTURE && p.valid_to === 5_000)).toBe(true);
+  });
+});
+
+describe('supersede() overwrites a stale prior_valid_to (T4 r1)', () => {
+  it('open-ended supersede writes prior_valid_to null even over a stale value', async () => {
+    await insert('old');
+    await db.runAsync(`UPDATE llm_wiki_entries SET prior_valid_to = 777 WHERE id = 'old'`);
+    await wiki.supersede('e1', 'old', { title: 'x', body: 'y' }, { validFrom: 5_000 });
+    expect((await db.getFirstAsync<any>(`SELECT prior_valid_to FROM llm_wiki_entries WHERE id='old'`)).prior_valid_to).toBeNull();
+  });
+});

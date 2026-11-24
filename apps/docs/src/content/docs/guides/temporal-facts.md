@@ -62,7 +62,11 @@ non-finite `at` throws a `TypeError`.
   (an archived fact is protected from supersede, including a back-dated
   `validFrom`); superseding a fact whose scheduled end is still in the
   future is allowed, and that supersede overwrites the scheduled end
-  with the supersede time;
+  with the supersede time. The overwritten end is kept in the fact's
+  `prior_valid_to` and reported as an `info` diagnostic,
+  `supersede_scheduled_end_replaced` (`detail.factId`, `detail.priorValidTo`). The outbox `UPDATE`
+  payload carries the new `prior_valid_to` key; see
+  [Upgrading to schema v18](/expo-llm-wiki/guides/prisma-outbox/#upgrading-to-schema-v18);
 - is an `immutable_document` fact (re-ingest the document instead),
 - belongs to another entity,
 - is already superseded, or
@@ -74,6 +78,31 @@ An omitted `validFrom` applies the same rule to the current time, so a fact
 whose validity starts in the future — including one created in the same
 millisecond as the call — rejects until that start. An explicit early
 `valid_from` on the replacement fact is not validated against the target.
+
+## Reopen a superseded fact
+
+`reopen(entityId, factId)` returns a superseded fact to live. Use it when you forgot the fact's
+replacement and the old fact should stand again:
+
+```ts
+await wiki.forget('user-123', { entryId: newId });   // the replacement
+const { valid_to } = await wiki.reopen('user-123', oldId);
+```
+
+`reopen()` clears `superseded_by` and `superseded_at`, restores `valid_to` to the scheduled end the
+supersede overwrote (`prior_valid_to`, or `null` when the fact was open-ended), and updates the search
+index and read cache. It resolves with the restored `valid_to`. It throws `WikiSupersedeError` when:
+
+- the fact is missing, soft-deleted or belongs to another entity (`not_found`, `cross_entity`);
+- it is not superseded (`not_superseded`). A fact ended by `expire()` is not reopened;
+- it is an `immutable_document` fact (`immutable_target`);
+- its replacement is still live (`successor_live`). Any replacement that is not forgotten blocks
+  reopen, including one that is itself superseded. Forget the replacement first. A forgotten or
+  hard-deleted replacement passes. Only the direct replacement is checked, not the rest of a longer chain.
+
+Two consequences. If the restored end has already passed, the fact comes back expired: `reopen()`
+restores what you declared, it does not revalidate. A supersede recorded before schema 18 has no stored
+end, so it restores `null`.
 
 ## Record when events really happened
 

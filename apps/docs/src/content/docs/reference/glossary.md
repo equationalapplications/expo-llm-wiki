@@ -32,6 +32,12 @@ configuration events past the window are deleted without a watermark check. `cle
 deletes all events only with `includeEvents: true`; plain erasure keeps them (see
 [Deleting data](/expo-llm-wiki/guides/deleting-data/)).
 
+**Source pointer** — the provenance an ops librarian fact can carry: the event it came from
+(`event_id`) plus, when grounding permits, the verified quote. When the librarian merges new
+event text into an existing fact in place, the pointer is not re-attributed; the fact's
+`derived_events` list records the further events its wording rests on (events the model attributed), and `forget({ eventId })`
+matches both.
+
 **Sources** — documents you store so their exact text can be quoted back. Stored source text is
 kept verbatim with provenance, cut into passages with character offsets, and never merged
 across entities. See [the source store guide](/expo-llm-wiki/guides/source-store/).

@@ -33,6 +33,7 @@ In Expo, `createWiki` takes an `expo-sqlite` database instead of an adapter.
 | `remember(entityId, { title, body, tags?, confidence?, source_type?, okf_type?, valid_from? })` | `Promise<WikiFact>` | [Direct fact writes](#remember) |
 | `supersede(entityId, oldId, { title, body, … }, { validFrom? }?)` | `Promise<{ newId }>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
 | `expire(entityId, factId, { at? })` | `Promise<void>` | [Temporal](/expo-llm-wiki/guides/temporal-facts/) |
+| `reopen(entityId, factId)` | `Promise<{ valid_to: number \| null }>` | Returns a superseded fact to live once its replacement is forgotten. [Temporal](/expo-llm-wiki/guides/temporal-facts/#reopen-a-superseded-fact) |
 | `importDump(dump, { merge? }?)` | `Promise<ImportDumpResult>` | `merge` defaults to `false` (replace the entity). Returns `skippedSources`, the stored sources the import refused. [OKF](/expo-llm-wiki/guides/okf/) |
 
 ### remember

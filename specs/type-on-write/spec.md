@@ -67,7 +67,7 @@ Two more gaps ride the same step:
 - INTENT rule 12 says the librarian "reports how many facts it forgets or
   rewrites, not which" and PR #465's amendment assigns the per-fact
   librarian pass report to step 13. Today an in-place rewrite
-  (`apply.ts:194-210`) and a supersede (`apply.ts:224-226`) emit no per-fact
+  (`apply.ts:237-269`) and a supersede (`apply.ts:290-292`) emit no per-fact
   receipt; `LibrarianResult` carries counts only
   (`services/librarian/types.ts:109-116`).
 
@@ -209,10 +209,13 @@ outcome per fact. It makes no database write.
   `noop` (`gate.ts:20-23`) and whose resolved op is not `NOOP` — exactly the
   set that is not already settled as a duplicate. (A classifier-settled NOOP
   from step 11 is settled before this stage and costs no typing call.) A
-  candidate on the UPDATE-in-place branch (`apply.ts:194-210`) is asked and
+  candidate on the UPDATE-in-place branch (`apply.ts:237-269`) is asked and
   its answer is unused when the existing row is updated instead of a new row
   inserted; at most one classify call per such candidate is spent for
-  nothing. For an ops SUPERSEDE, or an UPDATE applied as a supersede, the
+  nothing. A candidate that the apply-time source-event re-check later drops
+  (`source_event_gone`, `specs/inplace-update-provenance/` §3) has likewise
+  already spent its classify call (counted in `typing.asked`). For an ops
+  SUPERSEDE, or an UPDATE applied as a supersede, the
   classifier is asked about the candidate's raw text while the stored row may
   carry the merged `overrides` title/body. Disclosed; the alternative — reproducing `applyOps`'s branch logic
   before the transaction — is rejected as a drift hazard (Rejected
@@ -464,12 +467,12 @@ an engine-inferred fact and the supersede. This step receipts both, in the
 heal shape (per-fact `info` diagnostics, every mode, after commit):
 
 - `librarian_rewritten` — emitted once per existing fact the UPDATE branch
-  rewrote in place (`apply.ts:194-210`): `detail: { factId }` where
+  rewrote in place (`apply.ts:237-269`): `detail: { factId }` where
   `factId` is the **existing** row's id (its old text is gone; the receipt
   carries no text). Message: "The librarian rewrote an engine-inferred
   fact in place; the previous text was not kept."
 - `librarian_superseded` — emitted once per fact `supersedeInTx` ended
-  (`apply.ts:224-226`, after it returns without `WikiSupersedeError`):
+  (`apply.ts:290-292`, after it returns without `WikiSupersedeError`):
   `detail: { factId, replacementId }` where `factId` is the superseded
   fact and `replacementId` the new row. `WikiDiagnosticDetail` gains the
   optional `replacementId?: string` (additive; hosts tolerate unknown

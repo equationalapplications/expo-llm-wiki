@@ -101,7 +101,9 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
   // Typing step (§3): between resolve and the transaction. Candidates are exactly
   // the set applyOps will insert (not gate-NOOP, not resolve-NOOP); an
-  // UPDATE-in-place candidate is asked and its answer unused (disclosed). No
+  // UPDATE-in-place candidate, or one applyOps later drops because its own
+  // source event vanished (source_event_gone), is asked and its answer
+  // unused (both disclosed). No
   // database write; a budget stop here never discards the pass (§3).
   const typingCounters = engaged ? emptyTypingCounters() : undefined;
   const typingOutcomes = new Map<GatedCandidate, TypingOutcome>();

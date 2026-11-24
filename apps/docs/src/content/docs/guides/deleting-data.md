@@ -11,6 +11,7 @@ sidebar:
 await wiki.forget('user-123', { entryId: 'fact_abc' });     // one fact
 await wiki.forget('user-123', { taskId: 'task_xyz' });      // one task
 await wiki.forget('user-123', { sourceRef: 'doc.md' });     // every fact from one document
+await wiki.forget('user-123', { eventId: 'evt_123' });      // every librarian fact that rests on one event
 // → { deleted: { entries, tasks } }
 await wiki.forget('user-123', { clearAll: true });          // the whole entity
 // → { deleted: { entries, tasks }, metadataReset: true }
@@ -28,7 +29,15 @@ const preview = await wiki.forget('user-123', { sourceRef: 'doc.md' }, { dryRun:
 
 `forget()` **soft-deletes** facts and tasks and is idempotent: calling it again returns zero counts.
 (`clearAll` hard-deletes edges and, with `includeEvents`, events; there is nothing to soft-delete there.)
-Forgotten facts disappear from reads immediately.
+Forgotten facts disappear from reads immediately. If you forget a fact's replacement, `reopen()` restores the
+superseded predecessor (see [Temporal](/expo-llm-wiki/guides/temporal-facts/#reopen-a-superseded-fact)).
+
+`forget({ eventId })` soft-deletes every fact whose `source_pointer` names the event **and** every
+fact whose `derived_events` list contains it. A fact the librarian merged event text into is
+deleted whole: the engine cannot take one event's wording back out, so use `dryRun` to see the
+count first. It does not delete the event row, and facts merged before schema v18 carry no list.
+A merge the model did not attribute to an event is reported (`source_pointer_unresolved`) but is
+not findable by `forget({ eventId })`; if you need full coverage, forget those facts by `entryId`.
 
 ## Hard delete: prune
 
@@ -154,8 +163,13 @@ When a subject asks you to erase their data (a GDPR Art. 17 request), the sequen
    needs store-wide write quiescence.
 2. **Deal with the subject's retained events.** This is a prerequisite, not a convenience
    follow-up: events follow your `retainEventsFor` value, and `erase()` deletes none of them, so a
-   host claiming erasure must first remove the event rows it keeps. `forget()` has no per-event
-   selector; the way to delete an entity's events on request is
+   host claiming erasure must first remove the event rows it keeps. `forget({ eventId })` removes
+   the facts that rest on an event but leaves the event row, so an event the librarian has not
+   read yet can be read by a later pass: repeat `forget({ eventId })` after every pass until the
+   event is gone. Do not delete event rows with direct SQL while a librarian pass may be running;
+   the pass drops candidates whose own source event vanished (`source_event_gone`), but wording it already
+   merged stays until you forget the event. A merge the model did not attribute
+   (`source_pointer_unresolved`) is not findable by event id; forget those facts by `entryId`. The way to delete an entity's events on request is
    `clearAll({ includeEvents: true })` (see [Wipe an entity completely](#wipe-an-entity-completely)).
 3. **`forget({ sourceRef })` for every stored document of the subject** (see
    [the source store guide](/expo-llm-wiki/guides/source-store/)).

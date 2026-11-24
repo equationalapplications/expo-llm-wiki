@@ -31,6 +31,9 @@ interface WikiFact {
   valid_from?: number | null;   // temporal window [valid_from, valid_to)
   valid_to?: number | null;
   superseded_by?: string | null;
+  source_pointer?: WikiSourcePointer | null; // the event this librarian fact came from (+ verified quote)
+  derived_events?: string[];    // further event ids the wording rests on (in-place librarian merges); only when non-empty
+  prior_valid_to?: number | null; // the scheduled end a supersede overwrote; restored by reopen()
   // …plus OKF provenance: okf_sources, okf_verified, generated_by, stale_after, …
 }
 ```
