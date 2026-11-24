@@ -55,11 +55,15 @@ describe('import diagnostics are emitted only after commit (#473)', () => {
   });
 
   it('3. mixed: pointer then source refusal, both after commit', async () => {
-    const { wiki, diagnostics } = mk({ sourceStore: { maxCharsPerSource: 10 } });
+    const seen: Array<Promise<number>> = [];
+    const { wiki, diagnostics } = mk({ sourceStore: { maxCharsPerSource: 10 } }, (d, d2) => {
+      if (d.code === 'source_pointer_invalid') seen.push(count(d2));
+    });
     await wiki.setup();
     await wiki.importDump({ generatedAt: 1, entities: { e: ent([fact('e', 'a', { source_pointer: { bad: true } })], [src('big.md', 'x'.repeat(11))]) } } as unknown as MemoryDump);
     const codes = diagnostics.map((d) => d.code).filter((c) => c === 'source_pointer_invalid' || c === 'source_store_source_too_large');
     expect(codes).toEqual(['source_pointer_invalid', 'source_store_source_too_large']);
+    expect(await Promise.all(seen)).toEqual([1]);
   });
 
   it('4. multi-entity: entity 1 committed and emitted, entity 2 throws and emits nothing', async () => {
