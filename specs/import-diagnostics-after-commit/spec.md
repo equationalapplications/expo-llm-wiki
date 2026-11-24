@@ -118,10 +118,10 @@ Add to `packages/core/__tests__/sourcePointers.test.ts` (the file that
 covers pointer validation) or a new `importDiagnosticsAfterCommit.test.ts`:
 
 1. **Rollback emits nothing.** A dump for one entity where fact `a` has a
-   malformed `source_pointer` and fact `b` carries a stored source with an
-   invalid `sourceRef` (the case that throws at `:130`). Assert
+   malformed `source_pointer` and the entity also carries a stored source with an empty `sourceRef`
+   (the case that throws at `:130`). Assert
    `importDump` rejects, `onDiagnostic` was never called (no
-   `source_pointer_invalid`, no other code), and neither fact exists in the
+   `source_pointer_invalid`, no other code), and no fact exists in the
    store. This test fails on main (it sees one `source_pointer_invalid`).
 2. **Success still emits after commit.** A dump with a malformed pointer that
    imports cleanly: assert `source_pointer_invalid` is emitted exactly once
