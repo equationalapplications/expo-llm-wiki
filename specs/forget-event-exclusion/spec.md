@@ -1,6 +1,6 @@
 # Forget-event exclusion — `events.forgotten_at`, so a forgotten event stops being raw material
 
-**Status:** Reviewed (owner-approved 2026-11-24; all eight open-question defaults accepted, and amendments A, B and C approved)
+**Status:** Implemented (2026-11-24, PR #481; owner-approved 2026-11-24, all eight open-question defaults accepted, and amendments A, B and C approved)
 **Date:** 2026-11-23
 **Issue:** [#472](https://github.com/equationalapplications/expo-llm-wiki/issues/472)
 (split out of #450 / PR #469, `specs/inplace-update-provenance/` §7 "Split").
@@ -588,6 +588,17 @@ defaults are accepted and recorded as his answers:
 7. INTENT amendment C (glossary Event and Forgotten) lands in this PR as
    one dated amendment, no rule text change.
 8. Add the partial index `events_forgotten_idx`.
+
+**Implementation notes (2026-11-24).** (1) The spec's §3 claim that the
+legacy pass "sees an empty `getRecent` and returns likewise" was not true of
+the pre-existing code, which called the model on an empty batch. The legacy
+pass now returns before any model call when its filtered batch is empty
+*and* the entity still has event rows (all forgotten); a genuinely empty
+log behaves as before. (2) Prune, erase's entity walk and its step-9 gate
+probe for the `forgotten_at` column first, because erase also runs on a
+never-migrated store (#316 recovery). (3) `findExistingIds` is kept
+unfiltered (used for the gone-vs-forgotten second query); `findLiveIds` is
+the filtered re-check.
 
 ## Plan sketch
 
