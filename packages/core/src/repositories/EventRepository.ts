@@ -316,6 +316,22 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * How many of the entity's first `n` events, in `(created_at, id)` order,
+   * `deleteForgotten` with the same arguments would delete. The memory and
+   * heal checkpoints count rows in that order, so this is exactly how far a
+   * checkpoint must drop (specs/forget-event-exclusion §5). Call before the delete.
+   */
+  async countForgottenInPrefix(entityId: string, n: number, cutoff: number, tx: SQLiteAdapter, opts?: { noCutoff?: boolean }): Promise<number> {
+    if (n <= 0) return 0;
+    const pred = opts?.noCutoff ? 'forgotten_at IS NOT NULL' : 'forgotten_at IS NOT NULL AND forgotten_at <= ?';
+    const row = await tx.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (SELECT forgotten_at FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC, id ASC LIMIT ?) WHERE ${pred}`,
+      opts?.noCutoff ? [entityId, Math.trunc(n)] : [entityId, Math.trunc(n), cutoff],
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /**
    * Hard-delete the entity's forgotten events (specs/forget-event-exclusion
    * §5). No watermark guard and no `retainEventsFor`: a forgotten row is never
    * read. `noCutoff` drops the age predicate (erase) so a non-numeric or

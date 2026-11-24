@@ -198,6 +198,16 @@ export class MetadataRepository extends BaseRepository {
   }
 
   /**
+   * True when `table` has `column`. A never-set-up or not-yet-migrated store
+   * (the #316 recovery path) lacks columns later migrations add; callers that
+   * must run there probe first.
+   */
+  async columnExists(table: string, column: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const cols = await this.getExecutor(tx).getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    return cols.some((c) => c.name === column);
+  }
+
+  /**
    * Returns the set of distinct `entity_id` values across entries/tasks/events.
    *
    * Deliberately widened from a prior `WHERE deleted_at IS NULL` form: the
@@ -211,16 +221,6 @@ export class MetadataRepository extends BaseRepository {
    * that cutoff (erase's hard-delete walk, forget-erasure spec §2). Without
    * the option the host-facing semantics above are unchanged.
    */
-  /**
-   * True when `table` has `column`. A never-set-up or not-yet-migrated store
-   * (the #316 recovery path) lacks columns later migrations add; callers that
-   * must run there probe first.
-   */
-  async columnExists(table: string, column: string, tx?: SQLiteAdapter): Promise<boolean> {
-    const cols = await this.getExecutor(tx).getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
-    return cols.some((c) => c.name === column);
-  }
-
   async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number; softDeletedAll?: boolean }): Promise<string[]> {
     const executor = this.getExecutor(tx);
     // Events carry tombstones only from schema v19; an unmigrated store has none.

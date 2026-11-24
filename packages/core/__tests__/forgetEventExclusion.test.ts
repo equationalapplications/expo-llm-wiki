@@ -412,3 +412,50 @@ describe('test 17: public surface and live mapping', () => {
   });
 });
 
+
+describe('exact checkpoint decrement in prune (riskiest part)', () => {
+  async function setup(forgottenIds: string[], cp: { memory: number; heal: number }, wmStrategy = 'legacy') {
+    const t = await make({ config: { librarian: { strategy: wmStrategy }, maintenance: 'auto', autoLibrarianThreshold: 1000 } as any });
+    const now = Date.now();
+    await t.seed('u', [['E1', 'a', now - 500], ['E2', 'b', now - 400], ['E3', 'c', now - 300], ['E4', 'd', now - 200]]);
+    for (const id of forgottenIds) await t.db.runAsync(`UPDATE ${P}events SET forgotten_at = ? WHERE id = ?`, [now - 10 * DAY, id]);
+    const md = (t.wiki.__testAccess as any).metadataRepo;
+    await md.updateCheckpoint('u', cp, t.db);
+    return { t, md };
+  }
+  it('forgotten row in the tail, checkpoint in the prefix: no decrement', async () => {
+    const { t, md } = await setup(['E4'], { memory: 2, heal: 2 });
+    expect((await t.wiki.runPrune('u', { retainEventsFor: null })).events).toBe(1);
+    expect(await md.getCheckpoint('u')).toMatchObject({ memory: 2, heal: 2 });
+    expect(t.generateText).not.toHaveBeenCalled();
+  });
+  it('rows straddling the checkpoint: only the prefix ones count, each checkpoint on its own', async () => {
+    const { t, md } = await setup(['E1', 'E3'], { memory: 2, heal: 4 });
+    await t.wiki.runPrune('u', { retainEventsFor: null });
+    expect(await md.getCheckpoint('u')).toMatchObject({ memory: 1, heal: 2 });
+  });
+  it('clamps at 0', async () => {
+    const { t, md } = await setup(['E1', 'E2', 'E3'], { memory: 3, heal: 1 });
+    await t.wiki.runPrune('u', { retainEventsFor: null });
+    expect(await md.getCheckpoint('u')).toMatchObject({ memory: 0, heal: 0 });
+    expect(t.generateText).not.toHaveBeenCalled();
+  });
+});
+
+describe('never-migrated pre-v19 store (#316 recovery)', () => {
+  it('forget({ eventId }) still soft-deletes facts, writes no marker and reports events 0; dry run too', async () => {
+    const t = await make();
+    await t.db.runAsync(
+      `INSERT INTO ${P}entries (id, entity_id, title, body, source_pointer, created_at, updated_at) VALUES ('f1','u','t','b',?,1,1)`,
+      [JSON.stringify({ event_id: 'E1' })],
+    );
+    await t.seed('u', [['E1', 'x', 10]]);
+    await t.db.execAsync(`DROP INDEX IF EXISTS ${P}events_forgotten_idx`);
+    await t.db.execAsync(`ALTER TABLE ${P}events DROP COLUMN forgotten_at`);
+    await t.db.runAsync(`UPDATE ${P}meta SET value = '18' WHERE key = 'schema_version'`);
+    expect((await t.wiki.forget('u', { eventId: 'E1' }, { dryRun: true })).deleted).toEqual({ entries: 1, tasks: 0, events: 0 });
+    const r = await t.wiki.forget('u', { eventId: 'E1' });
+    expect(r.deleted).toEqual({ entries: 1, tasks: 0, events: 0 });
+    expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE deleted_at IS NOT NULL`))!.n).toBe(1);
+  });
+});

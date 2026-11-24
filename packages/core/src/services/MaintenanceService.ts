@@ -471,18 +471,25 @@ export class MaintenanceService {
           // soft-delete schedule. No watermark guard and no retainEventsFor: a
           // forgotten row is never read. No hook, so never held.
           // An unmigrated store (erase's #316 recovery path) has no forgotten_at column: nothing to delete.
-          const forgottenGone = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx)
-            ? (await this.eventRepo.deleteForgotten(entityId, cutoff, tx, { noCutoff: softDeletedAll })).changes
+          const hasForgottenCol = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx);
+          // Forgotten rows are not a log prefix. Each checkpoint counts rows in
+          // (created_at, id) order, so it drops by exactly the deleted rows that
+          // sit inside its own prefix (counted before the delete): no row the
+          // checkpoint had not passed is subtracted, and no extra re-read follows.
+          const delOpts = { noCutoff: softDeletedAll };
+          const cpBefore = hasForgottenCol ? await this.metadataRepo.getCheckpoint(entityId, tx) : null;
+          const memDrop = cpBefore && (cpBefore.memory ?? 0) > 0
+            ? await this.eventRepo.countForgottenInPrefix(entityId, cpBefore.memory!, cutoff, tx, delOpts) : 0;
+          const healDrop = cpBefore && (cpBefore.heal ?? 0) > 0
+            ? await this.eventRepo.countForgottenInPrefix(entityId, cpBefore.heal!, cutoff, tx, delOpts) : 0;
+          const forgottenGone = hasForgottenCol
+            ? (await this.eventRepo.deleteForgotten(entityId, cutoff, tx, delOpts)).changes
             : 0;
           if (forgottenGone > 0) {
             deletedEvents += forgottenGone;
-            // Forgotten rows are not a log prefix, so this can over-decrement;
-            // that direction only re-reads or re-heals, never skips, and costs
-            // no model call (an empty batch returns before any).
-            const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
             const updates: { memory?: number; heal?: number } = {};
-            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - forgottenGone);
-            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - forgottenGone);
+            if (memDrop > 0) updates.memory = Math.max(0, cpBefore!.memory! - memDrop);
+            if (healDrop > 0) updates.heal = Math.max(0, cpBefore!.heal! - healDrop);
             if (updates.memory !== undefined || updates.heal !== undefined) {
               await this.metadataRepo.updateCheckpoint(entityId, updates, tx);
             }
@@ -1395,7 +1402,12 @@ export class MaintenanceService {
           // stops being raw material. Entity scoped and idempotent; the fact
           // side above ran regardless (a pruned id marks nothing).
           if (params.eventId !== undefined) {
-            eventMarked = await this.eventRepo.markForgotten(entityId, params.eventId, now, tx);
+            // A never-migrated (pre-v19) store has no column (#316 recovery,
+            // migrations:'refuse' hosts): the fact side still runs, no marker is
+            // written, and the event is not excluded until the store migrates.
+            eventMarked = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx)
+              ? await this.eventRepo.markForgotten(entityId, params.eventId, now, tx)
+              : 0;
           }
         }
         // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
@@ -1597,7 +1609,9 @@ export class MaintenanceService {
     // (specs/forget-by-event-id §D7).
     if (params.eventId !== undefined) {
       const entries = await this.entryRepo.countLiveByPointerEvent(entityId, params.eventId);
-      const events = await this.eventRepo.countForgettable(entityId, params.eventId);
+      const events = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at')
+        ? await this.eventRepo.countForgettable(entityId, params.eventId)
+        : 0;
       return { deleted: { entries, tasks: 0, events } };
     }
 

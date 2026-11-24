@@ -78,7 +78,7 @@ A failed erase throws `EraseStepError` carrying the report with `verified: false
 
 That is the whole recipe. **Do not add a standalone `runPrune()` step.** `erase()`'s first step
 already prunes the facts it is about to erase with `retainSoftDeletedFor: 0` and
-`retainEventsFor: null` — so erase keeps every event. A standalone prune with default options
+`retainEventsFor: null` — so erase keeps unforgotten events and deletes the ones you forgot. A standalone prune with default options
 would delete events older than 30 days first, contradicting that.
 
 ### Erasure happens at erase time, not forget time

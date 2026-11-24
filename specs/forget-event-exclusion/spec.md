@@ -261,12 +261,10 @@ and to `PrunePartialFailureError.deletedEvents`. No external hook is
 involved (events have no vector rows and no outbox rows), so this delete
 is never held.
 
-Checkpoints: the deleted count lowers `memory` and `heal` exactly as the
-event-retention block does (`:505-513`), in the same transaction. A
-forgotten row is not necessarily a prefix of the log, so this can
-over-decrement; over-decrement is the safe direction (re-read or re-heal,
-never skip), and it is the same direction the existing clamps take
-(`WriteService.ts:142`, `MaintenanceScheduler.ts:80`).
+Checkpoints: in the same transaction, each of `memory` and `heal` is lowered
+by the number of deleted forgotten rows inside its own prefix (see Riskiest
+part), clamped at 0. A forgotten row is not necessarily a prefix of the log,
+so the event-retention block's blanket subtraction would be wrong here.
 
 `erase()` changes in three places, all mechanical:
 
@@ -309,7 +307,8 @@ for a fact.
   a live dump event never clears a local marker (`INSERT OR IGNORE` leaves
   the local row as is, which is already the behaviour). A forgotten dump
   event with no local row is inserted with its marker and waits for prune,
-  as a tombstoned fact does. The value is passed through unvalidated, as
+  as a tombstoned fact does. The value is passed through unvalidated (a non-null TEXT value counts as
+forgotten; an object fails the import loudly), as
   `deleted_at` is (`:501, 547`); erase's `noCutoff` path covers a
   non-numeric value. No new import result field. (Open question 6.)
 - OKF: `buildEventLogEntries` (`formatOkfBundle.ts:196-224`) skips events
@@ -531,13 +530,13 @@ same PR. One PR, draft until implemented, merge commit.
 ## Riskiest part
 
 The checkpoint decrement in §5. Forgotten rows are not a log prefix, so
-`memory`/`heal` can be lowered by more than the rows that were really
-before them. The direction is safe (redundant work, never a skip) and the
-existing clamps already accept this, but a reviewer should check the
-legacy-mode threshold does not oscillate: after a decrement, `count -
-memoryCheckpoint` grows by the number of forgotten rows deleted, which can
-trigger one extra empty pass. Test 6 and 12 pin that this costs no model
-call.
+the decrement is exact rather than a blanket subtraction: before the delete,
+prune counts the forgotten rows it will delete that sit inside each
+checkpoint's own first-`c` positions in `(created_at, id)` order, and lowers
+that checkpoint by its own count. A forgotten row in the tail past the
+checkpoint lowers nothing, so `count - checkpoint` (the pending gap) does
+not increase, no extra pass triggers and the legacy watermark is not
+re-anchored early. Tests 6 and 12 pin that this costs no model call.
 
 ## Open questions for Kurt
 
