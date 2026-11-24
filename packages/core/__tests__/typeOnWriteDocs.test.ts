@@ -14,3 +14,16 @@ describe('ontologies guide: Type on write disclosures', () => {
     expect(guide).toContain('Cost is unmeasured.');
   });
 });
+
+// specs/ingest-time-typing Test plan 15.
+describe('ontologies guide: Ingest typing disclosures', () => {
+  it('names the key, the no-budget statement and the document-sharpened disclosures', () => {
+    expect(guide).toContain('#### Ingest');
+    expect(guide).toContain('systemOne.typeOnIngest');
+    expect(guide).toContain('`ingestDocument()` carries no token budget');
+    expect(guide).toContain('ingest is where document edges come from');
+    expect(guide).toContain('Extraction quality is unmeasured, more so for documents.');
+    expect(guide).toContain('Cost is unmeasured.');
+    expect(guide).toContain('#475');
+  });
+});

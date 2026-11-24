@@ -1,3 +1,14 @@
+## [9.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.2...v9.17.0) (2026-11-24)
+
+### Features
+
+* **core:** classifier typing stage at the ingest door, engaged prompt, zero-facts gate on mode (ingest-time-typing §3, §5, §8, §9) ([2322a28](https://github.com/equationalapplications/expo-llm-wiki/commit/2322a285cc0b4d3b0971876ad6ac641acfa76ea1))
+* **core:** typeOnIngest key, shared engagement predicate, classify concurrency opt (ingest-time-typing §1, §2, §3, §9) ([efbad53](https://github.com/equationalapplications/expo-llm-wiki/commit/efbad533740ad2d289b073dbc9028c4a6f20a2e7))
+
+### Bug Fixes
+
+* **core:** refresh classifier-typed title-index entries before edge resolution; IngestTypingCounters; skip classify when hash held (ingest-time-typing §4, §9) ([3db7ba5](https://github.com/equationalapplications/expo-llm-wiki/commit/3db7ba55013556c2c304d72cdcfc936edc4feeed))
+
 ## [9.16.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.1...v9.16.2) (2026-11-24)
 
 ### Bug Fixes

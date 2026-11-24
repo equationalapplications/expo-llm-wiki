@@ -1,0 +1,340 @@
+{
+  "prompt|off|default": [
+    [
+      "91e0c70dacc99d914836ccf2cf89a06d04094b35815f5dee0a01a7f54a89a02f:924",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "prompt|off|placeholder": [
+    [
+      "936312a67d30a69818d6f7a3e0a15f3293c52d5ed0bb0e08b753f7f38f73552b:42",
+      "91a92ae94e8fcf42eab0c09057a7cb1af66a8528ad191359d04daf113a6674fc:25"
+    ]
+  ],
+  "prompt|off|guidance": [
+    [
+      "82082cb4527e73674ff50c3fcada8f006ba5a171cc7e49a2cfb08369ccb1dba6:1076",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "prompt|strict|default": [
+    [
+      "695fb1070d97b53638282e1c73b0e5fa2caf2aecfc583d663dc15704fc405c6c:2075",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "prompt|strict|placeholder": [
+    [
+      "c3d0eb667b38558ae3dd6a96a4dfd34e97c59cdfde300b3d3520b785f851cf16:1506",
+      "91a92ae94e8fcf42eab0c09057a7cb1af66a8528ad191359d04daf113a6674fc:25"
+    ]
+  ],
+  "prompt|strict|guidance": [
+    [
+      "93c4b48c0a7946a4640165bf52b2d1f845e7305237b68e483b1a221016ad420a:2227",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "prompt|emergent|default": [
+    [
+      "69a6f30848fe5b0f1e116b855b6a0424ffa2f9dd1e6a459966541f160a731604:2364",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "prompt|emergent|placeholder": [
+    [
+      "f069ce667e580f7606f9bf8f27616382dc2d96c5097da61d7cad38783cbae6e2:1795",
+      "91a92ae94e8fcf42eab0c09057a7cb1af66a8528ad191359d04daf113a6674fc:25"
+    ]
+  ],
+  "prompt|emergent|guidance": [
+    [
+      "f07d29236eb90a0c1bf83e4e67ee4c24f4a30b507b61858ec1d8930b14e0257b:2516",
+      "2ee0e2043ef5e989c8d7cb8da4659e9821258686b8fc6fad2ee22abb115c9823:35"
+    ]
+  ],
+  "receipts|full": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|partial": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "ingest_chunk_failed",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "reason": "parse",
+        "count": 1,
+        "chunkIndexes": [
+          1
+        ]
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|zero": [
+    {
+      "code": "ingest_zero_facts",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunks": 1
+      }
+    }
+  ],
+  "receipts|strict|full": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|strict|partial": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "ingest_chunk_failed",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "reason": "parse",
+        "count": 1,
+        "chunkIndexes": [
+          1
+        ]
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|strict|zero": [
+    {
+      "code": "ingest_zero_facts",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunks": 1
+      }
+    }
+  ]
+}

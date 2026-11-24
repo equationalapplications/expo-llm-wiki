@@ -23,6 +23,9 @@ import { resolveContextBudget, resolveDefaultChunkLength } from '../config/conte
 import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 import { callLlm } from '../utils/llmCall';
+import { normalizeForWrite, emptyTypingCounters, toIngestCounters, canEngageIngestTyping, classifyFactsForWrite, tallyTypingOutcome, volunteeredTypeResolves } from './typing/typeOnWrite';
+import { resolveTypingMinConfidence } from '../utils/engineDefaults';
+import type { TypingOutcome } from './typing/typeOnWrite';
 
 type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; itemIndexes: number[]; rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }>; verdicts: GroundingVerdict[]; ontology_updates?: OntologyUpdates }
@@ -35,6 +38,13 @@ type ChunkResult =
  * "no grounding ran", NOT "ungrounded", so consumers gate on the verdict and
  * never on the entry's presence. */
 type FactLedger = Map<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
+/** Per-call typing state shared by both write paths (specs/ingest-time-typing §3, §4):
+ * one classifier outcome per asked fact, keyed by fact object identity, and the
+ * counters the write paths increment where the classifier's type reached the row. */
+interface IngestTyping {
+  outcomes: ReadonlyMap<ExtractedFact, TypingOutcome>;
+  counters: import('./typing/typeOnWrite').TypingCounters;
+}
 type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
 
 /** Diagnostics that describe the LLM pass rather than the database write.
@@ -180,7 +190,15 @@ export class IngestionService {
       // Hoisting also makes its DB-systemic nature structural — a fault
       // surfaces before any LLM tokens are spent, not buried under
       // `WikiIngestEmptyError` after the first LLM call. See spec §3.
-      const ontologyContext = await this.ontologyService?.buildWritePromptContext(entityId, { engaged: false }) ?? null;
+      // Ingest-time typing engagement (specs/ingest-time-typing §2) resolves here,
+      // once per call, outside any transaction. When engaged the write context is
+      // `null`, so the manifest leaves every chunk prompt (§5); otherwise the
+      // context is today's, byte for byte.
+      const hoistedState = await this.ontologyService?.getEffectiveState(entityId)
+        ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+      const engaged = this.ontologyService !== undefined
+        && canEngageIngestTyping(this.options.config, this.options.llmProvider, hoistedState.mode, hoistedState.manifest);
+      const ontologyContext = await this.ontologyService?.buildWritePromptContext(entityId, { engaged }) ?? null;
       // Specs/librarian-guidance: guidance resolves here — once per ingest
       // call, next to the ontology hoist (after the duplicate-hash and
       // empty-chunk early returns, so a resolver never runs for an ingest
@@ -388,6 +406,41 @@ export class IngestionService {
         });
       }
 
+      // Pre-transaction typing outcomes (specs/ingest-time-typing §3); empty until the typing stage runs.
+      const typing = { outcomes: new Map<ExtractedFact, TypingOutcome>(), counters: emptyTypingCounters() };
+      // Default `onDuplicateHash: 'ingest'` has no pre-check, and a full write whose hash
+      // another live sourceRef holds loses the UNIQUE race and rolls back. The hash lock is
+      // held, so look now and spend no classify call on a write that cannot commit
+      // (specs/ingest-time-typing §9). Partial writes never claim the hash.
+      let hashHeldElsewhere = false;
+      if (engaged && failedChunks === 0 && onDuplicateHash === 'ingest') {
+        const holder = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        hashHeldElsewhere = holder !== null && holder !== sourceRef;
+      }
+      if (engaged && !hashHeldElsewhere) {
+        // The typing stage (specs/ingest-time-typing §3): one classify call per kept
+        // winner whose own slug does not already resolve. No database write, no
+        // transaction, no meter (§6); every call is reported through `llm_usage`.
+        const asked: ExtractedFact[] = [];
+        for (const slot of orderedChunkFacts) {
+          for (const fact of slot.facts) {
+            if (!volunteeredTypeResolves((fact as ExtractedFactWithOntology).okf_type, hoistedState.manifest)) asked.push(fact);
+          }
+        }
+        const outcomes = await classifyFactsForWrite(
+          this.options,
+          { entityId, trigger: 'call', operation: 'ingest' },
+          asked,
+          hoistedState.manifest,
+          resolveTypingMinConfidence(this.options.config),
+          { concurrency: chunkConcurrency },
+        );
+        asked.forEach((fact, i) => {
+          typing.outcomes.set(fact, outcomes[i]);
+          tallyTypingOutcome(typing.counters, outcomes[i]);
+        });
+      }
+
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
@@ -395,14 +448,14 @@ export class IngestionService {
         if (failedChunks === 0) {
           // Happy path — full upsertGraphCore supersession + ownership.
           const fullResult = await this.db.withTransactionAsync(async (tx) => {
-            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, factLedger);
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, factLedger, typing);
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
           // Zero-fact re-ingest receipt (spec §5): a full re-ingest that
           // tombstoned prior facts/edges and then wrote nothing. Emitted
           // only when the ontology is active; the buffer flushes post-commit.
-          if (ontologyContext !== null && insertedFacts.length === 0 && deletedSourceFactIds.length > 0) {
+          if (hoistedState.mode !== 'off' && insertedFacts.length === 0 && deletedSourceFactIds.length > 0) {
             diagBuffer.push({
               entityId, operation: 'ingest', trigger: 'call', code: 'ingest_zero_facts',
               detail: { sourceRef, chunks: chunks.length },
@@ -420,7 +473,7 @@ export class IngestionService {
           const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, factLedger);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, factLedger, typing);
           });
           insertedFacts.push(...partialResult.insertedDescriptors);
         }
@@ -527,6 +580,7 @@ export class IngestionService {
         failedChunks,
       };
       if (failedChunks > 0) result.parseFailures = failures;
+      if (engaged) result.typing = toIngestCounters(typing.counters);
       return result;
 
     } finally {
@@ -827,10 +881,12 @@ export class IngestionService {
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
     factLedger: ReadonlyFactLedger = new Map(),
+    typing?: IngestTyping,
   ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
     const deletedSourceFactIds: string[] = [];
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const nodeTrust = new Map<string, GroundingTrust>();
+    const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
 
     // Capture the IDs of facts about to be soft-deleted so we can fire
     // onEmbeddingPersisted hooks AFTER the transaction commits. The
@@ -874,6 +930,11 @@ export class IngestionService {
     // persistence step.
     const hostNodes: { id: string; type: string; title: string; body: string; tags?: readonly string[]; confidence?: 'certain' | 'inferred' | 'tentative' }[] = [];
     const rawEdgeRequests: { sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }[] = [];
+    // Nodes whose row type is settled after the loop, against the FINAL in-transaction
+    // manifest and mode: `upsertGraphCore` has always resolved the model's slug there, so
+    // a slug a later chunk's `ontology_updates` introduces still types an earlier chunk's
+    // fact (specs/ingest-time-typing §4, §12: default hosts byte-identical).
+    const typedAtDoor: { node: { type: string }; fact: ExtractedFactWithOntology; id: string; outcome: TypingOutcome | undefined; slotType: string | null }[] = [];
     const now = Date.now();
 
     for (const { facts, ontology_updates } of orderedChunkFacts) {
@@ -899,19 +960,22 @@ export class IngestionService {
       for (const fact of facts) {
         const ontologyFact = fact as ExtractedFactWithOntology;
         const id = generateId('fact_');
-        const validationDrops: EdgeDrop[] = [];
-        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
-          ?? { okf_type: null, edges: [] };
-        for (const drop of validationDrops) {
+        const outcome = typing?.outcomes.get(fact);
+        // Slot-time normalization (manifest as merged so far): edge drops, the
+        // staged edges and the title-index type, exactly as before. Its receipts
+        // are discarded; the door receipts come from the final normalization below.
+        const slot = normalizeForWrite(this.ontologyService, ontologyFact, manifest, mode, outcome, diagBase, id);
+        const normalized = slot.normalized;
+        for (const drop of slot.drops) {
           diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef, factId: id }));
         }
-        // NOTE: door receipts fire ONLY in upsertGraphCore (:646), which is
-        // both the person door (host upsertGraph) and this model door — the
-        // pinned duality in the plan. A second emitter here would double-report.
+        // Door receipts for the model door are emitted below (specs/ingest-time-typing
+        // §4) and `upsertGraphCore` is fed a canonical-or-empty slug, so it emits none
+        // for these nodes; its person-door receipts (host `upsertGraph`) are untouched.
 
-        hostNodes.push({
+        const hostNode = {
           id,
-          type: ontologyFact.okf_type ?? '',
+          type: '',
           title: fact.title,
           body: fact.body,
           // Forward the LLM-extracted tags/confidence through the
@@ -923,7 +987,9 @@ export class IngestionService {
           // 'certain' as documented.
           tags: fact.tags,
           confidence: fact.confidence,
-        });
+        };
+        hostNodes.push(hostNode);
+        typedAtDoor.push({ node: hostNode, fact: ontologyFact, id, outcome, slotType: normalized.okf_type });
         const locator = factLedger.get(fact);
         // Gate on the verdict, not on the entry: the ledger now holds an
         // entry for every kept fact, with a null verdict when grounding is off.
@@ -947,6 +1013,27 @@ export class IngestionService {
       }
     }
 
+    // Settle each node's type against the FINAL in-transaction manifest and mode
+    // (see `typedAtDoor`). Done before Pass 2 so that, for a fact the classifier
+    // typed, a title-index entry made stale by a later chunk's `ontology_updates`
+    // (the model's own slug now resolves and wins) is refreshed before any edge
+    // resolves against it. Only classifier-involved facts are refreshed: a default
+    // host's index stays exactly as before (specs/ingest-time-typing §4, §12). The
+    // door receipts are buffered here and pushed after Pass 2, where
+    // `upsertGraphCore` emitted them.
+    const doorReceipts: WikiDiagnosticInput[] = [];
+    for (const { node, fact, id, outcome, slotType } of typedAtDoor) {
+      const final = normalizeForWrite(this.ontologyService, fact, manifest, mode, outcome, diagBase, id);
+      for (const receipt of final.receipts) {
+        doorReceipts.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
+      }
+      node.type = final.normalized.okf_type ?? '';
+      if (final.typedByClassifier && typing) typing.counters.typed++;
+      if (outcome?.kind === 'accepted' && final.normalized.okf_type !== slotType) {
+        titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: final.normalized.okf_type });
+      }
+    }
+
     // Pass 2: resolve every staged edge against the finalized title
     // index. By this point the index contains both surviving prior
     // facts (excluding this sourceRef) AND every replacement fact from
@@ -965,6 +1052,8 @@ export class IngestionService {
         hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
       }
     }
+
+    for (const receipt of doorReceipts) diagBuffer.push(receipt);
 
     await this.upsertGraphCore(
       entityId,
@@ -1003,6 +1092,7 @@ export class IngestionService {
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
     factLedger: ReadonlyFactLedger = new Map(),
+    typing?: IngestTyping,
   ): Promise<{
     inserted: number;
     skippedDuplicate: number;
@@ -1048,6 +1138,7 @@ export class IngestionService {
     for (const f of indexedFacts) {
       titleIndex.set(normalizeTitleKey(f.title), { id: f.id, okf_type: f.okf_type ?? null });
     }
+    const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
     const pendingEdges: Array<{ sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }> = [];
 
     let inserted = 0;
@@ -1080,27 +1171,21 @@ export class IngestionService {
         });
       }
       // Spec §6: partial-path typing — same model-door rules as the full path
-      // (strict:false, never throws). Receipts fire through the pinned
-      // upsertGraphCore duality... this path does NOT go through core, so it
-      // emits its own door receipts here, gated on the effective mode.
+      // (strict:false, never throws). This path does NOT go through
+      // `upsertGraphCore`, so it emits its own door receipts here, gated on the
+      // effective mode, through the shared `normalizeForWrite` (ingest-time-typing §4).
       const ontologyFact = fact as ExtractedFactWithOntology;
-      const validationDrops: EdgeDrop[] = [];
-      const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
-        ?? { okf_type: null, edges: [] };
+      const { normalized, drops: validationDrops, receipts, typedByClassifier } = normalizeForWrite(
+        this.ontologyService, ontologyFact, manifest, mode, typing?.outcomes.get(fact),
+        diagBase, id,
+      );
       for (const drop of validationDrops) {
         diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef, factId: id }));
       }
-      if (shouldEmitOntologyReceipt(mode)) {
-        for (const receipt of nodeTypeReceipts(
-          { entityId, operation: 'ingest', trigger: 'call' },
-          id,
-          ontologyFact.okf_type ?? '',
-          normalized.okf_type,
-          normalized.match,
-        )) {
-          diagBuffer.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
-        }
+      for (const receipt of receipts) {
+        diagBuffer.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
       }
+      if (typedByClassifier && typing) typing.counters.typed++;
       if (normalized.edges.length > 0) {
         pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
       }
