@@ -1,6 +1,6 @@
 # Forget-event exclusion — `events.forgotten_at`, so a forgotten event stops being raw material
 
-**Status:** Draft
+**Status:** Reviewed (owner-approved 2026-11-24; all eight open-question defaults accepted, and amendments A, B and C approved)
 **Date:** 2026-11-23
 **Issue:** [#472](https://github.com/equationalapplications/expo-llm-wiki/issues/472)
 (split out of #450 / PR #469, `specs/inplace-update-provenance/` §7 "Split").
@@ -572,6 +572,22 @@ call.
 8. **Add the partial index `events_forgotten_idx`?** Default: yes. Reason:
    it mirrors #443's `entries_deleted_idx`, serves the prune and erase
    probes, and is a few bytes per forgotten row.
+
+## Owner rulings (2026-11-24)
+
+The owner (Kurt) approved this spec on 2026-11-24. All eight open-question
+defaults are accepted and recorded as his answers:
+
+1. Amendments A and B approved (forget-by-event-id D4/D6; forget-erasure
+   ruling D and §2 step 1).
+2. Reuse `ForgetResult.deleted.events` (0 | 1); no new field.
+3. Forgotten events follow `retainSoftDeletedFor`.
+4. `source_event_gone.detail.reason: 'gone' | 'forgotten'`; no new code.
+5. OKF export skips forgotten events.
+6. Import tombstone-wins for events.
+7. INTENT amendment C (glossary Event and Forgotten) lands in this PR as
+   one dated amendment, no rule text change.
+8. Add the partial index `events_forgotten_idx`.
 
 ## Plan sketch
 
