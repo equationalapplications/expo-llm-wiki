@@ -1,3 +1,40 @@
+## [9.16.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.1...v9.16.2) (2026-11-24)
+
+### Bug Fixes
+
+* **core:** reserve budget before each metered call so parallel calls no longer multiply the overshoot (spec §1-§3, §8; [#475](https://github.com/equationalapplications/expo-llm-wiki/issues/475)) ([229ac7c](https://github.com/equationalapplications/expo-llm-wiki/commit/229ac7c8165d020d62ed6862de6a01fb8e0704e4))
+
+## [9.16.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.0...v9.16.1) (2026-11-24)
+
+### Bug Fixes
+
+* **core:** import diagnostics are emitted only after the transaction commits ([#473](https://github.com/equationalapplications/expo-llm-wiki/issues/473), spec §Proposed change) ([74cdcfc](https://github.com/equationalapplications/expo-llm-wiki/commit/74cdcfc8787c42fb9068ca98b5a24e5c2f6abff9))
+
+## [9.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.15.0...v9.16.0) (2026-11-23)
+
+### Features
+
+* **core:** derived_events column, schema v18, repository read/write (spec §1, §2, §5) ([d7807b4](https://github.com/equationalapplications/expo-llm-wiki/commit/d7807b4bd2096b06291e2631a5e23dae4003edce))
+* **core:** dump import validates derived_events with presence rule (spec §5) ([13685a6](https://github.com/equationalapplications/expo-llm-wiki/commit/13685a6d7a340369cc0601894b1fd3eb4d598ed7))
+* **core:** forget({ eventId }) matches derived_events (spec §4) ([f03fcb9](https://github.com/equationalapplications/expo-llm-wiki/commit/f03fcb96fe8fea0234e269843e9963920d42444a))
+* **core:** OKF frontmatter derived_events emit/parse (spec §5) ([35b3c51](https://github.com/equationalapplications/expo-llm-wiki/commit/35b3c51bd53ca3761da580e3a59c458686326468))
+* **core:** ops librarian records contributing events, apply-time event re-check (spec §2, §3) ([e4a16e6](https://github.com/equationalapplications/expo-llm-wiki/commit/e4a16e6a6513e169406d605f317a1ccf3c80ddc5))
+* **core:** schema v18 adds prior_valid_to, Rust pin 17 to 18 (spec D1) ([6114a7a](https://github.com/equationalapplications/expo-llm-wiki/commit/6114a7aa61fbf26520b55c36376c296d45beb784))
+* **core:** supersede records the replaced end; add reopen() and diagnostic (spec D2-D5) ([1a11878](https://github.com/equationalapplications/expo-llm-wiki/commit/1a11878756c20b2cc0057d88c61c2ff0c7d312da))
+
+### Bug Fixes
+
+* **core:** buffer derived_events_invalid until import commit; spec Status; exportDump array args (CodeRabbit) ([cab3397](https://github.com/equationalapplications/expo-llm-wiki/commit/cab3397442460d8c27f9dd5d2a421293f8cabdfa))
+* **core:** keep valid ids of a partly valid derived_events; disclose per-label coverage (T3 r1) ([cb9865a](https://github.com/equationalapplications/expo-llm-wiki/commit/cb9865a8e58fa45432eaaf33c5a3403e4be10870))
+* **core:** move Rust schema fixtures to 18, record build timing, drop invented open questions (spec Proposed change 2-3) ([0a8b940](https://github.com/equationalapplications/expo-llm-wiki/commit/0a8b940243a748140ee57fb0c95151d9cea5ecdf))
+* **core:** prior_valid_to replace-on-import and always-written on supersede (spec D2, D5; T4 r1) ([6b1b139](https://github.com/equationalapplications/expo-llm-wiki/commit/6b1b139a6a3d3bef82164b9ff517662b0535bbe2))
+* **core:** reopen restores null for an invalid prior; review r1 folds (Sonnet) ([2f273f5](https://github.com/equationalapplications/expo-llm-wiki/commit/2f273f5fda9d71c2bd2c582c671ab6fe615f0fbe))
+* **graphrag-core:** proof example stamps schema 18 (spec D1) ([39c5c60](https://github.com/equationalapplications/expo-llm-wiki/commit/39c5c6087e30ceddf3daf99d9210770ebd961c9b))
+
+### Performance Improvements
+
+* **core:** v18 partial index on entries(entity_id, deleted_at) for prune (spec Proposed change 1-3) ([1d3c95f](https://github.com/equationalapplications/expo-llm-wiki/commit/1d3c95f4f6ff7473bbe2861bdb4cf77bbf67296a))
+
 ## [9.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.14.1...v9.15.0) (2026-11-23)
 
 ### Features
