@@ -137,6 +137,10 @@ await wiki.runPrune('user-123', {
 // → { entries, tasks, events }
 ```
 
+Events the host forgot with `forget({ eventId })` are hard-deleted by prune on the
+`retainSoftDeletedFor` window, whatever `retainEventsFor` says and without waiting for the librarian
+watermark. They are included in the result's `events` count and never counted by `event_retention_held`.
+
 Under `'deferred'` maintenance or the `'ops'` strategy, prune never deletes events the
 librarian hasn't processed yet. It emits `event_retention_held` instead. To delete an entity's
 events on request, read or not, use

@@ -71,7 +71,7 @@ const EDGES_DDL: &str = "CREATE TABLE IF NOT EXISTS llm_wiki_edges (
       UNIQUE(entity_id, source_id, target_id, edge_type)
     );";
 
-/// Verbatim `llm_wiki_meta` DDL; schema_version must equal 18 (REQ-SQL-04).
+/// Verbatim `llm_wiki_meta` DDL; schema_version must equal 19 (REQ-SQL-04).
 const META_DDL: &str = "CREATE TABLE IF NOT EXISTS llm_wiki_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -82,7 +82,7 @@ fn main() {
     conn.execute_batch(&format!("{ENTRIES_DDL}\n{EDGES_DDL}\n{META_DDL}"))
         .expect("create llm_wiki_* schema");
     conn.execute(
-        "INSERT INTO llm_wiki_meta (key, value) VALUES ('schema_version', '18')",
+        "INSERT INTO llm_wiki_meta (key, value) VALUES ('schema_version', '19')",
         [],
     )
     .expect("stamp schema_version");

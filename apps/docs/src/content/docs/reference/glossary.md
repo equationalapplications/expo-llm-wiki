@@ -29,7 +29,7 @@ events past the host's `retainEventsFor` window (30 days unless configured; `nul
 forever) on the host's schedule — under deferred maintenance or the `ops` librarian strategy
 only events the librarian watermark has already passed are deleted, but in any other
 configuration events past the window are deleted without a watermark check. `clearAll`
-deletes all events only with `includeEvents: true`; plain erasure keeps them (see
+deletes all events only with `includeEvents: true`; plain erasure keeps unforgotten events (see
 [Deleting data](/expo-llm-wiki/guides/deleting-data/)).
 
 **Source pointer** — the provenance an ops librarian fact can carry: the event it came from
@@ -52,7 +52,7 @@ verified claim that the erase pipeline ran to completion: deleted content in the
 overwritten with zeros, the WAL truncated after a verified checkpoint, each step's outcome
 checked, delivered in an `erase()` report.
 
-**Forget** — removes a fact from recall immediately (a soft delete). The promise is "gone from
+**Forget** — removes a fact from recall immediately (a soft delete). `forget({ eventId })` also marks the named event row forgotten, so no pass, read or non-backup export carries it again. The promise is "gone from
 recall now, gone from disk at erase" — forgetting is an instruction, not destruction. See
 [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 
@@ -60,7 +60,7 @@ recall now, gone from disk at erase" — forgetting is an instruction, not destr
 forgotten, forgotten facts age into gone, on the host's schedule. It is not an erasure tool —
 see [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 
-**Erase** — takes every forgotten fact in scope past gone: deleted content in the database file
+**Erase** — takes every forgotten fact (and forgotten event) in scope past gone: deleted content in the database file
 is overwritten with zeros and the WAL is truncated after a verified checkpoint, with a report
 naming each step's outcome. Always on at full
 strength; no opt-out. Ships with the forget-erasure work in this release — see

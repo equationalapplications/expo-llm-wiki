@@ -19,12 +19,15 @@ export function afterArgs(wm: LibrarianWatermark): [number, number, string] {
  * supplied a real-world timestamp.
  */
 function mapEvent(row: WikiEvent): WikiEvent {
-  if (row.occurred_at == null) {
-    const rest: WikiEvent = { ...row };
-    delete (rest as { occurred_at?: number | null }).occurred_at;
-    return rest;
-  }
-  return row;
+  // `forgotten_at` is dropped when NULL for the same reason: a live event
+  // never carries the key (specs/forget-event-exclusion §6).
+  const dropOccurred = row.occurred_at == null;
+  const dropForgotten = row.forgotten_at == null;
+  if (!dropOccurred && !dropForgotten) return row;
+  const rest: WikiEvent = { ...row };
+  if (dropOccurred) delete (rest as { occurred_at?: number | null }).occurred_at;
+  if (dropForgotten) delete (rest as { forgotten_at?: number | null }).forgotten_at;
+  return rest;
 }
 
 export class EventRepository extends BaseRepository {
@@ -53,8 +56,8 @@ export class EventRepository extends BaseRepository {
   async addIgnoreDuplicate(event: WikiEvent, tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
     const result = await executor.runAsync(
-      `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at, occurred_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at, occurred_at, forgotten_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         event.id,
         event.entity_id,
@@ -63,6 +66,7 @@ export class EventRepository extends BaseRepository {
         event.related_entry_id ?? null,
         event.created_at,
         event.occurred_at ?? null,
+        event.forgotten_at ?? null,
       ],
     );
     return result.changes > 0;
@@ -72,19 +76,31 @@ export class EventRepository extends BaseRepository {
    * The subset of `ids` that exist as events of `entityId` (specs/
    * inplace-update-provenance §3). Chunked so a large batch stays under the
    * bound-variable limit. Pass `tx` to read inside the caller's transaction.
+   * `liveOnly` (default false) also requires `forgotten_at IS NULL`.
    */
-  async findExistingIds(entityId: string, ids: readonly string[], tx?: SQLiteAdapter): Promise<Set<string>> {
+  private async findIds(entityId: string, ids: readonly string[], liveOnly: boolean, tx?: SQLiteAdapter): Promise<Set<string>> {
     const executor = this.getExecutor(tx);
     const found = new Set<string>();
+    const live = liveOnly ? ' AND forgotten_at IS NULL' : '';
     for (let i = 0; i < ids.length; i += 500) {
       const chunk = ids.slice(i, i + 500);
       const rows = await executor.getAllAsync<{ id: string }>(
-        `SELECT id FROM ${this.prefix}events WHERE entity_id = ? AND id IN (${chunk.map(() => '?').join(',')})`,
+        `SELECT id FROM ${this.prefix}events WHERE entity_id = ? AND id IN (${chunk.map(() => '?').join(',')})${live}`,
         [entityId, ...chunk],
       );
       for (const r of rows) found.add(r.id);
     }
     return found;
+  }
+
+  /** Events that exist as rows, forgotten or not (apply re-check's gone-vs-forgotten probe, specs/forget-event-exclusion §4). */
+  async findExistingIds(entityId: string, ids: readonly string[], tx?: SQLiteAdapter): Promise<Set<string>> {
+    return this.findIds(entityId, ids, false, tx);
+  }
+
+  /** Events that exist and are not forgotten (specs/forget-event-exclusion §4). */
+  async findLiveIds(entityId: string, ids: readonly string[], tx?: SQLiteAdapter): Promise<Set<string>> {
+    return this.findIds(entityId, ids, true, tx);
   }
 
   /**
@@ -93,7 +109,7 @@ export class EventRepository extends BaseRepository {
    */
   async getRecent(entityId: string, limit = 50): Promise<WikiEvent[]> {
     const rows = await this.db.getAllAsync<WikiEvent>(
-      `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}events WHERE entity_id = ? AND forgotten_at IS NULL ORDER BY created_at DESC LIMIT ?`,
       [entityId, limit],
     );
     return rows.map(mapEvent);
@@ -107,7 +123,7 @@ export class EventRepository extends BaseRepository {
     if (entityIds.length === 0) return [];
     const placeholders = entityIds.map(() => '?').join(', ');
     const rows = await this.db.getAllAsync<WikiEvent>(
-      `SELECT * FROM ${this.prefix}events WHERE entity_id IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}events WHERE entity_id IN (${placeholders}) AND forgotten_at IS NULL ORDER BY created_at DESC LIMIT ?`,
       [...entityIds, limit],
     );
     return rows.map(mapEvent);
@@ -152,7 +168,7 @@ export class EventRepository extends BaseRepository {
   async countHeldBack(entityId: string, cutoff: number, wm: LibrarianWatermark | null): Promise<number> {
     const where = wm ? ` AND ${AFTER_SQL}` : '';
     const row = await this.db.getFirstAsync<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ?${where}`,
+      `SELECT COUNT(*) AS n FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ? AND forgotten_at IS NULL${where}`,
       [entityId, cutoff, ...(wm ? afterArgs(wm) : [])],
     );
     return Number(row?.n ?? 0);
@@ -188,16 +204,17 @@ export class EventRepository extends BaseRepository {
    * Return all events for an entity in chronological (ASC) order.
    * When limit is provided, fetches newest-first then reverses to preserve chronological order.
    */
-  async getByEntityId(entityId: string, limit?: number): Promise<WikiEvent[]> {
+  async getByEntityId(entityId: string, limit?: number, opts?: { includeDeleted?: boolean }): Promise<WikiEvent[]> {
+    const live = opts?.includeDeleted ? '' : ' AND forgotten_at IS NULL';
     if (limit != null) {
       const rows = await this.db.getAllAsync<WikiEvent>(
-        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`,
+        `SELECT * FROM ${this.prefix}events WHERE entity_id = ?${live} ORDER BY created_at DESC LIMIT ?`,
         [entityId, limit],
       );
       return rows.map(mapEvent).slice().reverse();
     }
     const rows = await this.db.getAllAsync<WikiEvent>(
-      `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`,
+      `SELECT * FROM ${this.prefix}events WHERE entity_id = ?${live} ORDER BY created_at ASC`,
       [entityId],
     );
     return rows.map(mapEvent);
@@ -217,7 +234,7 @@ export class EventRepository extends BaseRepository {
   ): Promise<WikiEvent[]> {
     const limitClause = limit != null ? ` LIMIT ?` : '';
     const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
-    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
+    const where = wm ? `entity_id = ? AND forgotten_at IS NULL AND ${AFTER_SQL}` : `entity_id = ? AND forgotten_at IS NULL`;
     if (limit != null) params.push(limit);
     const rows = await this.db.getAllAsync<WikiEvent>(
       `SELECT * FROM ${this.prefix}events WHERE ${where} ORDER BY created_at ASC, id ASC${limitClause}`,
@@ -234,7 +251,7 @@ export class EventRepository extends BaseRepository {
    */
   async countAfter(entityId: string, wm: LibrarianWatermark | null): Promise<number> {
     const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
-    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
+    const where = wm ? `entity_id = ? AND forgotten_at IS NULL AND ${AFTER_SQL}` : `entity_id = ? AND forgotten_at IS NULL`;
     const row = await this.db.getFirstAsync<{ count: number }>(
       `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE ${where}`,
       params,
@@ -268,11 +285,49 @@ export class EventRepository extends BaseRepository {
   async sumSummaryCharsAfter(entityId: string, wm: LibrarianWatermark | null, tx?: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
     const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
-    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
+    const where = wm ? `entity_id = ? AND forgotten_at IS NULL AND ${AFTER_SQL}` : `entity_id = ? AND forgotten_at IS NULL`;
     const row = await executor.getFirstAsync<{ total: number | null }>(
       `SELECT SUM(LENGTH(summary)) as total FROM ${this.prefix}events WHERE ${where}`,
       params,
     );
     return row?.total ?? 0;
+  }
+
+  /**
+   * Mark one event forgotten (specs/forget-event-exclusion §2). Entity scoped
+   * (rule 3) and idempotent: an unknown id, another entity's id or an already
+   * forgotten row changes nothing and reports 0.
+   */
+  async markForgotten(entityId: string, eventId: string, now: number, tx?: SQLiteAdapter): Promise<0 | 1> {
+    const r = await this.getExecutor(tx).runAsync(
+      `UPDATE ${this.prefix}events SET forgotten_at = ? WHERE entity_id = ? AND id = ? AND forgotten_at IS NULL`,
+      [now, entityId, eventId],
+    );
+    return r.changes > 0 ? 1 : 0;
+  }
+
+  /** 1 when the event exists for the entity and is not yet forgotten, else 0 (the forget dry run). */
+  async countForgettable(entityId: string, eventId: string): Promise<0 | 1> {
+    const row = await this.db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${this.prefix}events WHERE entity_id = ? AND id = ? AND forgotten_at IS NULL`,
+      [entityId, eventId],
+    );
+    return Number(row?.n ?? 0) > 0 ? 1 : 0;
+  }
+
+  /**
+   * Hard-delete the entity's forgotten events (specs/forget-event-exclusion
+   * §5). No watermark guard and no `retainEventsFor`: a forgotten row is never
+   * read. `noCutoff` drops the age predicate (erase) so a non-numeric or
+   * future `forgotten_at` cannot escape.
+   */
+  async deleteForgotten(entityId: string, cutoff: number, tx: SQLiteAdapter, opts?: { noCutoff?: boolean }): Promise<{ changes: number }> {
+    if (opts?.noCutoff) {
+      return tx.runAsync(`DELETE FROM ${this.prefix}events WHERE entity_id = ? AND forgotten_at IS NOT NULL`, [entityId]);
+    }
+    return tx.runAsync(
+      `DELETE FROM ${this.prefix}events WHERE entity_id = ? AND forgotten_at IS NOT NULL AND forgotten_at <= ?`,
+      [entityId, cutoff],
+    );
   }
 }

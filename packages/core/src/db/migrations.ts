@@ -456,7 +456,40 @@ export const MIGRATIONS: Migration[] = [
       await addDerivedEventsColumn(db, prefix);
     },
   },
+  {
+    version: 19,
+    description: 'Nullable events.forgotten_at column and partial index marking events the host forgot with forget({ eventId }) (specs/forget-event-exclusion)',
+    run: async (db, prefix) => {
+      await addEventsForgottenAtColumn(db, prefix);
+      await createEventsForgottenIndex(db, prefix);
+    },
+  },
 ];
+
+/**
+ * v19 (specs/forget-event-exclusion §1): nullable forgotten_at INTEGER on
+ * events (epoch ms; NULL = live). ALTER TABLE ADD COLUMN must run outside any
+ * explicit transaction. Idempotent PRAGMA guard (v16/v18 pattern). No
+ * backfill: no event is forgotten before this release.
+ */
+export async function addEventsForgottenAtColumn(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}events)`);
+  if (!cols.some((c) => c.name === 'forgotten_at')) {
+    await db.execAsync(`ALTER TABLE ${prefix}events ADD COLUMN forgotten_at INTEGER`);
+  }
+}
+
+/**
+ * Partial index serving the forgotten-event prune and erase probes. Created
+ * only by v19 and the fresh-store path (createEntriesDeletedIndex pattern), so
+ * a `migrations: 'refuse'` open defers its build. Idempotent.
+ */
+export async function createEventsForgottenIndex(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS ${prefix}events_forgotten_idx ON ${prefix}events(entity_id, forgotten_at) ` +
+      `WHERE forgotten_at IS NOT NULL`,
+  );
+}
 
 /**
  * v18 DDL (supersede-future-valid-to D1): nullable `prior_valid_to INTEGER` on

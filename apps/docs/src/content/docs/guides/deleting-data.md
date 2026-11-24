@@ -35,7 +35,9 @@ superseded predecessor (see [Temporal](/expo-llm-wiki/guides/temporal-facts/#reo
 `forget({ eventId })` soft-deletes every fact whose `source_pointer` names the event **and** every
 fact whose `derived_events` list contains it. A fact the librarian merged event text into is
 deleted whole: the engine cannot take one event's wording back out, so use `dryRun` to see the
-count first. It does not delete the event row, and facts merged before schema v18 carry no list.
+count first. It also marks the event row forgotten (`forgotten_at`; the result's `deleted.events` is `1`), so
+no librarian pass, heal prompt, `read()` bundle or non-backup export carries its text again; prune hard-deletes
+the row on the `retainSoftDeletedFor` schedule, not `retainEventsFor`. Facts merged before schema v18 carry no list.
 A merge the model did not attribute to an event is reported (`source_pointer_unresolved`) but is
 not findable by `forget({ eventId })`; if you need full coverage, forget those facts by `entryId`.
 
@@ -130,9 +132,9 @@ opt-out.
 checkpointed and the zeroed surfaces are covered; in rollback-journal mode the journal is
 unlinked rather than zeroed. These copies are yours to handle:
 
-1. **Events.** Erase deletes none of them — events follow the host's `retainEventsFor`
-   setting. Each host publishes its own value; the engine doesn't pick one for you. If you need
-   events gone, that's `clearAll({ includeEvents: true })` (see
+1. **Events.** Erase deletes the events you forgot with `forget({ eventId })` and keeps the rest —
+   unforgotten events follow the host's `retainEventsFor` setting. Each host publishes its own
+   value; the engine doesn't pick one for you. If you need every event gone, that's `clearAll({ includeEvents: true })` (see
    [Wipe an entity completely](#wipe-an-entity-completely)).
 2. **The outbox.** With `enableOutbox: true`, unacknowledged outbox rows still hold fact text.
    Drain the outbox before erasing.
@@ -162,12 +164,16 @@ When a subject asks you to erase their data (a GDPR Art. 17 request), the sequen
    entities: erase refuses while any maintenance op or ingest is active store-wide, and step 5
    needs store-wide write quiescence.
 2. **Deal with the subject's retained events.** This is a prerequisite, not a convenience
-   follow-up: events follow your `retainEventsFor` value, and `erase()` deletes none of them, so a
-   host claiming erasure must first remove the event rows it keeps. `forget({ eventId })` removes
-   the facts that rest on an event but leaves the event row, so an event the librarian has not
-   read yet can be read by a later pass: repeat `forget({ eventId })` after every pass until the
-   event is gone. Do not delete event rows with direct SQL while a librarian pass may be running;
-   the pass drops candidates whose own source event vanished (`source_event_gone`), but wording it already
+   follow-up: unforgotten events follow your `retainEventsFor` value, and `erase()` keeps them, so a
+   host claiming erasure must first forget or remove the event rows it keeps. `forget({ eventId })`
+   removes the facts that rest on an event and marks the event row forgotten, so no later pass reads
+   it again and `erase()` deletes it; you do not need to repeat it after every pass. One caveat
+   remains across processes: a second `WikiMemory` on the same file, or host SQL, can forget an
+   event between a pass's read and its apply. The pass then drops the candidate
+   (`source_event_gone` with `detail.reason: 'forgotten'`), but wording it already spent extraction on
+   is not stored. Inside one instance `forget` and the librarian exclude each other, so that cannot
+   happen. Do not delete event rows with direct SQL while a librarian pass may be running;
+   the pass drops candidates whose own source event vanished (`source_event_gone`, reason `'gone'`), but wording it already
    merged stays until you forget the event. A merge the model did not attribute
    (`source_pointer_unresolved`) is not findable by event id; forget those facts by `entryId`. The way to delete an entity's events on request is
    `clearAll({ includeEvents: true })` (see [Wipe an entity completely](#wipe-an-entity-completely)).
@@ -349,7 +355,7 @@ hard-deletes the soft-deleted facts and tasks, and `vacuum` reclaims the space. 
 the event count without deleting anything.
 
 - **Stop writes to the entity first.** An event written after the wipe is a new event.
-- **Without `includeEvents`, events stay.** Under the default `'ops'` strategy or `'deferred'`
+- **Without `includeEvents`, events stay** (a forgotten event is the exception: prune deletes it). Under the default `'ops'` strategy or `'deferred'`
   maintenance, `runPrune()` keeps events the librarian hasn't read and emits
   `event_retention_held`. A later maintenance run then reads them into facts again. Under
   `'legacy'`, the librarian re-reads the newest events on every pass.

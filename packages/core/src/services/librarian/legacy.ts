@@ -38,6 +38,12 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
     const { entityId, trigger } = ctx;
     const promptOverride = ctx.promptOverride;
     const events = await deps.eventRepo.getRecent(entityId, 50);
+    // specs/forget-event-exclusion §3: a log whose every event was forgotten
+    // costs no model call, as in the ops pass. A genuinely empty log keeps its
+    // pre-existing behaviour (hence the count: only the empty path pays for it).
+    if (events.length === 0 && (await deps.eventRepo.count(entityId)) > 0) {
+      return { processedThrough: null, factsWritten: 0 };
+    }
     const currentFactsRows = await deps.entryRepo.findRecentByEntityId(entityId, 100);
 
     const currentFacts = currentFactsRows.map(f => {

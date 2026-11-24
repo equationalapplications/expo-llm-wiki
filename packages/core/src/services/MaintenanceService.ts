@@ -467,6 +467,26 @@ export class MaintenanceService {
             }
           }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx, { noCutoff: softDeletedAll });
+          // specs/forget-event-exclusion §5: forgotten events become gone on the
+          // soft-delete schedule. No watermark guard and no retainEventsFor: a
+          // forgotten row is never read. No hook, so never held.
+          // An unmigrated store (erase's #316 recovery path) has no forgotten_at column: nothing to delete.
+          const forgottenGone = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx)
+            ? (await this.eventRepo.deleteForgotten(entityId, cutoff, tx, { noCutoff: softDeletedAll })).changes
+            : 0;
+          if (forgottenGone > 0) {
+            deletedEvents += forgottenGone;
+            // Forgotten rows are not a log prefix, so this can over-decrement;
+            // that direction only re-reads or re-heals, never skips, and costs
+            // no model call (an empty batch returns before any).
+            const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
+            const updates: { memory?: number; heal?: number } = {};
+            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - forgottenGone);
+            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - forgottenGone);
+            if (updates.memory !== undefined || updates.heal !== undefined) {
+              await this.metadataRepo.updateCheckpoint(entityId, updates, tx);
+            }
+          }
         });
         if (hookLedger) {
           const keptSet = new Set(kept);
@@ -489,26 +509,28 @@ export class MaintenanceService {
         const cutoff = now - retainEventsFor * 86400000;
         const guarded = resolveMaintenanceMode(this.options.config) === 'deferred' || resolveLibrarianStrategy(this.options.config) === 'ops';
         let wm: LibrarianWatermark | null = null;
+        let retentionDeleted = 0;
         await this.db.withTransactionAsync(async (tx) => {
           if (guarded) {
             // Spec §6: under deferred/ops the librarian re-reads the event log,
             // so prune may only delete events the watermark has already passed.
             wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
-            deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm, tx)).changes;
+            retentionDeleted = (await this.eventRepo.pruneThrough(entityId, cutoff, wm, tx)).changes;
           } else {
-            deletedEvents = (await this.eventRepo.prune(entityId, cutoff, tx)).changes;
+            retentionDeleted = (await this.eventRepo.prune(entityId, cutoff, tx)).changes;
           }
+          deletedEvents += retentionDeleted;
           // memory_checkpoint and heal_checkpoint count the oldest events
           // already accounted for. Both prune queries delete a prefix of that
           // same order, so lower each count by what was deleted. Otherwise
           // memory points past unread events, and heal ends up above the
           // event count, reads as 0 and starts a full re-heal (spec
           // ops-auto-first-batch §4).
-          if (deletedEvents > 0) {
+          if (retentionDeleted > 0) {
             const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
             const updates: { memory?: number; heal?: number } = {};
-            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - deletedEvents);
-            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - deletedEvents);
+            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - retentionDeleted);
+            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - retentionDeleted);
             if (updates.memory !== undefined || updates.heal !== undefined) {
               await this.metadataRepo.updateCheckpoint(entityId, updates, tx);
             }
@@ -611,7 +633,8 @@ export class MaintenanceService {
       }
       ok('secure_delete');
 
-      // Step 1: per-entity prune; events are never deleted (retainEventsFor: null).
+      // Step 1: per-entity prune; events the host has not forgotten are never deleted
+      // (retainEventsFor: null); forgotten ones go with the soft-deleted rows.
       // softDeletedAll: rows tombstoned with ANY deleted_at value — a future
       // or TEXT-valued one (imports never clamp; SQLite ranks TEXT above
       // INTEGER) — must still be walked and hard-deleted, or erase reports
@@ -751,9 +774,11 @@ export class MaintenanceService {
       if (report.skipped.length === 0 && report.holds.length === 0) {
         let remainingTombstones: number;
         try {
+          const eventsTracked = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at');
           const row = await this.db.getFirstAsync<{ n: number }>(
             `SELECT (SELECT COUNT(*) FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL)
-                + (SELECT COUNT(*) FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL) AS n`,
+                + (SELECT COUNT(*) FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL)
+                ${eventsTracked ? `+ (SELECT COUNT(*) FROM ${this.prefix}events WHERE forgotten_at IS NOT NULL)` : ''} AS n`,
           );
           remainingTombstones = row?.n ?? 0;
         } catch (err) {
@@ -1241,6 +1266,7 @@ export class MaintenanceService {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      let eventMarked: 0 | 1 = 0;
       let chainIds: string[] = [];
       let chainTruncated = false;
       const deletedEntryIds: string[] = [];
@@ -1365,6 +1391,12 @@ export class MaintenanceService {
           if (taskResult) deletedTasks++;
           deletedEntries += refResult;
           deletedEntries += pointerResult;
+          // specs/forget-event-exclusion §2: the one event row the host named
+          // stops being raw material. Entity scoped and idempotent; the fact
+          // side above ran regardless (a pruned id marks nothing).
+          if (params.eventId !== undefined) {
+            eventMarked = await this.eventRepo.markForgotten(entityId, params.eventId, now, tx);
+          }
         }
         // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
         // the ledger existed get a row so a retry still sends them.
@@ -1435,7 +1467,11 @@ export class MaintenanceService {
       }
 
       if (!params.clearAll) {
-        const base: ForgetResult = { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+        const base: ForgetResult = {
+          deleted: params.eventId !== undefined
+            ? { entries: deletedEntries, tasks: deletedTasks, events: eventMarked }
+            : { entries: deletedEntries, tasks: deletedTasks },
+        };
         if (params.includeChain) {
           base.chainEntryIds = chainIds;
           if (chainTruncated) {
@@ -1561,7 +1597,8 @@ export class MaintenanceService {
     // (specs/forget-by-event-id §D7).
     if (params.eventId !== undefined) {
       const entries = await this.entryRepo.countLiveByPointerEvent(entityId, params.eventId);
-      return { deleted: { entries, tasks: 0 } };
+      const events = await this.eventRepo.countForgettable(entityId, params.eventId);
+      return { deleted: { entries, tasks: 0, events } };
     }
 
     const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;

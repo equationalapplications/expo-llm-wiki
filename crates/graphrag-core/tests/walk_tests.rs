@@ -87,7 +87,7 @@ fn create_valid_db(conn: &Connection) {
     conn.execute_batch(&format!("{ENTRIES_DDL}\n{EDGES_DDL}\n{META_DDL}"))
         .unwrap();
     conn.execute(
-        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '18')"),
+        &format!("INSERT INTO {PREFIX}meta (key, value) VALUES ('schema_version', '19')"),
         [],
     )
     .unwrap();

@@ -134,6 +134,13 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    **no event holds to report** — events are simply never deleted. Holds reporting in erase
    covers **external-removal holds only**. (The `'legacy'`-mode watermark caveat below applies
    to **standalone `runPrune`** calls, not to erase under the null pin.)
+
+   > **As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/` §5):**
+   > unforgotten events are kept by erase (`retainEventsFor: null`); events the host
+   > forgot with `forget({ eventId })` carry `forgotten_at` and are deleted by this same
+   > step through the soft-delete retention block, with no hook and so no hold. The
+   > sentence "erase has **no event holds to report**" stays true. The ruled text above
+   > is left as written.
    Inheriting `runPrune`'s safety
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-455`): erase
@@ -806,6 +813,12 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
   prerequisite for any host claiming GDPR erasure; events follow the host's
   `retainEventsFor` — each host publishes its own value (GDPR
   consult §8-D reframes the carve-out around the erasure-request recipe). Folded: §6.
+  *As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/` §5):
+  events the host has not forgotten follow `retainEventsFor` and erase keeps them. An
+  event the host forgot with `forget({ eventId })` carries `forgotten_at`, follows
+  `retainSoftDeletedFor` like a forgotten fact, is hard-deleted by erase's step 1 and
+  counted by its step-9 gate. The full-wipe path stays the way to delete an entity's
+  unforgotten events on request. Ruled text above left as written.*
 - **E (source ownership).** **Document-as-host-property, no engine GC** — final. Standing
   owner principle, first-class: *"we cannot violate the founding principle of the LLM Wiki
   pattern, immutable source files."* The engine never mutates or auto-deletes source

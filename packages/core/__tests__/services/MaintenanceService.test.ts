@@ -58,6 +58,7 @@ describe('MaintenanceService — PromptService injection', () => {
     };
     mockEventRepo = {
       getRecent: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     };
     mockMetadataRepo = {};
     mockSearchService = {
@@ -207,7 +208,7 @@ describe('MaintenanceService — ontology integration', () => {
     });
 
     const mockTaskRepo = { upsert: vi.fn().mockResolvedValue(undefined) };
-    const mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]) };
+    const mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) };
     const mockSearchService = { sync: vi.fn(), syncEntries: vi.fn(), evictCache: vi.fn(), isKeywordAvailable: vi.fn().mockReturnValue(true) };
     const mockJobManager = { acquireLock: vi.fn(), releaseLock: vi.fn() };
     const mockEmbeddingService = { embedFact: vi.fn().mockResolvedValue(true) };

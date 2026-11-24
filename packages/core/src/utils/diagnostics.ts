@@ -125,7 +125,7 @@ export const MESSAGE: Record<WikiDiagnosticCode, string> = {
   guidance_resolver_failed: 'The per-entity guidance resolver failed; its value was not used for this pass.',
   source_pointer_unresolved: 'A stored librarian fact carries no source pointer because the model answer could not yield one, or the librarian merged such an unattributed candidate into this fact in place (its derived_events list was not extended).',
   source_pointer_invalid: 'Import met a malformed source pointer value and stored a null pointer.',
-  source_event_gone: 'A librarian candidate was dropped at apply time because the event it came from no longer exists (deleted outside the engine while the pass ran).',
+  source_event_gone: 'A librarian candidate was dropped at apply time because the event it came from was no longer available: deleted (detail.reason gone) or forgotten with forget({ eventId }) (detail.reason forgotten) outside this instance while the pass ran.',
   derived_events_invalid: 'Import met a malformed derived_events value and stored null.',
   source_store_source_too_large: 'A source document exceeded the per-document size cap and was not stored.',
   source_store_budget_exceeded: 'Storing a source document would exceed the store UTF-16 code-unit budget and it was not stored.',

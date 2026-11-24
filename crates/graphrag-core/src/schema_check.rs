@@ -14,10 +14,10 @@ use crate::error::GraphragError;
 use rusqlite::Transaction;
 
 /// packages/core `CURRENT_SCHEMA_VERSION` (packages/core/src/db/migrations.ts,
-/// derived there from the last migration; core 9.14.x ran schema 17; v18 adds the entries_deleted_idx index and the prior_valid_to and derived_events columns).
+/// derived there from the last migration; core 9.14.x ran schema 17; v18 adds the entries_deleted_idx index and the prior_valid_to and derived_events columns; v19 adds events.forgotten_at and events_forgotten_idx).
 /// Kept in lockstep by the parity test (tests/schema_parity.rs), which parses
 /// the migrations file and fails if this pin ever falls behind or ahead.
-pub const REQUIRED_SCHEMA_VERSION: i64 = 18;
+pub const REQUIRED_SCHEMA_VERSION: i64 = 19;
 
 /// Required columns of `{prefix}entries` (schema.ts, verbatim names).
 const REQUIRED_ENTRIES_COLUMNS: &[&str] = &[

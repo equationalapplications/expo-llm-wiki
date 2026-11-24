@@ -247,7 +247,7 @@ describe('forget({ eventId }) — dry run (test 12)', () => {
     await t.ins('e1', 'gone', JSON.stringify({ event_id: 'E1' }));
     await t.db.runAsync(`UPDATE ${P}entries SET deleted_at = 5 WHERE id = 'gone'`);
     const res = await t.wiki.forget('e1', { eventId: 'E1' }, { dryRun: true });
-    expect(res).toEqual({ deleted: { entries: 2, tasks: 0 } });
+    expect(res).toEqual({ deleted: { entries: 2, tasks: 0, events: 0 } });
     expect(await t.live('a')).toBe(1);
     expect(await t.live('b')).toBe(1);
     // The real call then reports tombstone idempotence for the pre-tombstoned row.
@@ -255,7 +255,7 @@ describe('forget({ eventId }) — dry run (test 12)', () => {
     expect(real.deleted.entries).toBe(2);
     // The all-tombstoned case: the dry run counts what a real call would still delete — zero.
     const zero = await t.wiki.forget('e1', { eventId: 'E1' }, { dryRun: true });
-    expect(zero).toEqual({ deleted: { entries: 0, tasks: 0 } });
+    expect(zero).toEqual({ deleted: { entries: 0, tasks: 0, events: 0 } });
   });
 });
 
