@@ -307,6 +307,8 @@ that gap.
 
 ### Step 14 — Ingest-time typing — PLANNED
 
+Done — merged 2026-11-24, PR #478, spec [ingest-time-typing](../specs/ingest-time-typing/spec.md)
+
 `ingestDocument()`'s extracted facts get typed through the step 13
 mechanism instead of the write-time one, completing the typing story
 for the document path.

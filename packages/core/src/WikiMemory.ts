@@ -1,4 +1,4 @@
-import { canEngageWriteTyping } from './services/typing/typeOnWrite';
+import { canEngageWriteTyping, canEngageIngestTyping } from './services/typing/typeOnWrite';
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { emitDiagnostic } from './utils/diagnostics';
@@ -729,13 +729,19 @@ export class WikiMemory {
     assertEntityId(entityId);
     // Write builders get the write context, backfill its own (specs/type-on-write §5).
     // The librarian context reflects write-time typing engagement, so what the host
-    // reads is what the pass sends; ingest, heal and backfill are unchanged.
+    // reads is what the pass sends; ingest reflects `typeOnIngest` the same way; heal and backfill are unchanged.
     const state = await this.ontologyService.getEffectiveState(entityId);
     const engaged = canEngageWriteTyping(this.options.config, this.options.llmProvider, state.mode, state.manifest);
     const writeContext = await this.ontologyService.buildWritePromptContext(entityId, { engaged });
-    const ingestContext = engaged
-      ? await this.ontologyService.buildWritePromptContext(entityId, { engaged: false })
-      : writeContext;
+    // Ingest reflects its own engagement (specs/ingest-time-typing §5): engaged -> no
+    // manifest block; otherwise today's context (equal to `writeContext` unless the
+    // librarian alone is engaged).
+    const ingestEngaged = canEngageIngestTyping(this.options.config, this.options.llmProvider, state.mode, state.manifest);
+    const ingestContext = ingestEngaged
+      ? null
+      : engaged
+        ? await this.ontologyService.buildWritePromptContext(entityId, { engaged: false })
+        : writeContext;
     const backfillContext = await this.ontologyService.buildPromptContext(entityId);
     // Specs/librarian-guidance: same resolution as the write paths. A read
     // path that silently drops over-cap guidance would be the one place

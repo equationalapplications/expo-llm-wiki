@@ -462,8 +462,9 @@ export class PromptService {
     backfillContext?: BackfillOntologyContext | null,
     /**
      * The ingest write context. Omitted: `writeContext`. `getInstructions`
-     * passes the un-engaged context here because write-time typing governs the
-     * librarian only (specs/type-on-write §5, step-14 seam).
+     * passes the context that follows `systemOne.typeOnIngest`: `null` when
+     * ingest-time typing is engaged, the un-engaged context otherwise
+     * (specs/ingest-time-typing §5).
      */
     ingestContext?: OntologyPromptContext | null,
   ): WikiInstructions {

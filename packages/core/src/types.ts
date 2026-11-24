@@ -150,6 +150,24 @@ export interface WriteOntologyPromptContext {
   ontologyModeInstructions: string;
 }
 
+/** Ingest-time typing counters (specs/ingest-time-typing §9), on `IngestDocumentResult.typing`.
+ * Only the fields ingest fills: there is no `unattempted` because `ingestDocument()` has no
+ * token budget to run out. */
+export interface IngestTypingCounters {
+  /** Classify calls made (one per kept winner whose own slug did not already resolve). */
+  asked: number;
+  /** Classifier types that reached a stored row. */
+  typed: number;
+  /** Facts the classifier declined (abstain sentinel). */
+  abstained: number;
+  /** Answers below the `systemOne.minConfidence.typing` floor. */
+  lowConfidence: number;
+  /** Invalid answers and thrown `classify` calls. */
+  invalid: number;
+  /** Calls skipped for context overflow. */
+  skipped: number;
+}
+
 /** Result of a single ontology backfill run. Omissions (facts the model declined
  * to classify) are carried by `abstained`, not derived from the other counters. */
 export interface OntologyBackfillResult {
@@ -1664,6 +1682,10 @@ export interface IngestDocumentResult {
   failedChunks: number;
   duplicateOf?: string;
   parseFailures?: ChunkFailure[];
+  /** Ingest-time typing counters (specs/ingest-time-typing §9). Present only when
+   * `systemOne.typeOnIngest: 'auto'` engaged for this call. There is no `unattempted`
+   * field: `ingestDocument()` carries no token budget. */
+  typing?: IngestTypingCounters;
 }
 
 /**

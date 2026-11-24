@@ -1,5 +1,6 @@
 import type {
   ClassifierQuestion,
+  IngestTypingCounters,
   LLMProvider,
   OntologyManifest,
   OntologyMode,
@@ -8,7 +9,7 @@ import type {
   WikiDiagnosticTrigger,
   WikiOptions,
 } from '../../types';
-import { resolveSystemOneTypeOnWrite } from '../../utils/engineDefaults';
+import { resolveSystemOneTypeOnWrite, resolveSystemOneTypeOnIngest } from '../../utils/engineDefaults';
 import { classifierStateForFact, validateClassifierAnswer, type ClassifierRejection } from '../../utils/classifier';
 import { callClassify } from '../../utils/llmCall';
 import { isReservedAbstainSlug, resolveNodeTypeMatch, ONTOLOGY_ABSTAIN_SENTINEL } from '../../utils/ontology';
@@ -41,9 +42,28 @@ export function isManifestRepresentable(manifest: OntologyManifest): boolean {
 }
 
 /**
- * Write-time typing engagement (specs/type-on-write §2). Pure; step 14 reuses it
- * unchanged. All four must hold: `typeOnWrite: 'auto'`, a `classify` function,
- * an ontology mode other than `'off'`, and a representable manifest.
+ * Shared engagement predicate (specs/ingest-time-typing §2). Conditions 2-4 of
+ * both sites: a `classify` function, an ontology mode other than `'off'`, and a
+ * representable manifest, after the site's own key resolved to `'auto'`. Kept
+ * in one place so the three sites (librarian, ingest, `getInstructions`) cannot
+ * drift.
+ */
+function typingEngages(
+  site: 'auto' | 'llm',
+  provider: Pick<LLMProvider, 'classify'>,
+  mode: OntologyMode,
+  manifest: OntologyManifest,
+): boolean {
+  return site === 'auto'
+    && typeof provider.classify === 'function'
+    && mode !== 'off'
+    && isManifestRepresentable(manifest);
+}
+
+/**
+ * Write-time typing engagement (specs/type-on-write §2). Pure. All four must
+ * hold: `typeOnWrite: 'auto'`, a `classify` function, an ontology mode other
+ * than `'off'`, and a representable manifest.
  */
 export function canEngageWriteTyping(
   config: WikiConfig | undefined,
@@ -51,10 +71,17 @@ export function canEngageWriteTyping(
   mode: OntologyMode,
   manifest: OntologyManifest,
 ): boolean {
-  return resolveSystemOneTypeOnWrite(config) === 'auto'
-    && typeof provider.classify === 'function'
-    && mode !== 'off'
-    && isManifestRepresentable(manifest);
+  return typingEngages(resolveSystemOneTypeOnWrite(config), provider, mode, manifest);
+}
+
+/** Ingest-time typing engagement (specs/ingest-time-typing §2): same rule, `typeOnIngest` key. */
+export function canEngageIngestTyping(
+  config: WikiConfig | undefined,
+  provider: Pick<LLMProvider, 'classify'>,
+  mode: OntologyMode,
+  manifest: OntologyManifest,
+): boolean {
+  return typingEngages(resolveSystemOneTypeOnIngest(config), provider, mode, manifest);
 }
 
 /**
@@ -94,7 +121,7 @@ export interface TypingCallContext {
   entityId: string;
   trigger: WikiDiagnosticTrigger;
   meter?: UsageMeter;
-  /** `'librarian'` for this step; ingest passes `'ingest'` in step 14. */
+  /** `'librarian'` at the write door; ingest passes `'ingest'` (specs/ingest-time-typing §3). */
   operation: WikiDiagnosticOperation;
 }
 
@@ -109,7 +136,8 @@ export function volunteeredTypeResolves(rawOkfType: unknown, manifest: OntologyM
 /**
  * Ask the host classifier to type each fact (specs/type-on-write §3). One
  * `callClassify` per fact, metered through `ctx.meter`, under the
- * `chunkConcurrency` rule. Makes no database write. `WikiBudgetExhausted`
+ * `chunkConcurrency` rule (`opts.concurrency`, when given, replaces the config
+ * read: ingest passes its call's resolved value). Makes no database write. `WikiBudgetExhausted`
  * marks that fact and every not-yet-started fact `unattempted`; the step
  * stops asking and never throws for budget.
  */
@@ -119,9 +147,10 @@ export async function classifyFactsForWrite(
   facts: readonly TypingFactInput[],
   manifest: OntologyManifest,
   floor: number,
+  opts?: { concurrency?: number },
 ): Promise<TypingOutcome[]> {
   const question = buildTypingQuestion(manifest);
-  const rawConcurrency = options.config?.chunkConcurrency ?? 1;
+  const rawConcurrency = opts?.concurrency ?? options.config?.chunkConcurrency ?? 1;
   const concurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1 ? Math.floor(rawConcurrency) : 1;
   let stopped = false;
   return withConcurrency<TypingOutcome>(
@@ -154,7 +183,7 @@ export async function classifyFactsForWrite(
   );
 }
 
-/** Per-pass typing counters (specs/type-on-write §8). */
+/** Per-pass typing counters (specs/type-on-write §8). Internal: the librarian's report carries them. */
 export interface TypingCounters {
   asked: number;
   typed: number;
@@ -163,6 +192,12 @@ export interface TypingCounters {
   invalid: number;
   skipped: number;
   unattempted: number;
+}
+
+/** The public ingest shape: the same counters without the always-zero `unattempted` (ingest has no budget). */
+export function toIngestCounters(c: TypingCounters): IngestTypingCounters {
+  const { unattempted: _unattempted, ...rest } = c;
+  return rest;
 }
 
 export function emptyTypingCounters(): TypingCounters {

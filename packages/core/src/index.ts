@@ -34,6 +34,7 @@ export {
   resolveResolveMinConfidence,
   resolveSystemOneHealScreen,
   resolveSystemOneTypeOnWrite,
+  resolveSystemOneTypeOnIngest,
   resolveHealScreenMinConfidence,
   warnOnce,
   DEFAULT_TYPING_MIN_CONFIDENCE,

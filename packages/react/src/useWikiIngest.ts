@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
-import type { ChunkFailure } from '@equationalapplications/core-llm-wiki';
+import type { ChunkFailure, IngestTypingCounters } from '@equationalapplications/core-llm-wiki';
 
 interface IngestParams {
   sourceRef: string;
@@ -25,6 +25,7 @@ type IngestResult = {
   failedChunks: number;
   duplicateOf?: string;
   parseFailures?: ChunkFailure[];
+  typing?: IngestTypingCounters;
 };
 
 export function useWikiIngest() {

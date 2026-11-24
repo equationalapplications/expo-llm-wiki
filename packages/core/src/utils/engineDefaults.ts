@@ -328,6 +328,24 @@ export function resolveSystemOneTypeOnWrite(config: WikiConfig | undefined): 'au
 }
 
 /**
+ * Ingest-time typing mode (specs/ingest-time-typing §1): `systemOne.typeOnIngest`,
+ * `'llm'` when unset. A present invalid value warns once and is treated as
+ * unset. No legacy chain and no call option. The ingest site reads the
+ * existing `'typing'` floor (`resolveTypingMinConfidence`).
+ */
+export function resolveSystemOneTypeOnIngest(config: WikiConfig | undefined): 'auto' | 'llm' {
+  const typeOnIngest = config?.systemOne?.typeOnIngest;
+  if (typeOnIngest !== undefined && !isTypingMode(typeOnIngest)) {
+    warnOnce(
+      `[core-llm-wiki] systemOne: \`systemOne.typeOnIngest\` is ${formatConfigValue(typeOnIngest)}, which is not `
+      + "'auto' or 'llm'. The key is treated as unset; the default ('llm') applies.",
+    );
+    return 'llm';
+  }
+  return typeOnIngest ?? 'llm';
+}
+
+/**
  * Heal-screen floor (specs/heal-screening-system-one §3): returns the
  * `systemOne.minConfidence.healScreen` floor only when the heal-screen mode
  * resolves `'auto'` and the floor is a finite number in [0.5, 1]. There is no
