@@ -120,7 +120,7 @@ describe('accepted type, full path (Test plan 5)', () => {
     // model-volunteered valid slugs are not asked and receipt writer llm
     expect(t.classify!.mock.calls).toHaveLength(1);
     expect(assigned.filter((d) => d.detail.writer === 'llm')).toHaveLength(2);
-    expect(r.typing).toEqual({ asked: 1, typed: 1, abstained: 0, lowConfidence: 0, invalid: 0, skipped: 0, unattempted: 0 });
+    expect(r.typing).toEqual({ asked: 1, typed: 1, abstained: 0, lowConfidence: 0, invalid: 0, skipped: 0 });
     const es = await edgeRows(t.db);
     expect(es.filter((e) => e.source_id === by.Ada.id)).toEqual([]);
     expect(es.filter((e) => e.source_id === by.Bob.id)).toHaveLength(1);
@@ -211,7 +211,7 @@ describe('candidate set, ordering, concurrency (Test plan 8)', () => {
     const z = await mk({ facts: [], classify: () => choice('person') });
     const r = await ingest(z);
     expect(z.classify).toHaveBeenCalledTimes(0);
-    expect(r.typing).toEqual({ asked: 0, typed: 0, abstained: 0, lowConfidence: 0, invalid: 0, skipped: 0, unattempted: 0 });
+    expect(r.typing).toEqual({ asked: 0, typed: 0, abstained: 0, lowConfidence: 0, invalid: 0, skipped: 0 });
   });
   it('classify fan-out honors params.chunkConcurrency over config', async () => {
     let inflight = 0; let max = 0;
@@ -300,7 +300,7 @@ describe('metering (Test plan 11)', () => {
     const usage = ofCode(t.diagnostics, 'llm_usage').filter((d) => d.operation === 'ingest');
     expect(usage).toHaveLength(3); // 1 chunk + 2 classify
     expect(usage.filter((d) => d.detail.estimated === true).length).toBeGreaterThanOrEqual(2);
-    expect(r.typing!.unattempted).toBe(0);
+    expect(r.typing).not.toHaveProperty('unattempted');
   });
 });
 
@@ -309,10 +309,12 @@ describe('duplicate-hash race (Test plan 12)', () => {
     const t = await mk({ config: withCfg({ reportLlmUsage: true } as WikiConfig), facts: [F('Ada')], classify: () => choice('person') });
     const repo = (t.wiki as any).sourceRefIndexRepo;
     const original = repo.findActiveByEntityAndHash.bind(repo);
-    let first = true;
+    // Call 1 is the 'skip' pre-check, call 2 the engaged typing stage's own look: the
+    // collision lands after both (a writer that commits between the check and our write).
+    let calls = 0;
     repo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: unknown) => {
-      if (first) {
-        first = false;
+      calls++;
+      if (calls === 2) {
         await t.db.runAsync(
           `INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at) VALUES ('sri_x', ?, ?, 'canonical.md', 0, NULL)`,
           [entityId, hash],
@@ -339,5 +341,48 @@ describe('backfill interaction (Test plan 13)', () => {
     expect(by.Bob.okf_type).toBeNull();
     const untyped = await (t.wiki.__testAccess as any).entryRepo.findUntypedByEntityId('u', 10, Date.now());
     expect(untyped.map((x: any) => x.title)).toEqual(['Bob']);
+  });
+});
+
+describe('engaged emergent, cross-chunk (round-2 fold)', () => {
+  it('a slug a later chunk proposes beats the classifier type, and no manifest-violating edge is stored', async () => {
+    const t = await mk({
+      mode: 'emergent',
+      config: withCfg(SMALL),
+      extraGen: ({ userPrompt }) => userPrompt.includes('SECOND')
+        ? { facts: [], ontology_updates: { node_types: [{ type: 'robot', description: 'A robot' }] } }
+        : { facts: [F('R2', { okf_type: 'robot' }), F('Bob', { okf_type: 'person', edges: [{ edge_type: 'lives_in', target_title: 'R2' }] })] },
+      classify: () => choice('place'),
+    });
+    await ingest(t, 'FIRST chunk text here.\n\nSECOND chunk text here.');
+    const by = Object.fromEntries((await rows(t.db)).map((x) => [x.title, x]));
+    expect(by.R2.okf_type).toBe('robot');
+    expect(await edgeRows(t.db)).toEqual([]);
+    expect(ofCode(t.diagnostics, 'edge_dropped').length).toBeGreaterThan(0);
+    expect(ofCode(t.diagnostics, 'node_type_assigned').find((d) => d.detail.factId === by.R2.id)?.detail.writer).toBe('llm');
+  });
+});
+
+describe('duplicate hash held by another sourceRef (round-2 fold)', () => {
+  it('spends no classify call when another live sourceRef already holds the hash', async () => {
+    const t = await mk({ facts: [F('Ada')], classify: () => choice('person') });
+    await t.wiki.ingestDocument('u', { sourceRef: 'canonical.md', sourceHash: HASH_A, documentChunk: 'x' });
+    const before = t.classify!.mock.calls.length;
+    await expect(t.wiki.ingestDocument('u', { sourceRef: 'other.md', sourceHash: HASH_A, documentChunk: 'x' })).rejects.toThrow(/Duplicate source hash/);
+    expect(t.classify!.mock.calls.length).toBe(before);
+  });
+});
+
+describe('both keys on one host (round-2 fold)', () => {
+  it('typeOnWrite and typeOnIngest both auto: ingest and librarian each type through classify', async () => {
+    const t = await mk({
+      config: { systemOne: { typeOnIngest: 'auto', typeOnWrite: 'auto' } } as WikiConfig,
+      facts: [F('Ada')], classify: () => choice('person'),
+    });
+    const r = await ingest(t);
+    expect(r.typing!.typed).toBe(1);
+    const instr = await t.wiki.getInstructions('u');
+    expect(instr.ingest).not.toContain('"node_types"');
+    expect(instr.librarian).not.toContain('"node_types"');
   });
 });

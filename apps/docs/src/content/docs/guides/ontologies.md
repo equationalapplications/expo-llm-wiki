@@ -253,7 +253,7 @@ the backfill's `typed`.
 
 `ingestDocument()` has its own opt-in, `systemOne.typeOnIngest: 'auto'` (default `'llm'`, which
 changes nothing). It is a separate key from `typeOnWrite`: setting one does not turn on the other,
-and a host that wants both sets both. It engages under the same four conditions (a `classify`
+and a host that wants both sets both. It engages under the same conditions (the key set to `'auto'`, a `classify`
 function, mode `strict` or `emergent`, a representable manifest) and reads the same
 `systemOne.minConfidence.typing` floor. When engaged, the call extracts every chunk without the
 ontology block in the prompt, then asks `classify` one `choice` question per extracted fact that
@@ -281,7 +281,7 @@ The three disclosures above apply to ingest, sharper for documents:
   extractor's guide to what counts as a fact; engaged, the model extracts without it. Compare
   extraction on your own documents, with your own model, before and after.
 - **Cost is unmeasured.** Shorter chunk prompts, plus one classify call per extracted fact
-  (including a call spent on a fact then skipped as a duplicate on a retry), with no budget. The net
+  (including a call spent on a fact then skipped as a duplicate on a retry; a full write whose hash another live sourceRef already holds spends none, because the engine checks before asking), with no budget. The net
   cost may go either way; no number is claimed.
 
 In `emergent` mode an engaged ingest sends no `ontology_updates` invitation, so documents propose

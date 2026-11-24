@@ -1,9 +1,9 @@
 import type {
   ClassifierQuestion,
+  IngestTypingCounters,
   LLMProvider,
   OntologyManifest,
   OntologyMode,
-  TypingCounters,
   WikiConfig,
   WikiDiagnosticOperation,
   WikiDiagnosticTrigger,
@@ -19,7 +19,6 @@ import { isContextOverflowError } from '../BoundedLlmCall';
 import { nodeTypeReceipts, shouldEmitOntologyReceipt, type WikiDiagnosticInput } from '../../utils/diagnostics';
 import type { EdgeDrop } from '../../utils/ontology';
 import type { ExtractedFactEdge, ExtractedFactWithOntology } from '../../types';
-export type { TypingCounters };
 
 /**
  * Upper bound on one classifier choice question (specs/system-one-config §5):
@@ -182,6 +181,23 @@ export async function classifyFactsForWrite(
     }),
     concurrency,
   );
+}
+
+/** Per-pass typing counters (specs/type-on-write §8). Internal: the librarian's report carries them. */
+export interface TypingCounters {
+  asked: number;
+  typed: number;
+  abstained: number;
+  lowConfidence: number;
+  invalid: number;
+  skipped: number;
+  unattempted: number;
+}
+
+/** The public ingest shape: the same counters without the always-zero `unattempted` (ingest has no budget). */
+export function toIngestCounters(c: TypingCounters): IngestTypingCounters {
+  const { unattempted: _unattempted, ...rest } = c;
+  return rest;
 }
 
 export function emptyTypingCounters(): TypingCounters {

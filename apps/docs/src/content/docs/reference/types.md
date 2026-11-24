@@ -132,8 +132,11 @@ interface ReadOptions {
   failedChunks: number;
   truncated: boolean;       // a hard split happened
   parseFailures?: ChunkFailure[]; // present when failedChunks > 0
+  typing?: { asked, typed, abstained, lowConfidence, invalid, skipped }; // present only when systemOne.typeOnIngest engaged
 }
 ```
+
+`typing` is the ingest-time typing tally (`IngestTypingCounters`): `asked` classify calls, `typed` types that reached a stored row, and the decline outcomes. It is absent unless [`systemOne.typeOnIngest`](/expo-llm-wiki/guides/ontologies/#ingest) engaged for the call, and there is no `unattempted` field because `ingestDocument()` has no token budget.
 
 ## Source text store
 

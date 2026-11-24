@@ -287,7 +287,13 @@ untyped and surfaces as the door's own `node_type_dropped`.
   in. This keeps default hosts byte-identical in the emergent case where a
   later chunk's `ontology_updates` introduces a slug an earlier chunk's fact
   used (the core resolved raw slugs against the final manifest); pinned in
-  `ingestTypingCompat.test.ts`. `titleIndex` and
+  `ingestTypingCompat.test.ts`.
+  The type settlement runs before Pass 2 (its receipts are buffered and
+  pushed after Pass 2, their old position). For a fact the classifier typed,
+  a title-index entry made stale by a later chunk's `ontology_updates` (the
+  model's own slug now resolves and wins) is refreshed before edges resolve,
+  so no manifest-violating edge is stored; only classifier-involved facts are
+  refreshed, so a default host's index is unchanged. `titleIndex` and
   `rawEdgeRequests` (`:942-946`) read the same `normalized`, so a
   classifier-typed fact enters the title index typed (and may be an edge
   target in the same ingest) and stages no outgoing edges.
@@ -454,7 +460,14 @@ with the seven fields the librarian's counters carry (`asked`, `typed`,
 `typeOnWrite.ts:158-166`). `TypingCounters` becomes a public export (it
 rides `export * from './types'` after moving the interface to `types.ts`,
 with the typing module re-importing it — a type move, no behavior).
-`zeroChunkResult` carries none. No change to `chunks`, `ingestedChunks`,
+`zeroChunkResult` carries none.
+*As built:* the public carrier is a separate `IngestTypingCounters`
+(`asked`, `typed`, `abstained`, `lowConfidence`, `invalid`, `skipped`; no
+always-zero `unattempted`), and the librarian's `TypingCounters` stays
+internal. When the full write's hash is already held by another live
+`sourceRef` (default `onDuplicateHash: 'ingest'` has no pre-check), the
+engine looks before the typing stage and spends no classify call on a write
+that cannot commit. No change to `chunks`, `ingestedChunks`,
 `failedChunks`, `parseFailures`, `duplicateOf`. No `EntityMaintenanceReport`
 or `PendingMaintenance` change: ingest is not a scheduler unit, and
 `typedOnWrite` stays the librarian's number.

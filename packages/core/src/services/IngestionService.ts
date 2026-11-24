@@ -23,7 +23,7 @@ import { resolveContextBudget, resolveDefaultChunkLength } from '../config/conte
 import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 import { callLlm } from '../utils/llmCall';
-import { normalizeForWrite, emptyTypingCounters, canEngageIngestTyping, classifyFactsForWrite, tallyTypingOutcome, volunteeredTypeResolves } from './typing/typeOnWrite';
+import { normalizeForWrite, emptyTypingCounters, toIngestCounters, canEngageIngestTyping, classifyFactsForWrite, tallyTypingOutcome, volunteeredTypeResolves } from './typing/typeOnWrite';
 import { resolveTypingMinConfidence } from '../utils/engineDefaults';
 import type { TypingOutcome } from './typing/typeOnWrite';
 
@@ -43,7 +43,7 @@ type FactLedger = Map<ExtractedFact, { verdict: GroundingVerdict | null; chunkIn
  * counters the write paths increment where the classifier's type reached the row. */
 interface IngestTyping {
   outcomes: ReadonlyMap<ExtractedFact, TypingOutcome>;
-  counters: import('../types').TypingCounters;
+  counters: import('./typing/typeOnWrite').TypingCounters;
 }
 type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
 
@@ -408,7 +408,16 @@ export class IngestionService {
 
       // Pre-transaction typing outcomes (specs/ingest-time-typing §3); empty until the typing stage runs.
       const typing = { outcomes: new Map<ExtractedFact, TypingOutcome>(), counters: emptyTypingCounters() };
-      if (engaged) {
+      // Default `onDuplicateHash: 'ingest'` has no pre-check, and a full write whose hash
+      // another live sourceRef holds loses the UNIQUE race and rolls back. The hash lock is
+      // held, so look now and spend no classify call on a write that cannot commit
+      // (specs/ingest-time-typing §9). Partial writes never claim the hash.
+      let hashHeldElsewhere = false;
+      if (engaged && failedChunks === 0) {
+        const holder = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        hashHeldElsewhere = holder !== null && holder !== sourceRef;
+      }
+      if (engaged && !hashHeldElsewhere) {
         // The typing stage (specs/ingest-time-typing §3): one classify call per kept
         // winner whose own slug does not already resolve. No database write, no
         // transaction, no meter (§6); every call is reported through `llm_usage`.
@@ -571,7 +580,7 @@ export class IngestionService {
         failedChunks,
       };
       if (failedChunks > 0) result.parseFailures = failures;
-      if (engaged) result.typing = typing.counters;
+      if (engaged) result.typing = toIngestCounters(typing.counters);
       return result;
 
     } finally {
@@ -925,7 +934,7 @@ export class IngestionService {
     // manifest and mode: `upsertGraphCore` has always resolved the model's slug there, so
     // a slug a later chunk's `ontology_updates` introduces still types an earlier chunk's
     // fact (specs/ingest-time-typing §4, §12: default hosts byte-identical).
-    const typedAtDoor: { node: { type: string }; fact: ExtractedFactWithOntology; id: string; outcome: TypingOutcome | undefined }[] = [];
+    const typedAtDoor: { node: { type: string }; fact: ExtractedFactWithOntology; id: string; outcome: TypingOutcome | undefined; slotType: string | null }[] = [];
     const now = Date.now();
 
     for (const { facts, ontology_updates } of orderedChunkFacts) {
@@ -980,7 +989,7 @@ export class IngestionService {
           confidence: fact.confidence,
         };
         hostNodes.push(hostNode);
-        typedAtDoor.push({ node: hostNode, fact: ontologyFact, id, outcome });
+        typedAtDoor.push({ node: hostNode, fact: ontologyFact, id, outcome, slotType: normalized.okf_type });
         const locator = factLedger.get(fact);
         // Gate on the verdict, not on the entry: the ledger now holds an
         // entry for every kept fact, with a null verdict when grounding is off.
@@ -1004,6 +1013,27 @@ export class IngestionService {
       }
     }
 
+    // Settle each node's type against the FINAL in-transaction manifest and mode
+    // (see `typedAtDoor`). Done before Pass 2 so that, for a fact the classifier
+    // typed, a title-index entry made stale by a later chunk's `ontology_updates`
+    // (the model's own slug now resolves and wins) is refreshed before any edge
+    // resolves against it. Only classifier-involved facts are refreshed: a default
+    // host's index stays exactly as before (specs/ingest-time-typing §4, §12). The
+    // door receipts are buffered here and pushed after Pass 2, where
+    // `upsertGraphCore` emitted them.
+    const doorReceipts: WikiDiagnosticInput[] = [];
+    for (const { node, fact, id, outcome, slotType } of typedAtDoor) {
+      const final = normalizeForWrite(this.ontologyService, fact, manifest, mode, outcome, diagBase, id);
+      for (const receipt of final.receipts) {
+        doorReceipts.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
+      }
+      node.type = final.normalized.okf_type ?? '';
+      if (final.typedByClassifier && typing) typing.counters.typed++;
+      if (outcome?.kind === 'accepted' && final.normalized.okf_type !== slotType) {
+        titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: final.normalized.okf_type });
+      }
+    }
+
     // Pass 2: resolve every staged edge against the finalized title
     // index. By this point the index contains both surviving prior
     // facts (excluding this sourceRef) AND every replacement fact from
@@ -1023,17 +1053,7 @@ export class IngestionService {
       }
     }
 
-    // Settle each node's type and emit its door receipts against the final
-    // in-transaction manifest and mode, after every other buffered diagnostic of
-    // this pass: the position `upsertGraphCore` emitted them in before.
-    for (const { node, fact, id, outcome } of typedAtDoor) {
-      const final = normalizeForWrite(this.ontologyService, fact, manifest, mode, outcome, diagBase, id);
-      for (const receipt of final.receipts) {
-        diagBuffer.push({ ...receipt, detail: { ...receipt.detail, sourceRef } });
-      }
-      node.type = final.normalized.okf_type ?? '';
-      if (final.typedByClassifier && typing) typing.counters.typed++;
-    }
+    for (const receipt of doorReceipts) diagBuffer.push(receipt);
 
     await this.upsertGraphCore(
       entityId,

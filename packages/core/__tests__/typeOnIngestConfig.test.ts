@@ -3,6 +3,7 @@ import {
   resolveSystemOneTypeOnIngest, resolveSystemOneTypeOnWrite, resolveTypingMinConfidence, __resetWarnOnceForTests,
 } from '../src/utils/engineDefaults';
 import { canEngageIngestTyping, canEngageWriteTyping, classifyFactsForWrite } from '../src/services/typing/typeOnWrite';
+import { ONTOLOGY_ABSTAIN_SENTINEL } from '../src/utils/ontology';
 import type { OntologyManifest, WikiConfig, WikiOptions } from '../src/types';
 
 const man = (n: number, extra: string[] = []): OntologyManifest => ({
@@ -59,7 +60,9 @@ describe('canEngageIngestTyping (§2, Test plan 3)', () => {
     expect(canEngageWriteTyping(w, { classify }, 'strict', man(254))).toBe(true);
     expect(canEngageIngestTyping(ingestOn, { classify }, 'strict', man(255))).toBe(false);
     expect(canEngageWriteTyping(w, { classify }, 'strict', man(255))).toBe(false);
-    const reserved = man(1, ['__abstain__']);
+    const reserved = man(1, [ONTOLOGY_ABSTAIN_SENTINEL]);
+    expect(canEngageIngestTyping(ingestOn, { classify }, 'strict', reserved)).toBe(false);
+    expect(canEngageWriteTyping(w, { classify }, 'strict', reserved)).toBe(false);
     expect(canEngageIngestTyping(ingestOn, { classify }, 'strict', reserved)).toBe(
       canEngageWriteTyping(w, { classify }, 'strict', reserved),
     );
