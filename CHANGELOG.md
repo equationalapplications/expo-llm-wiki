@@ -1,3 +1,14 @@
+## [9.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.17.0...v9.18.0) (2026-11-24)
+
+### Features
+
+* **core:** events.forgotten_at — forgotten events stop being raw material (specs/forget-event-exclusion §1-§6) ([c3da30d](https://github.com/equationalapplications/expo-llm-wiki/commit/c3da30da0b5778b1a02dd0a878cad1d678ad6b0f))
+
+### Bug Fixes
+
+* **core:** exact forgotten-event checkpoint decrement; guard pre-v19 stores (specs/forget-event-exclusion §2, §5) ([4ca5027](https://github.com/equationalapplications/expo-llm-wiki/commit/4ca50274500fcc58d9a215342c8214500bbba121))
+* **core:** forgotten-event prune probe, pre-v19 notes and tests (specs/forget-event-exclusion §2, §5) ([e5e6532](https://github.com/equationalapplications/expo-llm-wiki/commit/e5e6532ac8542329fba409159fac875af8b3a81d))
+
 ## [9.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.2...v9.17.0) (2026-11-24)
 
 ### Features
