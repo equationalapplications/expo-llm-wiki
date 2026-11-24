@@ -2,7 +2,7 @@
 
 **Status:** Implemented (2026-11-23, PR #476). Issue #473.
 **Date:** 2026-11-23
-**Intent check:** This is a honest-reporting fix (`INTENT.md` rule 6,
+**Intent check:** This is an honest-reporting fix (`INTENT.md` rule 6,
 "Honest reporting"). A diagnostic is a report to the host that something
 happened. When `importDump` throws and the transaction rolls back, nothing
 happened, and a diagnostic that was already emitted says otherwise. The fix
@@ -23,7 +23,7 @@ written, but the host's `onDiagnostic` has already been told that fact a had
 an invalid pointer. The host sees a refusal report for an import that never
 happened.
 
-## Root cause (evidence on main, `dd6e2a4c`; line numbers below are from that commit. Re-audited 2026-11-23 on main `b70247ee` after PR #469 landed: the inline `source_pointer_invalid` emit moved to `:458`, the buffer to `:255`, the flush to `:706`; no other inline emit is reachable inside the transaction, and the audit table is unchanged)
+## Root cause (evidence on main, `dd6e2a4c`; line numbers below are from that commit. Re-audited 2026-11-23 on main `b70247ee` after PR #469 landed: the inline `source_pointer_invalid` emit moved to `:458`, the buffer to `:255`, the flush to `:706`; no other inline emit is reachable inside the transaction, and the audit table is unchanged. The refs below are historical; now `:458` / `:704-707`)
 
 `packages/core/src/services/ImportExportService.ts`:
 
@@ -104,8 +104,10 @@ that entity's stored-source refusals.
    diagnostics are discarded with its rollback. This per-entity atomicity is
    existing behavior and is not changed here.
 4. Diagnostic payload and order for a successful import are unchanged except
-   that `source_pointer_invalid` now arrives with the other refusals after
-   commit rather than before the commit-time count diagnostics. Hosts keyed
+   that `source_pointer_invalid` moves from during the transaction to the
+   post-commit flush. One ordering shift: across facts, buffered codes now
+   arrive in push order (for example fact 1 `derived_events_invalid` before
+   fact 2 `source_pointer_invalid`, previously the reverse). Hosts keyed
    on code are unaffected. The diagnostics guide and `WikiDiagnosticCode`
    docs need no change; if either states "emitted during import" the
    implementation PR corrects it.
