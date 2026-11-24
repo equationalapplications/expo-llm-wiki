@@ -64,6 +64,7 @@ describe('callLlm', () => {
     });
   });
 });
+
 describe('callLlm reservation hygiene', () => {
   it('provider throw, malformed result: no reservation, no charge', async () => {
     const m1 = new UsageMeter(10_000);

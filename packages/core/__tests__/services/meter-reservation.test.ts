@@ -515,7 +515,7 @@ describe('meter reservation: stop classification', () => {
     for (const budget of [full.tokensUsed - 1, full.tokensUsed - 150, full.tokensUsed - 400, full.tokensUsed - 800]) {
       const r = await run(budget);
       expect(r.stoppedReason.reason).toBe('budget_exhausted');
-      expect(r.tokensUsed).toBeLessThanOrEqual(budget + 0); // holds stop concurrent calls from overshooting this budget
+      expect(r.tokensUsed).toBeLessThanOrEqual(budget); // holds stop concurrent calls from overshooting this budget
       exhausted++;
     }
     expect(exhausted).toBe(4);

@@ -387,7 +387,7 @@ would publish a major, `AGENTS.md`); no `CHANGELOG.md` or `"version"` edit.
 
 ## Files touched
 
-Implementation (not in this PR):
+Implemented in PR #479:
 
 - `utils/usage.ts`: `reserved`, `remaining`, `reserve`, `settle`, `release`,
   `UsageReservation`; class comment.
@@ -398,8 +398,7 @@ Implementation (not in this PR):
 - Tests (below). No change to `typeOnWrite.ts`, `MaintenanceService.ts`,
   `MaintenanceScheduler.ts`, the librarian strategies, or `BoundedLlmCall.ts`.
 
-This PR (spec draft): `specs/meter-reservation/spec.md` only. No `plan.md` or
-`LEDGER.md` until the spec gate closes (`specs/README.md`).
+`plan.md` and `LEDGER.md` were removed in the cleanup commit (`specs/README.md`).
 
 ## Test plan
 
@@ -477,7 +476,7 @@ providers.
 
 ## Open questions for Kurt
 
-Owner-approved 2026-11-23; all open-question defaults accepted. Each question below is answered by its stated default.
+Resolved 2026-11-23: all seven defaults approved by the owner. Each question below is answered by its stated default.
 
 1. **Hold size for `classify`.** Options: (a) input estimate only, per the
    issue (probe still spends 440 of 250); (b) input estimate x 2 (probe spends

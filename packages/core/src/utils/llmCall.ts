@@ -42,12 +42,11 @@ export async function callLlm(
   prompts: { systemPrompt: string; userPrompt: string },
 ): Promise<string> {
   const promptEstimate = estimateTokens(prompts.systemPrompt) + estimateTokens(prompts.userPrompt);
-  const reservation = ctx.meter?.reserve(promptEstimate);
-
   const provider = options.llmProvider;
   const params = { systemPrompt: prompts.systemPrompt, userPrompt: prompts.userPrompt };
   let text: string;
   let record: UsageRecord;
+  const reservation = ctx.meter?.reserve(promptEstimate);
   try {
     let reported: { inputTokens: number; outputTokens: number } | undefined;
     if (typeof provider.generateTextWithUsage === 'function') {
@@ -95,11 +94,10 @@ export async function callClassify(
 ): Promise<ClassifyResponse> {
   const inputEstimate =
     estimateTokens(request.state) + estimateTokens(JSON.stringify(request.questions));
-  const reservation = ctx.meter?.reserve(inputEstimate, inputEstimate * CLASSIFY_HOLD_FACTOR);
-
   const provider = options.llmProvider;
   let response: ClassifyResponse;
   let record: UsageRecord;
+  const reservation = ctx.meter?.reserve(inputEstimate, inputEstimate * CLASSIFY_HOLD_FACTOR);
   try {
     if (typeof provider.classify !== 'function') {
       throw new TypeError('callClassify requires a provider with classify()');
