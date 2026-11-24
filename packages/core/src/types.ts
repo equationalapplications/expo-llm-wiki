@@ -687,9 +687,20 @@ export interface WikiFact {
   superseded_by?: string | null;
   /** Epoch ms the supersession was recorded (transaction time). Audit only. */
   superseded_at?: number | null;
+  /** The `valid_to` this fact carried immediately before its current supersession (a scheduled end `supersede()` overwrote). Restored by `reopen()`. Absent when the fact was open-ended or the supersession predates schema 18. */
+  prior_valid_to?: number | null;
   // --- Source pointer (specs/source-pointers). Present on mapped facts only when non-null. ---
   /** Structured provenance from this librarian fact to its source event, with the verified quote. Null for legacy/heal/ingest facts. */
   source_pointer?: WikiSourcePointer | null;
+  /**
+   * Ids of further events this fact's stored wording also rests on, beyond
+   * the one `source_pointer` names (specs/inplace-update-provenance). Written
+   * by the ops librarian when it merges event text into an existing fact. A
+   * contribution ledger, not a second pointer: no quote, no position. Present
+   * only when non-empty; absent for facts updated before schema v18.
+   * `forget({ eventId })` matches it.
+   */
+  derived_events?: string[];
 }
 
 export interface WikiTask {
@@ -999,11 +1010,14 @@ export type WikiDiagnosticCode =
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
   | 'external_deletion_pending'
+  | 'supersede_scheduled_end_replaced'
   | 'external_deletion_discarded'
   | 'guidance_too_long'
   | 'guidance_resolver_failed'
   | 'source_pointer_unresolved'
   | 'source_pointer_invalid'
+  | 'source_event_gone'
+  | 'derived_events_invalid'
   | 'source_store_source_too_large'
   | 'source_store_budget_exceeded'
   | 'source_store_hash_mismatch'
@@ -1063,6 +1077,8 @@ export interface WikiDiagnosticDetail {
   oldestEnqueuedAt?: number;
   /** external_deletion_pending only: highest attempt count among pending rows. */
   maxAttempts?: number;
+  /** supersede_scheduled_end_replaced only: epoch ms of the scheduled end the supersede overwrote (a timestamp, not content). */
+  priorValidTo?: number;
   /** guidance_too_long only: length of the refused value in UTF-16 code units. */
   guidanceLength?: number;
   /** guidance_too_long only: which configured value was refused. */
@@ -1301,7 +1317,9 @@ export interface MemoryDump {
    * Source-pointer parse report (specs/source-pointers §Export, import, and OKF).
    * Present ONLY when `parseOkfBundle` dropped a malformed `source_pointer`
    * value: entry ids and a reason slug — never raw pointer values, because a
-   * pointer can carry quote text. Export-only metadata; `importDump` ignores it.
+   * pointer can carry quote text. Also carries `derived_events_malformed`
+   * entries for a dropped OKF `derived_events` list. Export-only metadata;
+   * `importDump` ignores it.
    */
   dropped_pointer_values?: Array<{ factId: string; reason: string }>;
 }
@@ -1547,7 +1565,8 @@ export interface ForgetParams {
   sourceHash?: string;
   /**
    * Soft-delete every librarian fact whose `source_pointer` names this event
-   * id (entity-scoped; exact match, no normalization — event ids are
+   * id, or whose `derived_events` list contains it (a fact the librarian
+   * merged this event's text into is deleted whole; entity-scoped; exact match, no normalization — event ids are
    * engine-generated). Mutually exclusive with every other selector;
    * `clearAll` excludes it. Removal reports through the return value and the
    * per-row outbox DELETE events. See `specs/forget-by-event-id/` (issue #386).
@@ -1748,9 +1767,9 @@ export class WikiDraftNotFound extends Error {
   }
 }
 
-export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity' | 'already_expired' | 'invalid_interval';
+export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity' | 'already_expired' | 'invalid_interval' | 'not_superseded' | 'successor_live';
 
-/** Thrown by `supersede()` and `expire()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
+/** Thrown by `supersede()`, `expire()` and `reopen()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
 export class WikiSupersedeError extends Error {
   readonly code = 'WIKI_SUPERSEDE_REJECTED' as const;
   readonly reason: WikiSupersedeReason;

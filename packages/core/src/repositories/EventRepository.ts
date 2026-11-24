@@ -69,6 +69,25 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * The subset of `ids` that exist as events of `entityId` (specs/
+   * inplace-update-provenance §3). Chunked so a large batch stays under the
+   * bound-variable limit. Pass `tx` to read inside the caller's transaction.
+   */
+  async findExistingIds(entityId: string, ids: readonly string[], tx?: SQLiteAdapter): Promise<Set<string>> {
+    const executor = this.getExecutor(tx);
+    const found = new Set<string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = await executor.getAllAsync<{ id: string }>(
+        `SELECT id FROM ${this.prefix}events WHERE entity_id = ? AND id IN (${chunk.map(() => '?').join(',')})`,
+        [entityId, ...chunk],
+      );
+      for (const r of rows) found.add(r.id);
+    }
+    return found;
+  }
+
+  /**
    * Return the most recent events for an entity, newest first.
    * Defaults to a limit of 50.
    */

@@ -126,6 +126,11 @@ writes it back from the dump's `edges`.
   and a malformed map is dropped at parse time: `parseOkfBundle` reports it in
   `dropped_pointer_values` instead of failing — check that field on hosts you import into.
   The `source_pointer_invalid` diagnostic fires only on the JSON dump-import path.
+- A librarian fact whose text the ops librarian merged in place can carry a `derived_events`
+  frontmatter list: the ids of further events its wording rests on (see
+  [Maintenance](/expo-llm-wiki/guides/maintenance/#librarian-strategies)). It is emitted only when
+  non-empty. A malformed list is dropped at parse time and reported in `dropped_pointer_values`
+  with the reason `derived_events_malformed` (ids only, never the value).
 - Stored source text (added in 9.2.0): `exportDump()` embeds each entity's stored sources as
   `storedSources` (text, hashes, and the passage offsets). `importDump()` re-cuts the passages
   from the text, so the dumped offsets are fidelity information only, and returns

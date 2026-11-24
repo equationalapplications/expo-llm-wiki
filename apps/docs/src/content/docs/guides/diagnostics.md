@@ -47,6 +47,7 @@ const wiki = createWiki(db, {
 | `embedding_failed` | `embed()` failed for a fact |
 | `hook_failed` | A host hook (for example `onEmbeddingPersisted`) failed |
 | `background_job_failed` | An auto-run librarian or heal job failed |
+| `supersede_scheduled_end_replaced` | A supersede overwrote a fact's future-dated `valid_to` (`severity: 'info'`; `operation: 'supersede'` or `'librarian'`; `detail.factId`, `detail.priorValidTo`). The old end is kept in `prior_valid_to`; `reopen()` restores it. See [Temporal](/expo-llm-wiki/guides/temporal-facts/#rules) |
 | `external_deletion_pending` | Removals are still owed to your vector index (`operation: 'externalDeletion'`; `detail.count`, `detail.oldestEnqueuedAt`, `detail.maxAttempts`). On the first `setup()` with a hook, a count with `maxAttempts: 0` and an old `oldestEnqueuedAt` is usually the backlog from before the store had an index; see [Adding an index to an existing store](/expo-llm-wiki/guides/deleting-data/#adding-an-index-to-an-existing-store). See also [Deleting data](/expo-llm-wiki/guides/deleting-data/#run-and-watch-the-removals) |
 | `external_deletion_discarded` | Owed removals were dropped without a call because of `forceDeleteIgnoreRankerHook` (`detail.count`) |
 | `heal_skipped` | Heal skipped work |
@@ -58,7 +59,9 @@ const wiki = createWiki(db, {
 | `librarian_gate` / `librarian_op_rejected` / `resolve_failed` / `contradicts_document` | Outcomes of the ops librarian |
 | `librarian_rewritten` / `librarian_superseded` | The ops librarian rewrote an engine-inferred fact in place (`detail.factId`), or ended a fact's validity with a replacement (`detail.factId`, `detail.replacementId`). Ids only, never text |
 | `node_type_assigned` | A fact got an ontology node type (`detail.okfType`, `detail.writer`: `'classifier'`, `'llm'` or `'inherited'`). The librarian and `ingestDocument()` emit it at the write door for model-typed facts (`'llm'`), and for classifier-typed facts under `systemOne.typeOnWrite: 'auto'` / `systemOne.typeOnIngest: 'auto'` (`'classifier'`, with `detail.confidence`); ingest receipts carry `detail.sourceRef` |
-| `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one |
+| `source_pointer_unresolved` | A stored librarian fact carries no source pointer because the model answer could not yield one. Also emitted when the librarian merged such a candidate into an existing fact in place: `detail.factId` is then the merged fact, and its `derived_events` list was not extended |
+| `source_event_gone` | An ops librarian candidate was dropped whole at apply time because the event it came from no longer exists (deleted outside the engine while the pass ran, for example with direct SQL). `detail` is `{ itemIndex, sourceRef }`, the event id only. Candidates whose pointer could not be resolved are not dropped |
+| `derived_events_invalid` | A dump import met a malformed `derived_events` value and stored null (`detail.factId` only; OKF frontmatter reports it through `dropped_pointer_values` with the reason `derived_events_malformed`) |
 | `source_pointer_invalid` | A dump import met a malformed source pointer value and stored a null pointer (OKF frontmatter reports malformed pointers differently: check `dropped_pointer_values` on the `parseOkfBundle` result) |
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |

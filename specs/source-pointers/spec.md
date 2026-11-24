@@ -146,6 +146,12 @@ when each is set.
 
 ### One pointer, not a list
 
+> **As landed 2026-11-23 (PR #469, `specs/inplace-update-provenance/`):** the
+> pointer stays single and is never re-attributed. A separate nullable column,
+> `entries.derived_events` (schema v18), records the further events an
+> in-place librarian merge drew on. It is a contribution ledger, not a second
+> pointer: no quote, no position.
+
 A fact carries one pointer. The ops prompt contract already says "the
 single event" (`prompts.ts:85`), so the engine has exactly one named
 event per fact. A list would add shape with no writer.

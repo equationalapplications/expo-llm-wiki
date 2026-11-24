@@ -41,6 +41,14 @@ to this issue (new deletion semantics on a JSON column).
 
 ### D1 — Match predicate: slot-typed, planner-safe JSON match
 
+> **As landed 2026-11-23 (PR #469, `specs/inplace-update-provenance/`):** the
+> shared predicate is widened to `EntryRepository.EVENT_MATCH_SQL`
+> (`POINTER_EVENT_MATCH_SQL` is kept as an alias): a row also matches when its
+> `derived_events` list contains the event id, through a `json_each` term under
+> its own `json_valid` and `json_type = 'array'` guard, and requiring
+> `json_each.type = 'text'` on the element. The event id binds
+> twice. The text below describes the original single-term form.
+
 A fact matches when, entity-scoped:
 
 ```sql
@@ -182,6 +190,11 @@ implementation detail; it is the acceptance surface (test 11, which runs
 with the outbox enabled).
 
 ### D4 — Deletion scope: entries only
+
+> **As landed 2026-11-23 (PR #469):** the entries this selector soft-deletes
+> now include facts that merely absorbed the event (listed in
+> `derived_events`), deleted whole. Event rows are still untouched; the
+> follow-up `forget-event-exclusion` (issue #472) is where that changes.
 
 The selector soft-deletes **entries** (librarian facts, the only rows that
 carry `source_pointer`). Explicit non-touches:
