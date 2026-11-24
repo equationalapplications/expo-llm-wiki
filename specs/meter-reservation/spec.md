@@ -141,8 +141,14 @@ the input estimate; the meter is later charged real input plus output
 past the budget by its own output. The 2026-07-13 backfill spec already says
 so ("Overshoot honesty",
 `docs/superpowers/specs/2026-07-13-ontology-backfill-spec.md:438-441`). This
-spec does not change that (Open question 4). It removes the **multiplication**
-of that overshoot by the number of in-flight calls.
+spec does not change that (Open question 4). It reduces the **multiplication**
+of that overshoot by the number of in-flight calls when the hold covers the
+call's real usage. It remains when a provider's real usage exceeds the hold
+(a classify adapter that wraps its own prompt, non-Latin text where chars/4
+undercounts): a reviewer's simulation with budget 1000, estimate 100 and 500
+reported per call gives 2 calls / 1000 at concurrency 1, 5 calls / 2500 at
+concurrency 8, and 8 calls / 4000 on the old meter. Overspend is reduced, not
+impossible.
 
 ### Why the issue's literal fix is not enough
 
@@ -265,7 +271,9 @@ With the 2x hold, the probe (budget 250, estimate 60, actual 110, concurrency
 4, 12 facts) runs: worker 1 reserves (hold 120), worker 2 reserves (hold 240),
 worker 3's `fits(60)` sees `remaining = 10` and throws; the step stops asking.
 Workers 1 and 2 settle at 110 each: `tokensUsed = 220`, two calls, the other
-ten facts `unattempted`. That is what concurrency 1 does with the same budget.
+ten facts `unattempted`. That equals what concurrency 1 does with the same budget when each call's
+real usage stays within its hold (the probe: 110 against a 120 hold); a
+provider that reports more than the hold can still overshoot (below).
 
 Reporting keeps its shape: write-time typing returns `unattempted` counts and
 the scheduler stops the run as `budget_exhausted`
@@ -450,7 +458,11 @@ Targeted vitest only; each item names the file it extends.
    `tokensUsed` reports 300; the next call is refused; `remaining` is 0, not
    negative.
 
-As landed (2026-11-23): item 4's old-meter copy compares the meter and the
+As landed (2026-11-23): The fix commit's subject (`ab690e7e`, "...cannot overspend") overstates
+the fix: the spec and docs wording is authoritative (overspend is reduced, not
+impossible). Item 5's reserve/settle/release spy covers the probe only
+(`meter-reservation.test.ts`); the scheduler pins catch a leak indirectly
+through `remaining`. Item 4's old-meter copy compares the meter and the
 check-then-charge sequence (not the old wrappers); the default-config
 `runPendingMaintenance` pin is three inline snapshots recorded on the
 pre-change source. Item 7's concurrency-4 scheduler case runs through

@@ -89,13 +89,11 @@ describe('meter reservation: the issue #475 probe', () => {
     }
   });
 
-  it('a budget below the input estimate is refused at both concurrencies; estimate <= budget < hold admits a solo call', async () => {
+  it('a budget below the input estimate is refused; estimate <= budget < hold admits a solo call', async () => {
     const options = { llmProvider: { generateText: async () => '', classify: vi.fn(probeClassify) }, config: {} } as unknown as WikiOptions;
-    for (const _c of [1, 4]) {
-      const err = await callClassify(options, ctxFor(new UsageMeter(59)), requestWithEstimate(60)).catch((e) => e);
-      expect(err).toBeInstanceOf(WikiBudgetExhausted);
-      expect(err.requiredEstimate).toBe(60);
-    }
+    const err = await callClassify(options, ctxFor(new UsageMeter(59)), requestWithEstimate(60)).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBudgetExhausted);
+    expect(err.requiredEstimate).toBe(60);
     await expect(callClassify(options, ctxFor(new UsageMeter(100)), requestWithEstimate(60))).resolves.toBeDefined();
   });
 

@@ -31,9 +31,9 @@ export function validUsage(u: unknown): u is { inputTokens: number; outputTokens
 }
 
 /**
- * The one place core calls the host's text model (spec §6.3). Pre-flights the
- * prompt estimate against the meter, prefers generateTextWithUsage, records
- * usage, and optionally reports it. Method-call syntax keeps `this` bound to
+ * The one place core calls the host's text model (spec §6.3). Reserves the
+ * prompt estimate on the meter, prefers generateTextWithUsage, settles real
+ * usage (releases on failure), and optionally reports it. Method-call syntax keeps `this` bound to
  * the provider.
  */
 export async function callLlm(
@@ -82,8 +82,8 @@ export async function callLlm(
 
 /**
  * The one place core calls the host's classifier (errata E1). Wraps the
- * provider.classify call: pre-flights the input estimate against the meter,
- * records usage (reported when well-formed, estimated otherwise), and emits
+ * provider.classify call: reserves the input estimate (with a hold) on the meter,
+ * settles usage (reported when well-formed, estimated otherwise; releases on failure), and emits
  * llm_usage under reportLlmUsage. Every classify call site must go through
  * this wrapper.
  */

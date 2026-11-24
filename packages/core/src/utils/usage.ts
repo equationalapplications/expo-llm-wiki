@@ -97,8 +97,8 @@ export class UsageMeter {
 }
 
 /**
- * Thrown by callLlm before calling the provider when the prompt estimate
- * exceeds the meter. Internal control flow: runBatched and the librarian
+ * Thrown by UsageMeter.reserve (via callLlm/callClassify) before calling the
+ * provider when the input estimate exceeds the unreserved remainder. Internal control flow: runBatched and the librarian
  * strategies catch it; it never reaches a host.
  */
 export class WikiBudgetExhausted extends Error {

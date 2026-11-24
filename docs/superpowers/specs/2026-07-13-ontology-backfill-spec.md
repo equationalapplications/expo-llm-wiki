@@ -440,8 +440,9 @@ Rule 7 (INTENT): nothing spends the allowance invisibly.
   (`usage.ts:39`). Overshoot is therefore bounded only by in-flight
   concurrency (`chunkConcurrency`), not by any estimate.
   *(2026-11-23: in-flight calls are now held against the budget before they
-  start; see `specs/meter-reservation`. A single call's own output can still
-  pass the budget.)*
+  start, which reduces the overshoot; see `specs/meter-reservation`. A call's
+  own output, or real usage above the hold, can still pass the budget, and
+  parallel calls can add up.)*
 - **Early probe (metered):** on the FIRST context-overflow error, `extract.ts`
   runs one minimal-prompt probe before the halving/segmentation retry tree,
   memoized once per pass and metered like every other model call (INTENT
