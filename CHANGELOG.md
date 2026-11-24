@@ -1,3 +1,9 @@
+## [9.16.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.1...v9.16.2) (2026-11-24)
+
+### Bug Fixes
+
+* **core:** reserve budget before each metered call so parallel calls no longer multiply the overshoot (spec §1-§3, §8; [#475](https://github.com/equationalapplications/expo-llm-wiki/issues/475)) ([229ac7c](https://github.com/equationalapplications/expo-llm-wiki/commit/229ac7c8165d020d62ed6862de6a01fb8e0704e4))
+
 ## [9.16.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.0...v9.16.1) (2026-11-24)
 
 ### Bug Fixes
