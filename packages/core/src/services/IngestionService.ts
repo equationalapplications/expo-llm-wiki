@@ -413,7 +413,7 @@ export class IngestionService {
       // held, so look now and spend no classify call on a write that cannot commit
       // (specs/ingest-time-typing §9). Partial writes never claim the hash.
       let hashHeldElsewhere = false;
-      if (engaged && failedChunks === 0) {
+      if (engaged && failedChunks === 0 && onDuplicateHash === 'ingest') {
         const holder = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
         hashHeldElsewhere = holder !== null && holder !== sourceRef;
       }

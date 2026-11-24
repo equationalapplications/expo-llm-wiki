@@ -309,12 +309,12 @@ describe('duplicate-hash race (Test plan 12)', () => {
     const t = await mk({ config: withCfg({ reportLlmUsage: true } as WikiConfig), facts: [F('Ada')], classify: () => choice('person') });
     const repo = (t.wiki as any).sourceRefIndexRepo;
     const original = repo.findActiveByEntityAndHash.bind(repo);
-    // Call 1 is the 'skip' pre-check, call 2 the engaged typing stage's own look: the
-    // collision lands after both (a writer that commits between the check and our write).
+    // Call 1 is the 'skip' pre-check; the collision lands right after it (a writer that
+    // commits between the check and our write). The typing stage's own look is 'ingest'-mode only.
     let calls = 0;
     repo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: unknown) => {
       calls++;
-      if (calls === 2) {
+      if (calls === 1) {
         await t.db.runAsync(
           `INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at) VALUES ('sri_x', ?, ?, 'canonical.md', 0, NULL)`,
           [entityId, hash],

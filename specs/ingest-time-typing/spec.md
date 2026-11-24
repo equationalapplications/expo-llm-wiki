@@ -1,6 +1,6 @@
 # Spec — Step 14: Ingest-time typing
 
-**Status:** Implemented (2026-11-23, PR #478)
+**Status:** Implemented (2026-11-24, PR #478)
 **Date:** 2026-11-23
 **Intent check:** Rule 1 (the classifier is the host's `llmProvider.classify`;
 core adds no provider, key or network client). Rule 2 (no schema change:
@@ -347,8 +347,8 @@ carries no `UsageMeter`, and its generative chunk calls are unmetered today
 
 - The classify calls pass `meter: undefined`. They are exactly as metered as
   the generative calls beside them: not at all. `WikiBudgetExhausted` is
-  unreachable on this path; `typing.unattempted` is always `0` here and the
-  field stays for shape parity with the librarian's counters.
+  unreachable on this path; there is no `typing.unattempted` field on the
+  public result (see §9, *As built*).
 - **Visibility (rule 7's substance).** Every classify call is reported
   through `llm_usage` with `operation: 'ingest'`, `trigger: 'call'`, when
   `reportLlmUsage` is on (`llmCall.ts:107-115`), `estimated: true` when the
@@ -572,10 +572,13 @@ sentence each.
 - `packages/core/src/services/typing/typeOnWrite.ts` — shared
   `typingEngages` + `canEngageIngestTyping` (§2); `classifyFactsForWrite`
   optional `opts.concurrency` (§3); `TypingCallContext.operation` docstring
-  says ingest now passes `'ingest'`; `TypingCounters` moves to `types.ts`
-  and is re-imported (§9).
-- `packages/core/src/types.ts` — `TypingCounters` (public); `IngestDocumentResult.typing?`
-  (§9).
+  says ingest now passes `'ingest'`; `TypingCounters` stays internal here,
+  with a `toIngestCounters` helper (§9, *As built*).
+- `packages/core/src/types.ts` — public `IngestTypingCounters`;
+  `IngestDocumentResult.typing?` (§9, *As built*).
+- `packages/react/src/useWikiIngest.ts` — mirror `typing?` on the hook's
+  result type; `apps/docs/.../reference/types.md` — "Ingest result" gains
+  `typing?`.
 - `packages/core/src/services/IngestionService.ts` — engagement check and
   `engaged` hoist (`:177-183`); typing stage between `:389` and `:394`;
   `normalizeForWrite` in `runFullUpsertGraph` (`:903-907`, `:914`) and
@@ -688,7 +691,7 @@ Targeted files only during the lane; the full suite at the gate.
 11. **Metering.** No `UsageMeter` is constructed; a provider that counts
     `fits` calls sees none; `llm_usage` fires once per classify call with
     `operation: 'ingest'`, `estimated: true` when the provider reports no
-    counts; `typing.unattempted` is `0`.
+    counts; the result's `typing` has no `unattempted` property (§9, *As built*).
 12. **Duplicate-hash race.** When the write loses the race, no typing
     receipt is emitted (only `LLM_PASS_DIAGNOSTIC_CODES`), `llm_usage` for
     the classify calls already fired, and the result/throw carries no
