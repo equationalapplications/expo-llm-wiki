@@ -134,6 +134,13 @@ surfaces errors; a failed step fails the erase and reports where it stopped):
    **no event holds to report** — events are simply never deleted. Holds reporting in erase
    covers **external-removal holds only**. (The `'legacy'`-mode watermark caveat below applies
    to **standalone `runPrune`** calls, not to erase under the null pin.)
+
+   > **As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/` §5):**
+   > unforgotten events are kept by erase (`retainEventsFor: null`); events the host
+   > forgot with `forget({ eventId })` carry `forgotten_at` and are deleted by this same
+   > step through the soft-delete retention block, with no hook and so no hold. The
+   > sentence "erase has **no event holds to report**" stays true. The ruled text above
+   > is left as written.
    Inheriting `runPrune`'s safety
    holds: no hard-delete of facts whose external-index removal is unconfirmed (guide 55-56).
    Holds are **caught per entity** (`PrunePartialFailureError`, `MaintenanceService.ts:452-455`): erase
@@ -588,6 +595,7 @@ them is `forget({ sourceRef })`** — T4 delta MAJOR-2 / owner ruling E; on an e
 the host calls `forget({ sourceRef })` for every stored document of the subject), the
 host-connection pragma
 requirement, the copy census (events kept unless
+*[as amended 2026-11-24, PR #481: events the host forgot with `forget({ eventId })` are deleted by erase]*
 `clearAll({ includeEvents: true })` — the documented host-step carve-out, owner ruling D;
 drain the outbox; host-stored documents survive erase unless
 `forget({ sourceRef })`; manifest stays; exports bring data
@@ -688,7 +696,7 @@ a convenience follow-up.
    (owner ruling B: the pragma is unconditional at FULL; this test is its evidence).
 3. **erase() holds:** with an unconfirmed external removal, `erase()` hard-deletes nothing
    held and reports the holds via `PrunePartialFailureError` semantics. **Events: erase
-   deletes none** (`retainEventsFor: null`) — assert the event count is unchanged after
+   deletes none** (`retainEventsFor: null`) *[as amended 2026-11-24, PR #481: erase deletes none of the unforgotten events; events forgotten with `forget({ eventId })` are deleted]* — assert the event count is unchanged after
    erase (T3 delta-8 MAJOR-1; the `event_retention_held` diagnostic is out of scope for
    erase). Note step 1's internal `syncEntries` **ignores `false` returns** (`:451` discards
    the result) — step 6's surfaced `false` is the only failure observer, which is why step 6
@@ -806,6 +814,12 @@ The eight questions parked at rev 26 are now rulings; each is folded into the se
   prerequisite for any host claiming GDPR erasure; events follow the host's
   `retainEventsFor` — each host publishes its own value (GDPR
   consult §8-D reframes the carve-out around the erasure-request recipe). Folded: §6.
+  *As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/` §5):
+  events the host has not forgotten follow `retainEventsFor` and erase keeps them. An
+  event the host forgot with `forget({ eventId })` carries `forgotten_at`, follows
+  `retainSoftDeletedFor` like a forgotten fact, is hard-deleted by erase's step 1 and
+  counted by its step-9 gate. The full-wipe path stays the way to delete an entity's
+  unforgotten events on request. Ruled text above left as written.*
 - **E (source ownership).** **Document-as-host-property, no engine GC** — final. Standing
   owner principle, first-class: *"we cannot violate the founding principle of the LLM Wiki
   pattern, immutable source files."* The engine never mutates or auto-deletes source

@@ -55,7 +55,10 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   ingested), `librarian_inferred` (synthesised from events),
   `user_stated`, `user_confirmed` (a person said or confirmed it).
 - **Event** — one episodic record written with `write()`. Events are raw
-  material; the librarian turns them into facts.
+  material; the librarian turns them into facts. An event the host forgot
+  with `forget({ eventId })` is no longer raw material: it leaves reads and
+  non-backup exports, no pass consumes it, and prune then `erase()` take it
+  to gone.
 - **Source pointer** — the structured provenance an ops librarian fact
   can carry: the event it came from (`event_id`) plus, when grounding
   permits, the verified quote. When the librarian merges new text into
@@ -109,7 +112,8 @@ benchmark harness). Two browser apps live under `apps/`. A Rust crate,
   end has already passed, to an archive) once its replacement is
   forgotten or gone.
 - **Forgotten** — a fact the host deleted through `forget()` (directly
-  or through the chain or source paths), or one a heal pass removed.
+  or through the chain or source paths), or one a heal pass removed; also
+  the event row a host named with `forget({ eventId })`.
   Between that deletion and the hard delete it is soft-deleted: present
   in the file, invisible to reads. "Forgotten" is an instruction, not a
   state the storage layer has honored yet.
@@ -456,6 +460,18 @@ break the erasure promise through the export door.
 
 ## Amendments
 
+- 2026-11-24 — The glossary's Event and Forgotten entries change. An event
+  the host forgot with `forget({ eventId })` is marked, not hard-deleted: it
+  leaves reads and non-backup exports, no librarian pass consumes it, prune
+  deletes it on the soft-delete schedule, and `erase()` takes it to gone
+  and counts it in its verification. The Forgotten entry names that event
+  row beside the fact. Unforgotten events are unchanged: raw material, kept
+  by `erase()`, deleted by the host's `retainEventsFor`. Recorded with
+  `specs/forget-event-exclusion/` (issue #472, PR #481). Owner ruling,
+  2026-11-24. Why: the glossary called every event raw material, which
+  stops being true of a row the host asked to forget; keeping it through
+  `erase()` would verify an erasure over text the host asked to remove.
+  No rule text changed.
 - 2026-11-23 — The glossary's Source pointer entry gains one sentence: an
   ops librarian fact's `derived_events` list names the further events an
   in-place merge drew on, beside the pointer that is not re-attributed.

@@ -247,7 +247,9 @@ describe('WikiMemory — prompt override API', () => {
     });
     await wikiWithGlobal.setup();
 
-    vi.spyOn((wikiWithGlobal as any).eventRepo, 'count').mockResolvedValue(1);
+    // Once: write()'s threshold read; the legacy pass's all-forgotten guard
+    // (specs/forget-event-exclusion §3) must see the mock DB's real, empty log.
+    vi.spyOn((wikiWithGlobal as any).eventRepo, 'count').mockResolvedValueOnce(1);
     vi.spyOn(wikiWithGlobal.__testAccess.metadataRepo, 'getCheckpoint').mockResolvedValue({ memory: 0 });
 
     await wikiWithGlobal.write('e3', { event_type: 'observation', summary: 'trigger' });

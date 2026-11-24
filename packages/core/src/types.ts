@@ -755,6 +755,14 @@ export interface WikiEvent {
   created_at: number;
   /** Real-world time of the event (epoch ms). `created_at` stays ingestion time and remains the ordering key. */
   occurred_at?: number | null;
+  /**
+   * Epoch ms the host forgot this event with `forget({ eventId })`; absent
+   * (never null on a read) while the event is live. A forgotten event is no
+   * longer raw material: no librarian pass, heal prompt, `read()` bundle or
+   * non-backup export carries it, and prune then `erase()` hard-delete it
+   * (specs/forget-event-exclusion).
+   */
+  forgotten_at?: number | null;
 }
 
 export interface WikiEdge {
@@ -1576,7 +1584,11 @@ export interface ForgetParams {
    * merged this event's text into is deleted whole; entity-scoped; exact match, no normalization — event ids are
    * engine-generated). Mutually exclusive with every other selector;
    * `clearAll` excludes it. Removal reports through the return value and the
-   * per-row outbox DELETE events. See `specs/forget-by-event-id/` (issue #386).
+   * per-row outbox DELETE events. The event row itself is also marked
+   * forgotten (`forgotten_at`), so no librarian pass, heal prompt, `read()`
+   * bundle or non-backup export carries its text again; prune then `erase()`
+   * hard-delete it. See `specs/forget-by-event-id/` (issue #386) and
+   * `specs/forget-event-exclusion/` (issue #472).
    */
   eventId?: string;
   /** Soft-delete every fact and task of the entity, delete its edges, and delete its source-ref index rows. */
@@ -1589,7 +1601,11 @@ export interface ForgetParams {
   includeEvents?: boolean;
 }
 
-/** Result of {@link WikiMemory.forget}. `deleted.events` is present only with `includeEvents`. */
+/**
+ * Result of {@link WikiMemory.forget}. `deleted.events` is present with
+ * `includeEvents` (rows hard-deleted) and with the `eventId` selector (`0 | 1`:
+ * whether the event row itself was marked forgotten).
+ */
 export interface ForgetResult {
   deleted: { entries: number; tasks: number; events?: number };
   metadataReset?: boolean;

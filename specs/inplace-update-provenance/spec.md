@@ -339,6 +339,8 @@ and touches forget-erasure ruling D, so it needs its own owner stop; the
 re-check in §3 is written so that spec can extend the "gone" test with
 "or forgotten" in one line.
 
+> **Landed 2026-11-24 (PR #481):** the split shipped as `specs/forget-event-exclusion/` (issue #472).
+
 ## Files touched
 
 Core (`packages/core/src/`):

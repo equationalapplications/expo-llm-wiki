@@ -202,12 +202,21 @@ export async function applyOps(
     // §3: drop candidates whose source event no longer exists (a host-side
     // delete the engine's locks cannot see). One indexed SELECT per pass.
     const sourceIds = [...new Set(input.gated.map((g) => g.candidate.sourceEventId).filter((x): x is string => x !== null))];
-    const presentIds = sourceIds.length > 0 ? await deps.eventRepo.findExistingIds(entityId, sourceIds, tx) : new Set<string>();
+    // specs/forget-event-exclusion §4: "gone" now also means "forgotten".
+    const presentIds = sourceIds.length > 0 ? await deps.eventRepo.findLiveIds(entityId, sourceIds, tx) : new Set<string>();
+    // Only the ids that failed the live check pay for the second probe that
+    // tells a forgotten row from a deleted one (zero extra work otherwise).
+    const failedIds = sourceIds.filter((id) => !presentIds.has(id));
+    const stillExist = failedIds.length > 0 ? await deps.eventRepo.findExistingIds(entityId, failedIds, tx) : new Set<string>();
     const gatedLive: GatedCandidate[] = [];
     for (const g of input.gated) {
       const ev = g.candidate.sourceEventId;
       if (ev !== null && !presentIds.has(ev)) {
-        input.diagnostics.push({ ...diagBase, code: 'source_event_gone', detail: { itemIndex: g.candidate.index, sourceRef: ev } });
+        input.diagnostics.push({
+          ...diagBase,
+          code: 'source_event_gone',
+          detail: { itemIndex: g.candidate.index, sourceRef: ev, reason: stillExist.has(ev) ? 'forgotten' : 'gone' },
+        });
         continue;
       }
       gatedLive.push(g);

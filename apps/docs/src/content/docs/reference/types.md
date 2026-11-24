@@ -49,6 +49,7 @@ interface WikiEvent {
   related_entry_id?: string | null;
   created_at: number;           // ingestion time (ordering key)
   occurred_at?: number | null;  // real-world time
+  forgotten_at?: number | null; // set once forgotten with forget({ eventId }); absent while live
 }
 ```
 

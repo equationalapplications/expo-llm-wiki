@@ -203,7 +203,7 @@ export class ImportExportService {
         ? this.entryRepo.findAllByEntityIdWithBlobs(entityId, undefined, incl)
         : this.entryRepo.findAllByEntityId(entityId, undefined, incl),
       this.taskRepo.findAllByEntityId(entityId, undefined, incl),
-      this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
+      this.eventRepo.getByEntityId(entityId, opts?.maxEvents, incl),
       this.edgeRepo.getByEntityId(entityId),
       this.metadataRepo.getMeta(entitySummaryMetaKey(entityId)),
     ]);
@@ -679,9 +679,16 @@ export class ImportExportService {
             related_entry_id: event.related_entry_id ?? null,
             created_at: stamp.createdAt,
             occurred_at: stamp.occurredAt,
+            forgotten_at: event.forgotten_at ?? null,
           },
           tx,
         );
+        // Tombstone-wins (rule 13, specs/forget-event-exclusion §6): a dump's
+        // forgotten event marks a live local row. A live dump event never
+        // clears a local marker (INSERT OR IGNORE leaves the row as is).
+        if (!inserted && event.forgotten_at != null) {
+          await this.eventRepo.markForgotten(entityId, event.id, event.forgotten_at, tx);
+        }
         if (!inserted || stamp.reason === null) continue;
         if (stamp.reason === 'future') clampedEvents++;
         else restamped[stamp.reason]++;

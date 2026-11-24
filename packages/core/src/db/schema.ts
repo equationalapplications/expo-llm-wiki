@@ -130,7 +130,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       summary TEXT NOT NULL,
       related_entry_id TEXT,
       created_at INTEGER NOT NULL,
-      occurred_at INTEGER
+      occurred_at INTEGER,
+      forgotten_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}events_entity_idx ON ${prefix}events(entity_id, created_at DESC);

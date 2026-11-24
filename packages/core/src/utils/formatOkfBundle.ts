@@ -197,7 +197,9 @@ function buildEventLogEntries(
   events: WikiEvent[],
   factIdToFilename: Map<string, string>,
 ): OkfLogEntry[] {
-  return events.map(e => {
+  // specs/forget-event-exclusion §6: a forgotten event's text never reaches
+  // the OKF journal (the JSON dump carries the marker for backups).
+  return events.filter(e => e.forgotten_at == null).map(e => {
     const factFilename = e.related_entry_id ? factIdToFilename.get(e.related_entry_id) : undefined;
     const summary = e.summary
       .replace(/\\/g, '\\\\')

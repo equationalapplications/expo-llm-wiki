@@ -5,7 +5,7 @@ import { emitDiagnostic } from './utils/diagnostics';
 import { setupDatabaseWithGate } from './db/migrationGate';
 import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
-import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex, createEntriesDeletedIndex } from './db/migrations';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex, createEntriesDeletedIndex, createEventsForgottenIndex } from './db/migrations';
 import {
   WikiOptions,
   MemoryBundle,
@@ -458,6 +458,7 @@ export class WikiMemory {
       await this.db.withTransactionAsync(async (tx) => {
         await createLegacySourceTypeIndex(tx, this.prefix);
         await createEntriesDeletedIndex(tx, this.prefix);
+        await createEventsForgottenIndex(tx, this.prefix);
         await writeNormalizeStamp(this.metadataRepo, tx);
         await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), tx);
       });

@@ -198,6 +198,16 @@ export class MetadataRepository extends BaseRepository {
   }
 
   /**
+   * True when `table` has `column`. A never-set-up or not-yet-migrated store
+   * (the #316 recovery path) lacks columns later migrations add; callers that
+   * must run there probe first.
+   */
+  async columnExists(table: string, column: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const cols = await this.getExecutor(tx).getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    return cols.some((c) => c.name === column);
+  }
+
+  /**
    * Returns the set of distinct `entity_id` values across entries/tasks/events.
    *
    * Deliberately widened from a prior `WHERE deleted_at IS NULL` form: the
@@ -207,12 +217,15 @@ export class MetadataRepository extends BaseRepository {
    * is `entity_id COLLATE BINARY` for stable, locale-independent ordering.
    *
    * With `opts.softDeletedAtOrBefore` the walk is narrowed to entities holding
-   * at least one soft-deleted entry or task with `deleted_at` at or before
+   * at least one soft-deleted entry, task or forgotten event with `deleted_at` at or before
    * that cutoff (erase's hard-delete walk, forget-erasure spec §2). Without
    * the option the host-facing semantics above are unchanged.
    */
   async getDistinctEntityIds(tx?: SQLiteAdapter, opts?: { softDeletedAtOrBefore?: number; softDeletedAll?: boolean }): Promise<string[]> {
     const executor = this.getExecutor(tx);
+    // Events carry tombstones only from schema v19; an unmigrated store has none.
+    const eventTombstones = (opts?.softDeletedAll || opts?.softDeletedAtOrBefore !== undefined)
+      && await this.columnExists(`${this.prefix}events`, 'forgotten_at', tx);
     if (opts?.softDeletedAll) {
       // Erase's walk: EVERY soft-deleted row, no timestamp predicate at all. A
       // numeric cutoff (even MAX_SAFE_INTEGER) is still a cutoff — a tombstone
@@ -223,6 +236,8 @@ export class MetadataRepository extends BaseRepository {
            SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL
            UNION
            SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL
+           ${eventTombstones ? `UNION
+           SELECT entity_id FROM ${this.prefix}events WHERE forgotten_at IS NOT NULL` : ''}
          ) ORDER BY entity_id COLLATE BINARY`,
       );
       return rows.map(r => r.entity_id);
@@ -234,8 +249,10 @@ export class MetadataRepository extends BaseRepository {
            SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?
            UNION
            SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+           ${eventTombstones ? `UNION
+           SELECT entity_id FROM ${this.prefix}events WHERE forgotten_at IS NOT NULL AND forgotten_at <= ?` : ''}
          ) ORDER BY entity_id COLLATE BINARY`,
-        [cutoff, cutoff],
+        eventTombstones ? [cutoff, cutoff, cutoff] : [cutoff, cutoff],
       );
       return rows.map(r => r.entity_id);
     }

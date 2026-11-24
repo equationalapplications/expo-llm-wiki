@@ -22,13 +22,13 @@ async function cols(db: any): Promise<string[]> {
 }
 
 describe('test 1: schema v18', () => {
-  it('fresh store has the column and stamps the current version (18)', async () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(18);
+  it('fresh store has the column and stamps the current version (19 since forget-event-exclusion)', async () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(19);
     const db = openTestDatabase();
     await new WikiMemory(db, { llmProvider: llm } as any).setup();
     expect(await cols(db)).toContain('derived_events');
     const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key='schema_version'`);
-    expect(row!.value).toBe('18');
+    expect(row!.value).toBe('19');
   });
 
   it('migrates a v17 store by ALTER and is idempotent (helper and setup)', async () => {
@@ -154,7 +154,7 @@ describe('tests 7-9: forget({ eventId }) matches derived_events', () => {
     await t.ins('u', 'sibPtr', ptr('E2'), null);
     await t.ins('u', 'sibNone', ptr('E5'), '["E6"]');
     const dry = await t.wiki.forget('u', { eventId: 'E2' }, { dryRun: true });
-    expect(dry).toEqual({ deleted: { entries: 2, tasks: 0 } });
+    expect(dry).toEqual({ deleted: { entries: 2, tasks: 0, events: 0 } });
     expect(await t.live('F')).toBe(1);
     const res = await t.wiki.forget('u', { eventId: 'E2' });
     expect(res.deleted.entries).toBe(2);
@@ -329,7 +329,7 @@ describe('test 10: apply-time re-check', () => {
     expect((await t.db.getAllAsync(`SELECT id FROM ${P}entries`)).length).toBe(1);
     const d = ofCode(t.diagnostics, 'source_event_gone');
     expect(d).toHaveLength(1);
-    expect((d[0] as any).detail).toEqual({ itemIndex: 0, sourceRef: 'evt_1' });
+    expect((d[0] as any).detail).toEqual({ itemIndex: 0, sourceRef: 'evt_1', reason: 'gone' });
     expect(await (t.wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toEqual({ at: 100, id: 'evt_1' });
   });
 
@@ -459,7 +459,7 @@ describe('tests 15-16: growth and vocabulary', () => {
     const okf = formatOkfBundle(dump as any);
     const back = parseOkfBundle('u', okf.files);
     expect((back.entities['u'].facts[0] as WikiFact).derived_events).toEqual(ids);
-    expect(await wiki.forget('u', { eventId: 'evt_199' }, { dryRun: true })).toEqual({ deleted: { entries: 1, tasks: 0 } });
+    expect(await wiki.forget('u', { eventId: 'evt_199' }, { dryRun: true })).toEqual({ deleted: { entries: 1, tasks: 0, events: 0 } });
     expect((await wiki.forget('u', { eventId: 'evt_0' })).deleted.entries).toBe(1);
   });
 
@@ -504,7 +504,7 @@ describe('round-1 folds', () => {
     await t.wiki.runLibrarian('u');
     expect((await rowOf(t.db, 'acme')).title).toBe('User is a principal engineer at Acme');
     expect(ofCode(t.diagnostics, 'source_pointer_unresolved')).toHaveLength(1);
-    expect(await t.wiki.forget('u', { eventId: 'evt_1' }, { dryRun: true })).toEqual({ deleted: { entries: 0, tasks: 0 } });
+    expect(await t.wiki.forget('u', { eventId: 'evt_1' }, { dryRun: true })).toEqual({ deleted: { entries: 0, tasks: 0, events: 1 } });
     expect((await rowOf(t.db, 'acme')).deleted_at).toBeNull();
   });
 

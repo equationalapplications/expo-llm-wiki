@@ -195,6 +195,15 @@ with the outbox enabled).
 > now include facts that merely absorbed the event (listed in
 > `derived_events`), deleted whole. Event rows are still untouched; the
 > follow-up `forget-event-exclusion` (issue #472) is where that changes.
+>
+> **As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/`):**
+> the "events table rows" bullet below is superseded. The one event row whose
+> `id` is the selector gets `forgotten_at` set (forget-event-exclusion §2);
+> `related_entry_id` is still never rewritten and no other event row is
+> touched. D4 was ruled when the only alternative was hard-deleting the row,
+> which forget-erasure forbids at forget time; a soft marker is the
+> fact-side design applied to the one row the host named. The ruled text
+> below is left as written.
 
 The selector soft-deletes **entries** (librarian facts, the only rows that
 carry `source_pointer`). Explicit non-touches:
@@ -224,6 +233,11 @@ invented for vector removal or FTS.
 `ForgetResult` is untouched; the count reports in `deleted.entries` (the
 selector deletes entries, so the existing field is the truthful name). No
 new result field.
+
+> **As amended 2026-11-24 (owner ruling, PR #481, `specs/forget-event-exclusion/`):**
+> `deleted.events` (an existing optional field) is present with the
+> `eventId` selector as `0 | 1`: whether the event row itself was marked
+> forgotten. No new field. `deleted.entries` keeps its meaning.
 
 ### D7 — dryRun parity, with its exclusivity checks up front
 
