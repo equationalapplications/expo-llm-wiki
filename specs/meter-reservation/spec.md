@@ -458,9 +458,10 @@ Targeted vitest only; each item names the file it extends.
    `tokensUsed` reports 300; the next call is refused; `remaining` is 0, not
    negative.
 
-As landed (2026-11-23): The fix commit's subject (`ab690e7e`, "...cannot overspend") overstates
-the fix: the spec and docs wording is authoritative (overspend is reduced, not
-impossible). Item 5's reserve/settle/release spy covers the probe only
+As landed (2026-11-24): The fix commit's subject first said "...cannot overspend". It
+was reworded before merge, with the owner's approval, to "...no longer multiply the
+overshoot", because semantic-release publishes commit subjects as release notes. Overspend
+is reduced, not impossible. Item 5's reserve/settle/release spy covers the probe only
 (`meter-reservation.test.ts`); the scheduler pins catch a leak indirectly
 through `remaining`. Item 4's old-meter copy compares the meter and the
 check-then-charge sequence (not the old wrappers); the default-config
