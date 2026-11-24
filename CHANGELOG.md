@@ -1,3 +1,9 @@
+## [9.16.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.16.0...v9.16.1) (2026-11-24)
+
+### Bug Fixes
+
+* **core:** import diagnostics are emitted only after the transaction commits ([#473](https://github.com/equationalapplications/expo-llm-wiki/issues/473), spec §Proposed change) ([74cdcfc](https://github.com/equationalapplications/expo-llm-wiki/commit/74cdcfc8787c42fb9068ca98b5a24e5c2f6abff9))
+
 ## [9.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v9.15.0...v9.16.0) (2026-11-23)
 
 ### Features
