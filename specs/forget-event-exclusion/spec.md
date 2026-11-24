@@ -159,6 +159,13 @@ already pruned changes nothing; the fact side still runs, exactly as today.
 `includeEvents` keeps its hard-delete semantics (`eventRepo.deleteByEntityId`,
 `:1279`, deletes forgotten and live rows alike).
 
+**As landed 2026-11-24 (PR #481): pre-v19 stores.** On a store not yet at
+schema v19 (for example `setup({ migrations: 'refuse' })` threw) the
+`forgotten_at` column does not exist. `forget({ eventId })` still soft-deletes
+the facts but cannot mark the event (`deleted.events: 0`, dry run too). v19
+has no backfill, so the event stays live after migration; the host calls
+`forget({ eventId })` again once `setup()` has migrated.
+
 Lock semantics are unchanged: `forget` still takes the entity's forget
 lock and is refused with `WikiBusyError('librarian')` while a pass holds
 the librarian lock. Nothing waits on a pass; the host retries as today.

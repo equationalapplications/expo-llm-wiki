@@ -459,3 +459,43 @@ describe('never-migrated pre-v19 store (#316 recovery)', () => {
     expect((await t.db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE deleted_at IS NOT NULL`))!.n).toBe(1);
   });
 });
+
+describe('round-2 folds', () => {
+  async function v18(t: Awaited<ReturnType<typeof make>>) {
+    await t.db.execAsync(`DROP INDEX IF EXISTS ${P}events_forgotten_idx`);
+    await t.db.execAsync(`ALTER TABLE ${P}events DROP COLUMN forgotten_at`);
+    await t.db.runAsync(`UPDATE ${P}meta SET value = '18' WHERE key = 'schema_version'`);
+  }
+  it('forget on v18, migrate, forget again: the second call marks the event', async () => {
+    const t = await make();
+    await t.seed('u', [['E1', 'x', 10]]);
+    await v18(t);
+    expect((await t.wiki.forget('u', { eventId: 'E1' })).deleted.events).toBe(0);
+    await new WikiMemory(t.db, { llmProvider: { generateText: async () => '{}' } } as any).setup();
+    expect(await t.forgottenAt('E1')).toBeNull();
+    expect((await t.wiki.forget('u', { eventId: 'E1' })).deleted.events).toBe(1);
+    expect(typeof (await t.forgottenAt('E1'))).toBe('number');
+  });
+
+  it('erase() on a v18 store without the column returns verified', async () => {
+    const t = await make();
+    await t.seed('u', [['E1', 'x', 10]]);
+    await v18(t);
+    expect((await t.wiki.erase()).verified).toBe(true);
+  });
+
+  it('erase no-cutoff path: TEXT and future forgotten_at inside the prefix lower memory 3 / heal 2 to 1 / 0', async () => {
+    const t = await make();
+    const now = Date.now();
+    await t.seed('u', [['E1', 'a', now - 400], ['E2', 'b', now - 300], ['E3', 'c', now - 200], ['E4', 'd', now - 100]]);
+    await t.db.runAsync(`UPDATE ${P}events SET forgotten_at = 'text' WHERE id = 'E1'`);
+    await t.db.runAsync(`UPDATE ${P}events SET forgotten_at = ? WHERE id = 'E2'`, [now + 100 * DAY]);
+    const md = (t.wiki.__testAccess as any).metadataRepo;
+    await md.updateCheckpoint('u', { memory: 3, heal: 2 }, t.db);
+    const spy = (t.wiki as any).maintenanceService;
+    await spy._runPrune('u', { retainSoftDeletedFor: 0, retainEventsFor: null, vacuum: false, softDeletedCutoff: 'all' }, 'erase');
+    expect(await md.getCheckpoint('u')).toMatchObject({ memory: 1, heal: 0 });
+    expect(await t.exists('E1')).toBe(false);
+    expect(await t.exists('E2')).toBe(false);
+  });
+});

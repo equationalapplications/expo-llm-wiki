@@ -595,6 +595,7 @@ them is `forget({ sourceRef })`** — T4 delta MAJOR-2 / owner ruling E; on an e
 the host calls `forget({ sourceRef })` for every stored document of the subject), the
 host-connection pragma
 requirement, the copy census (events kept unless
+*[as amended 2026-11-24, PR #481: events the host forgot with `forget({ eventId })` are deleted by erase]*
 `clearAll({ includeEvents: true })` — the documented host-step carve-out, owner ruling D;
 drain the outbox; host-stored documents survive erase unless
 `forget({ sourceRef })`; manifest stays; exports bring data
@@ -695,7 +696,7 @@ a convenience follow-up.
    (owner ruling B: the pragma is unconditional at FULL; this test is its evidence).
 3. **erase() holds:** with an unconfirmed external removal, `erase()` hard-deletes nothing
    held and reports the holds via `PrunePartialFailureError` semantics. **Events: erase
-   deletes none** (`retainEventsFor: null`) — assert the event count is unchanged after
+   deletes none** (`retainEventsFor: null`) *[as amended 2026-11-24, PR #481: erase deletes none of the unforgotten events; events forgotten with `forget({ eventId })` are deleted]* — assert the event count is unchanged after
    erase (T3 delta-8 MAJOR-1; the `event_retention_held` diagnostic is out of scope for
    erase). Note step 1's internal `syncEntries` **ignores `false` returns** (`:451` discards
    the result) — step 6's surfaced `false` is the only failure observer, which is why step 6

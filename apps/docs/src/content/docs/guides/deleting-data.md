@@ -38,6 +38,8 @@ deleted whole: the engine cannot take one event's wording back out, so use `dryR
 count first. It also marks the event row forgotten (`forgotten_at`; the result's `deleted.events` is `1`), so
 no librarian pass, heal prompt, `read()` bundle or non-backup export carries its text again; prune hard-deletes
 the row on the `retainSoftDeletedFor` schedule, not `retainEventsFor`. Facts merged before schema v18 carry no list.
+On a store not yet at schema v19 (for example `setup({ migrations: 'refuse' })` threw), `forget({ eventId })` still
+deletes the facts but cannot mark the event (`deleted.events: 0`, dry run too); call it again after `setup()` migrates.
 A merge the model did not attribute to an event is reported (`source_pointer_unresolved`) but is
 not findable by `forget({ eventId })`; if you need full coverage, forget those facts by `entryId`.
 

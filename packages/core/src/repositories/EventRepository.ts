@@ -315,6 +315,14 @@ export class EventRepository extends BaseRepository {
     return Number(row?.n ?? 0) > 0 ? 1 : 0;
   }
 
+  /** True when `deleteForgotten` with the same arguments would delete at least one row. */
+  async hasDeletableForgotten(entityId: string, cutoff: number, tx: SQLiteAdapter, opts?: { noCutoff?: boolean }): Promise<boolean> {
+    const row = opts?.noCutoff
+      ? await tx.getFirstAsync(`SELECT 1 AS x FROM ${this.prefix}events WHERE entity_id = ? AND forgotten_at IS NOT NULL LIMIT 1`, [entityId])
+      : await tx.getFirstAsync(`SELECT 1 AS x FROM ${this.prefix}events WHERE entity_id = ? AND forgotten_at IS NOT NULL AND forgotten_at <= ? LIMIT 1`, [entityId, cutoff]);
+    return !!row;
+  }
+
   /**
    * How many of the entity's first `n` events, in `(created_at, id)` order,
    * `deleteForgotten` with the same arguments would delete. The memory and

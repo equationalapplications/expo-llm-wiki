@@ -471,12 +471,14 @@ export class MaintenanceService {
           // soft-delete schedule. No watermark guard and no retainEventsFor: a
           // forgotten row is never read. No hook, so never held.
           // An unmigrated store (erase's #316 recovery path) has no forgotten_at column: nothing to delete.
-          const hasForgottenCol = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx);
+          const delOpts = { noCutoff: softDeletedAll };
+          // Cheap probe first (events_forgotten_idx): most prunes have nothing to do here.
+          const hasForgottenCol = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx)
+            && await this.eventRepo.hasDeletableForgotten(entityId, cutoff, tx, delOpts);
           // Forgotten rows are not a log prefix. Each checkpoint counts rows in
           // (created_at, id) order, so it drops by exactly the deleted rows that
           // sit inside its own prefix (counted before the delete): no row the
           // checkpoint had not passed is subtracted, and no extra re-read follows.
-          const delOpts = { noCutoff: softDeletedAll };
           const cpBefore = hasForgottenCol ? await this.metadataRepo.getCheckpoint(entityId, tx) : null;
           const memDrop = cpBefore && (cpBefore.memory ?? 0) > 0
             ? await this.eventRepo.countForgottenInPrefix(entityId, cpBefore.memory!, cutoff, tx, delOpts) : 0;
@@ -1402,9 +1404,10 @@ export class MaintenanceService {
           // stops being raw material. Entity scoped and idempotent; the fact
           // side above ran regardless (a pruned id marks nothing).
           if (params.eventId !== undefined) {
-            // A never-migrated (pre-v19) store has no column (#316 recovery,
-            // migrations:'refuse' hosts): the fact side still runs, no marker is
-            // written, and the event is not excluded until the store migrates.
+            // A not-yet-migrated (pre-v19) store has no column (#316 recovery,
+            // migrations:'refuse' hosts): the fact side still runs and no marker is
+            // written. v19 has no backfill, so the event stays live after migration;
+            // the host must call forget({ eventId }) again once setup() has migrated.
             eventMarked = await this.metadataRepo.columnExists(`${this.prefix}events`, 'forgotten_at', tx)
               ? await this.eventRepo.markForgotten(entityId, params.eventId, now, tx)
               : 0;

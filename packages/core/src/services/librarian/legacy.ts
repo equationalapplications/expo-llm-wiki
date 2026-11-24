@@ -12,6 +12,8 @@
  *       `LibrarianResult.budgetStop` field instead of letting it bubble.
  *   - The trailing `this.searchService.evictCache(entityId)` is followed
  *     by a `LibrarianResult` return.
+ *   - Exception (specs/forget-event-exclusion §3): an all-forgotten log (empty
+ *     filtered batch while event rows exist) returns before any model call.
  *
  * Parity is enforced by `__tests__/librarianLegacyParity.test.ts` whose
  * snapshot was recorded *before* this file was created; if the snapshot
