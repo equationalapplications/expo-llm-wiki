@@ -455,7 +455,8 @@ export class ImportExportService {
           ? validateSourcePointerValue(rawPointerValue)
           : null;
         if (pointerValidated === undefined) {
-          emitDiagnostic(this.options, {
+          // Buffered: emitted only after the import transaction commits.
+          refusalDiagnostics.push({
             code: 'source_pointer_invalid',
             operation: 'importDump',
             trigger: 'call',

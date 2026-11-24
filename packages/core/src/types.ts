@@ -1908,7 +1908,11 @@ export interface PendingMaintenance {
 export interface RunPendingMaintenanceOptions {
   /** Default: every entity with pending work. */
   entityIds?: string[];
-  /** generateText tokens (provider-reported or chars/4). Omitted = unbounded. */
+  /**
+   * generateText and classify tokens (provider-reported or chars/4). Omitted = unbounded.
+   * Calls in flight hold budget before they start; admission tests the input
+   * estimate, so a call's own output can pass the budget.
+   */
   tokenBudget?: number;
   /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
   deadlineMs?: number;
