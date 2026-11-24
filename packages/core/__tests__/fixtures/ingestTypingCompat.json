@@ -194,5 +194,147 @@
         "chunks": 1
       }
     }
+  ],
+  "receipts|strict|full": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|strict|partial": [
+    {
+      "code": "fact_deduplicated",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunkIndex": 0,
+        "itemIndex": 4,
+        "reason": "exact_title"
+      }
+    },
+    {
+      "code": "ingest_chunk_failed",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "reason": "parse",
+        "count": 1,
+        "chunkIndexes": [
+          1
+        ]
+      }
+    },
+    {
+      "code": "edge_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "reason": "type_not_in_manifest",
+        "factId": "F0",
+        "edgeType": "nope",
+        "sourceNodeType": "person",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_folded",
+      "severity": "info",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F0",
+        "nodeType": "person",
+        "from": "per-son",
+        "to": "person",
+        "via": "normalize",
+        "sourceRef": "doc.md"
+      }
+    },
+    {
+      "code": "node_type_dropped",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "factId": "F1",
+        "nodeType": "robot",
+        "reason": "not_in_manifest",
+        "sourceRef": "doc.md"
+      }
+    }
+  ],
+  "receipts|strict|zero": [
+    {
+      "code": "ingest_zero_facts",
+      "severity": "warn",
+      "operation": "ingest",
+      "trigger": "call",
+      "entityId": "e1",
+      "detail": {
+        "sourceRef": "doc.md",
+        "chunks": 1
+      }
+    }
   ]
 }

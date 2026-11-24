@@ -90,7 +90,7 @@ const norm = (diagnostics: WikiDiagnostic[]) => {
   }));
 };
 
-async function receipts(kind: 'full' | 'partial' | 'zero', config: WikiConfig = {}) {
+async function receipts(kind: 'full' | 'partial' | 'zero', config: WikiConfig = {}, mode: 'strict' | 'emergent' = 'emergent') {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   let empty = false;
   const full = JSON.stringify({ facts: [
@@ -100,14 +100,14 @@ async function receipts(kind: 'full' | 'partial' | 'zero', config: WikiConfig = 
     { title: 'Plain', body: 'plain', tags: [], confidence: 'certain' },
     { title: 'Ada', body: 'ada dup', tags: [], confidence: 'certain' },
   ] });
-  const { wiki, diagnostics } = await makeDiagnosticWiki({
+  const { wiki, db, diagnostics } = await makeDiagnosticWiki({
     config: { ...config, ...(kind === 'partial' ? { maxChunkLength: 30, chunkOverlap: 0 } : {}) },
     generateText: async ({ userPrompt }) => {
       if (empty) return JSON.stringify({ facts: [] });
       return userPrompt.includes('BROKEN') ? 'not json' : full;
     },
   });
-  await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'emergent' });
+  await wiki.setOntologyManifest('e1', MANIFEST, { mode });
   const doc = kind === 'partial' ? 'ALPHA chunk text here.\n\nBROKEN chunk text here.' : 'content';
   await wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: HASH_A, documentChunk: doc });
   if (kind === 'zero') {
@@ -117,15 +117,16 @@ async function receipts(kind: 'full' | 'partial' | 'zero', config: WikiConfig = 
   }
   // Filter BEFORE normalizing: the disclosed node_type_assigned receipts mention fact ids
   // the recorded sequence never saw, and must not shift the stable ordinals.
-  return { seq: norm(diagnostics.filter((d) => d.code !== 'node_type_assigned')), assigned: diagnostics.filter((d) => d.code === 'node_type_assigned') };
+  const entryRows = await db.getAllAsync<{ id: string; title: string }>('SELECT id, title FROM llm_wiki_entries WHERE entity_id = ? AND deleted_at IS NULL', ['e1']);
+  return { entryRows, seq: norm(diagnostics.filter((d) => d.code !== 'node_type_assigned')), assigned: diagnostics.filter((d) => d.code === 'node_type_assigned') };
 }
 
 describe('ingest default-host receipt sequences (Test plan 1c)', () => {
-  for (const kind of ['full', 'partial', 'zero'] as const) {
-    it(`${kind} path`, async () => {
-      const { seq } = await receipts(kind);
+  for (const [mode, kind] of (['emergent', 'strict'] as const).flatMap((m) => (['full', 'partial', 'zero'] as const).map((k) => [m, k] as const))) {
+    it(`${mode} ${kind} path`, async () => {
+      const { seq } = await receipts(kind, {}, mode);
       // The one disclosed default-host delta (spec section 12) is node_type_assigned { writer: 'llm' }; it is excluded here and asserted below.
-      check(`receipts|${kind}`, seq);
+      check(mode === 'emergent' ? `receipts|${kind}` : `receipts|strict|${kind}`, seq);
       if (kind === 'zero') expect(seq.some((d) => d.code === 'ingest_zero_facts')).toBe(true);
     });
   }
@@ -136,11 +137,12 @@ describe('ingest default-host receipt sequences (Test plan 1c)', () => {
   });
   it('the one disclosed delta: node_type_assigned { writer: llm } per generative-typed fact, both paths', async () => {
     for (const kind of ['full', 'partial'] as const) {
-      const { assigned } = await receipts(kind);
+      const { assigned, entryRows } = await receipts(kind);
+      const idOf = (title: string) => entryRows.find((r) => r.title === title)?.id;
       // Ada (folded per-son -> person) and Paris (exact) resolve; R2 and Plain do not.
       expect(assigned.map((d) => ({ operation: d.operation, trigger: d.trigger, ...d.detail }))).toEqual([
-        { operation: 'ingest', trigger: 'call', factId: expect.any(String), okfType: 'person', writer: 'llm', sourceRef: 'doc.md' },
-        { operation: 'ingest', trigger: 'call', factId: expect.any(String), okfType: 'place', writer: 'llm', sourceRef: 'doc.md' },
+        { operation: 'ingest', trigger: 'call', factId: idOf('Ada'), okfType: 'person', writer: 'llm', sourceRef: 'doc.md' },
+        { operation: 'ingest', trigger: 'call', factId: idOf('Paris'), okfType: 'place', writer: 'llm', sourceRef: 'doc.md' },
       ]);
     }
   });
