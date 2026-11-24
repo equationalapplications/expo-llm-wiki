@@ -77,7 +77,7 @@ The lease only has to guarantee two processes cannot hold it at once — but tha
 
 ## Budget sizing
 
-`tokenBudget` on `runPendingMaintenance` covers text-generation tokens only; embedding calls are not counted. With `generateTextWithUsage` implemented, figures are provider-reported; otherwise the engine estimates at `chars ÷ 4` and sets `estimated: true`. Plan at the model's worst case: a single librarian pass holds every event since the watermark plus the manifest block, and a single heal pass holds the candidates and document anchors. If `stoppedReason.reason === 'budget_too_small'`, **one** event or one heal batch exceeds the whole budget — raise that run's budget, or split the work over multiple invocations.
+`tokenBudget` on `runPendingMaintenance` covers text-generation and classify tokens; embedding calls are not counted. With `generateTextWithUsage` implemented, figures are provider-reported; otherwise the engine estimates at `chars ÷ 4` and sets `estimated: true`. Plan at the model's worst case: a single librarian pass holds every event since the watermark plus the manifest block, and a single heal pass holds the candidates and document anchors. If `stoppedReason.reason === 'budget_too_small'`, **one** event or one heal batch exceeds the whole budget — raise that run's budget, or split the work over multiple invocations.
 
 ## Choosing `entity_id` partitioning
 

@@ -45,3 +45,24 @@ describe('callClassify', () => {
       .rejects.toBeInstanceOf(WikiBudgetExhausted);
   });
 });
+
+describe('callClassify reservation hygiene', () => {
+  const ctx = (meter: UsageMeter) => ({ operation: 'ontologyBackfill' as const, entityId: 'e1', trigger: 'call' as const, meter });
+  it('provider throw leaves no reservation and no charge', async () => {
+    const meter = new UsageMeter(10_000);
+    await expect(callClassify(optsWith({ classify: async () => { throw new Error('boom'); } }), ctx(meter), request)).rejects.toThrow('boom');
+    expect(meter.reserved).toBe(0);
+    expect(meter.used).toBe(0);
+  });
+  it('missing classify leaves no reservation', async () => {
+    const meter = new UsageMeter(10_000);
+    await expect(callClassify(optsWith({}), ctx(meter), request)).rejects.toThrow(TypeError);
+    expect(meter.reserved).toBe(0);
+    expect(meter.used).toBe(0);
+  });
+  it('settled call leaves no reservation', async () => {
+    const meter = new UsageMeter(10_000);
+    await callClassify(optsWith({ classify: async () => ({ answers: {} }) }), ctx(meter), request);
+    expect(meter.reserved).toBe(0);
+  });
+});

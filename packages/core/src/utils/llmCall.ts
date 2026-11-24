@@ -6,7 +6,16 @@ import type {
   WikiOptions,
 } from '../types';
 import { emitDiagnostic } from './diagnostics';
-import { estimateTokens, UsageMeter, WikiBudgetExhausted, type UsageRecord } from './usage';
+import { estimateTokens, UsageMeter, type UsageRecord } from './usage';
+
+/**
+ * Output allowance held for a classify call beyond its input estimate. A
+ * `choice` answer echoes a probability per option (`ClassifierAnswer`), so the
+ * output is of the order of the question's own size, which the input estimate
+ * includes. Same precedent as RESOLVE_RESERVE_FACTOR. Admission still tests
+ * the estimate alone (specs/meter-reservation §1, §3).
+ */
+export const CLASSIFY_HOLD_FACTOR = 2;
 
 export interface LlmCallContext {
   operation: WikiDiagnosticOperation;
@@ -22,9 +31,9 @@ export function validUsage(u: unknown): u is { inputTokens: number; outputTokens
 }
 
 /**
- * The one place core calls the host's text model (spec §6.3). Pre-flights the
- * prompt estimate against the meter, prefers generateTextWithUsage, records
- * usage, and optionally reports it. Method-call syntax keeps `this` bound to
+ * The one place core calls the host's text model (spec §6.3). Reserves the
+ * prompt estimate on the meter, prefers generateTextWithUsage, settles real
+ * usage (releases on failure), and optionally reports it. Method-call syntax keeps `this` bound to
  * the provider.
  */
 export async function callLlm(
@@ -33,29 +42,31 @@ export async function callLlm(
   prompts: { systemPrompt: string; userPrompt: string },
 ): Promise<string> {
   const promptEstimate = estimateTokens(prompts.systemPrompt) + estimateTokens(prompts.userPrompt);
-  if (ctx.meter && !ctx.meter.fits(promptEstimate)) {
-    throw new WikiBudgetExhausted(promptEstimate, ctx.meter.remaining);
-  }
-
   const provider = options.llmProvider;
   const params = { systemPrompt: prompts.systemPrompt, userPrompt: prompts.userPrompt };
   let text: string;
-  let reported: { inputTokens: number; outputTokens: number } | undefined;
-  if (typeof provider.generateTextWithUsage === 'function') {
-    const result = await provider.generateTextWithUsage(params);
-    if (!result || typeof result.text !== 'string') {
-      throw new TypeError('generateTextWithUsage() must resolve to { text: string, usage? }');
+  let record: UsageRecord;
+  const reservation = ctx.meter?.reserve(promptEstimate);
+  try {
+    let reported: { inputTokens: number; outputTokens: number } | undefined;
+    if (typeof provider.generateTextWithUsage === 'function') {
+      const result = await provider.generateTextWithUsage(params);
+      if (!result || typeof result.text !== 'string') {
+        throw new TypeError('generateTextWithUsage() must resolve to { text: string, usage? }');
+      }
+      text = result.text;
+      reported = validUsage(result.usage) ? result.usage : undefined;
+    } else {
+      text = await provider.generateText(params);
     }
-    text = result.text;
-    reported = validUsage(result.usage) ? result.usage : undefined;
-  } else {
-    text = await provider.generateText(params);
+    record = reported
+      ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens, estimated: false }
+      : { inputTokens: promptEstimate, outputTokens: estimateTokens(text), estimated: true };
+  } catch (err) {
+    if (ctx.meter && reservation) ctx.meter.release(reservation);
+    throw err;
   }
-
-  const record: UsageRecord = reported
-    ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens, estimated: false }
-    : { inputTokens: promptEstimate, outputTokens: estimateTokens(text), estimated: true };
-  ctx.meter?.record(record);
+  if (ctx.meter && reservation) ctx.meter.settle(reservation, record);
 
   if (options.config?.reportLlmUsage === true) {
     emitDiagnostic(options, {
@@ -71,8 +82,8 @@ export async function callLlm(
 
 /**
  * The one place core calls the host's classifier (errata E1). Wraps the
- * provider.classify call: pre-flights the input estimate against the meter,
- * records usage (reported when well-formed, estimated otherwise), and emits
+ * provider.classify call: reserves the input estimate (with a hold) on the meter,
+ * settles usage (reported when well-formed, estimated otherwise; releases on failure), and emits
  * llm_usage under reportLlmUsage. Every classify call site must go through
  * this wrapper.
  */
@@ -83,22 +94,26 @@ export async function callClassify(
 ): Promise<ClassifyResponse> {
   const inputEstimate =
     estimateTokens(request.state) + estimateTokens(JSON.stringify(request.questions));
-  if (ctx.meter && !ctx.meter.fits(inputEstimate)) {
-    throw new WikiBudgetExhausted(inputEstimate, ctx.meter.remaining);
-  }
-
   const provider = options.llmProvider;
-  if (typeof provider.classify !== 'function') {
-    throw new TypeError('callClassify requires a provider with classify()');
-  }
-  const response = await provider.classify(request);
+  let response: ClassifyResponse;
+  let record: UsageRecord;
+  const reservation = ctx.meter?.reserve(inputEstimate, inputEstimate * CLASSIFY_HOLD_FACTOR);
+  try {
+    if (typeof provider.classify !== 'function') {
+      throw new TypeError('callClassify requires a provider with classify()');
+    }
+    response = await provider.classify(request);
 
-  const reported = validUsage(response?.usage) ? response.usage : undefined;
-  const outputEstimate = estimateTokens(JSON.stringify(response?.answers ?? {}));
-  const record: UsageRecord = reported
-    ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens, estimated: false }
-    : { inputTokens: inputEstimate, outputTokens: outputEstimate, estimated: true };
-  ctx.meter?.record(record);
+    const reported = validUsage(response?.usage) ? response.usage : undefined;
+    const outputEstimate = estimateTokens(JSON.stringify(response?.answers ?? {}));
+    record = reported
+      ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens, estimated: false }
+      : { inputTokens: inputEstimate, outputTokens: outputEstimate, estimated: true };
+  } catch (err) {
+    if (ctx.meter && reservation) ctx.meter.release(reservation);
+    throw err;
+  }
+  if (ctx.meter && reservation) ctx.meter.settle(reservation, record);
 
   if (options.config?.reportLlmUsage === true) {
     emitDiagnostic(options, {
