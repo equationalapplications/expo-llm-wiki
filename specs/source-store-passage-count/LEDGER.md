@@ -18,7 +18,7 @@ Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
       recorded)
 - [x] T4 correlate on `document_id` (GREEN: EQP + counting + guard + full
       suite; file-backed fixed-path time recorded; spec Errata numbers)
-- [ ] T5 gates: `pnpm build`, `pnpm exec tsc --noEmit`,
+- [x] T5 gates: `pnpm build`, `pnpm exec tsc --noEmit`,
       `grep listStoredSourcesSql packages/core/dist/index.d.ts` → nothing,
       root `pnpm test`
 - [ ] T6 final probe numbers into spec Errata; cleanup commit (Status →
@@ -60,3 +60,8 @@ verification passes, as a step of the implementation loop.
   EXIT=0 **11/11** (pin + counting + guard, zero assertion edits), core
   suite EXIT=0 **275 files / 3431 tests** (baseline 3428 + 3 new),
   typecheck EXIT=0. origin == HEAD readback `1cc8c513`.
+- **T5 ✓ 2026-11-28** — controller-run at `1cc8c513` (tree): `pnpm build`
+  EXIT=0; root `pnpm exec tsc --noEmit` EXIT=0;
+  `grep listStoredSourcesSql packages/core/dist/index.d.ts` → no match
+  (builder stays module-internal); root `pnpm test` EXIT=0 (all packages
+  except integration + integration suites; final roots 9f/47t green).
