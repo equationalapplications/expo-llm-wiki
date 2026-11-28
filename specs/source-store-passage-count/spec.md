@@ -1,6 +1,6 @@
 # Source store: the passage count probes the wrong index (issue #489)
 
-Status: Reviewed (owner-approved 2026-11-28, Discord msg `1576081158758998158`)
+**Status:** Implemented (2026-11-28, PR #490).
 
 ## Problem
 
@@ -148,9 +148,15 @@ guard does not read this SQL. No rule contradicts the change.
 
 ## Errata
 
-- 2026-11-28 — the probe numbers above come from a scratch reproduction,
-  not from this repo's benchmark suite. The PR will re-run the same probe
-  on the fixed SQL and record the final numbers here.
+- 2026-11-28 — final repo-run numbers at 5,000 docs × 3 passages
+  (replacing the scratch-reproduction caveat above; shipped-path figure
+  measured against the pre-fix SQL, fixed-path figures against PR #490's
+  `listStoredSourcesSql`): **shipped 10,414 ms** (file-backed, T3 guard
+  RED run in vitest); **fixed 15 ms** (file-backed, T4 guard run in
+  vitest); **fixed 12.55 ms cold / 10.33 ms best-of-3** (in-memory,
+  better-sqlite3 probe mirroring the shipped schema DDL and indexes;
+  EQP confirms `SEARCH p USING COVERING INDEX llm_wiki_idx_source_passages_doc`).
+  The planning-session 7.8 ms in-memory figure is superseded by these.
 - 2026-11-28 — owner amendment at approval: the shared SQL ships as a
   builder helper `listStoredSourcesSql(prefix)`, not a module constant,
   because the query interpolates `${prefix}`.
@@ -159,6 +165,3 @@ guard does not read this SQL. No rule contradicts the change.
   extrapolation); the EQP pin is named the primary regression guard; the
   entity-pair writer invariant is stated in Proposed change. Full
   adjudication in the lane's r1 dispositions record.
-- 2026-11-28 — repo-run numbers, file-backed at 5,000 docs × 3 passages
-  (the 7.8 ms figure above was in-memory): shipped path 10,414 ms (T3 RED
-  run); fixed path 15 ms (T4 guard run).
