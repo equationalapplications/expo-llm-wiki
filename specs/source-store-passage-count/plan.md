@@ -40,11 +40,15 @@ is a secondary guard against gross slowdowns.
 ## Task 2 — counting regression tests (guard the predicate change)
 
 1. Add a test, written before the fix, that inserts two documents through
-   raw SQL — one with 0 passage rows, one with 3 — filling every NOT NULL
-   column (`entity_id`, `source_ref`, `source_hash`, `text`, `text_hash`,
-   `char_count`, `created_at` on documents; `entity_id`, `document_id`,
-   `seq`, `start_offset`, `end_offset` on passages), then asserts
-   `listStoredSources` returns passage counts `[0, 3]`.
+   raw SQL — one with 0 passage rows, one with 3. Fill every column,
+   `id` first (`id`, `entity_id`, `source_ref`, `source_hash`, `text`,
+   `text_hash`, `char_count`, `created_at` on documents; `id`,
+   `entity_id`, `document_id`, `seq`, `start_offset`, `end_offset` on
+   passages) — `id` is a TEXT PRIMARY KEY with no NOT NULL, so an
+   implementer who follows only a "NOT NULL columns" list can insert NULL
+   ids and every correlation goes dead. Each passage's `document_id` must
+   equal the inserted document's `id`. Then assert `listStoredSources`
+   returns passage counts `[0, 3]`.
 2. These tests pass against the shipped SQL too — the shipped query is
    slow, not wrong. Their job is to fail a WRONG fix (for example,
    counting every passage of the entity), which the existing suite cannot
@@ -59,8 +63,9 @@ is a secondary guard against gross slowdowns.
    - open `new WikiMemory(openTestDatabase(<tmp path>), options)` and run
      `setup()` on that handle (the file's shared `setup()` hard-codes the
      in-memory database);
-   - seed through raw SQL inserts inside one transaction, every NOT NULL
-     column filled;
+   - seed through raw SQL inserts inside one transaction — same column
+     rule as Task 2: `id` first in both tables, every column filled, each
+     passage's `document_id` equal to its document's `id`;
    - call `listStoredSources` once; assert 5,000 rows return and the call
      takes under 500 ms;
    - in an `afterAll`: `closeAsync()` first, then delete the temp file and
@@ -76,10 +81,13 @@ is a secondary guard against gross slowdowns.
 2. The Task 1 EQP pin, Task 2 counting tests, and Task 3 guard MUST all
    pass. The whole `sourceStoreRead.test.ts` suite MUST pass with zero
    edits to existing assertions.
-3. In the same commit, amend the spec as the behavior change requires:
+3. Record the measured fixed-path time of the Task 3 guard in LEDGER.md —
+   the guard runs file-backed, so this is the file-backed fixed-path
+   number the risks section cites (the 7.8 ms figure was in-memory).
+4. In the same commit, amend the spec as the behavior change requires:
    land the shipped-path number from Task 1 step 5 in the Errata alongside
    the fixed-path re-measurement.
-4. Commit: `fix(source-store): probe the passage count on the document
+5. Commit: `fix(source-store): probe the passage count on the document
    index`.
 
 ## Task 5 — full gates
@@ -112,7 +120,8 @@ is a secondary guard against gross slowdowns.
   not rename user indexes.
 - **Perf bound flakiness on CI runners.** 500 ms at the 5,000 × 3 scale
   sits far below the measured shipped-path time (~10 s) and far above the
-  measured fixed-path time (7.8 ms in-memory). Do not assert a lower
+  fixed-path time (7.8 ms, measured in-memory; the file-backed fixed-path
+  number gets recorded at Task 4 GREEN). Do not assert a lower
   bound or a ratio; assert only the ceiling and the row count. If the EQP
   pin ever fails, trust it over the timer — the timer guards gross
   slowdowns only.

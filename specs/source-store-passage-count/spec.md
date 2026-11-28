@@ -98,8 +98,9 @@ guard does not read this SQL. No rule contradicts the change.
 - `packages/core/src/services/SourceStoreService.ts` — replace the
   correlated subquery's predicate; add the `listStoredSourcesSql(prefix)`
   builder helper.
-- `packages/core/__tests__/sourceStoreRead.test.ts` — add the plan test and
-  the performance test described below.
+- `packages/core/__tests__/sourceStoreRead.test.ts` — add the plan test,
+  the counting regression tests, and the performance test described
+  below.
 
 ## Test plan
 
@@ -112,9 +113,17 @@ guard does not read this SQL. No rule contradicts the change.
    the plan names `idx_source_passages_doc`. Assert the plan does not
    name `idx_source_passages_entity`.
 2. **Behavior unchanged.** The existing `sourceStoreRead.test.ts` suite
-   must pass without edits: entity isolation, `passageCount` accuracy,
-   `passageCount 0` for a source stored with no ingest.
-3. **Performance guard.** Open a file-backed database through a dedicated
+   must pass without edits: entity isolation, `passageCount` accuracy on
+   its single-passage fixtures. Note what the existing suite does NOT
+   cover: it has no document with zero passages and none with several
+   passages per document (the test titled "passageCount 0" asserts
+   `passageCount: 1`). The new counting tests below close that gap.
+3. **Counting regression tests.** Written before the fix. Two documents
+   inserted through raw SQL — 0 and 3 passage rows — assert
+   `listStoredSources` returns passage counts `[0, 3]`. These pass
+   against the shipped SQL; they fail a wrong correlation (for example,
+   counting every passage of the entity).
+4. **Performance guard.** Open a file-backed database through a dedicated
    handle (`new WikiMemory(openTestDatabase(path), options)` plus its own
    `setup()`). Seed one entity with 5,000 documents and 3 passages per
    document through raw SQL. Call `listStoredSources` once. Assert the
@@ -123,7 +132,7 @@ guard does not read this SQL. No rule contradicts the change.
    there (5,000 × 3 probe, 2026-11-28) and the fixed path 7.8 ms. The
    guard runs against the shipped SQL first and its failing time becomes
    ledger RED evidence.
-4. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
+5. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
    pass with zero errors.
 
 ## Rejected alternatives
