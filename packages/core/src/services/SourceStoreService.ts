@@ -15,7 +15,10 @@ function limitOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
-/** SQL for the stored-source listing; one `?` binds entity_id. */
+/** SQL for the stored-source listing; one `?` binds entity_id.
+ * The unary + on p.entity_id is a value no-op but keeps the term off
+ * idx_source_passages_entity (spec: specs/source-store-passage-count) —
+ * do not "tidy" it away; the plan-pin test fails if it disappears. */
 export function listStoredSourcesSql(prefix: string): string {
   return `SELECT d.source_ref, d.source_hash, d.char_count, d.created_at,
               (SELECT COUNT(*) FROM ${prefix}source_passages p

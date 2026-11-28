@@ -46,12 +46,15 @@ Reproduction on this machine, 2026-11-28, better-sqlite3, one entity,
 | Query | Plan for the inner probe | Time |
 |---|---|---|
 | Shipped (both predicates) | `idx_source_passages_entity` | 10,083 ms |
-| Fixed (`document_id` only) | `idx_source_passages_doc` (covering) | 7.8 ms |
+| Fixed (planning form, `document_id` only) | `idx_source_passages_doc` (covering) | 7.8 ms |
+| Fixed (shipped form, `+entity_id` term) | `idx_source_passages_doc` (non-covering) | 11.55 ms |
 
-These are the planning-session scratch figures; the final repo-run numbers
-(shipped 10,414 ms; fixed 15 ms / 12.55 ms / 10.33 ms covering-form,
-11.55 ms / 13.09 ms final `+entity_id`-term form) are in the Errata at the
-end of this document and supersede them.
+The shipped form keeps the `entity_id` filter as a `+`-prefixed term — see
+Proposed change. These first two rows are the planning-session scratch
+figures; the final repo-run numbers (shipped 10,414 ms; fixed 15 ms /
+12.55 ms / 10.33 ms covering-form, 11.55 ms / 13.09 ms final
+`+entity_id`-term form) are in the Errata at the end of this document and
+supersede them.
 
 The issue reporter measured the same shape at other scales (1,000 → 88 ms,
 4,000 → 1.4 s, 20,000 → 37 s). `exportStoredSources` is not affected: its
@@ -103,7 +106,8 @@ new API surface needs its own spec cycle against source-store §4/§7.
 The change fixes a defect against the shipped source-store spec (§4:
 `listStoredSources` returns `sourceRef`, `sourceHash`, `charCount`,
 `passageCount`, `storedAt`). The result contract does not change. INTENT
-rule 2 (additive result fields) is not implicated. INTENT rule 3 ("one
+rule 2 ("Your database stays yours" — the schema only ever grows) is not
+implicated: no schema change. INTENT rule 3 ("one
 database, many memories, never mixed" — every read is scoped to one
 `entityId`) IS touched: the fix removes the bare `entity_id` equality that
 let the planner pick the entity index. The shipped form keeps the filter
@@ -120,8 +124,8 @@ this SQL. No rule contradicts the change.
   correlated subquery's predicate; add the `listStoredSourcesSql(prefix)`
   builder helper.
 - `packages/core/__tests__/sourceStoreRead.test.ts` — add the plan test,
-  the counting regression tests, and the performance test described
-  below.
+  the counting regression tests (including the foreign-`entity_id`
+  isolation pin), and the performance test described below.
 
 ## Test plan
 
@@ -144,16 +148,21 @@ this SQL. No rule contradicts the change.
    `listStoredSources` returns passage counts `[0, 3]`. These pass
    against the shipped SQL; they fail a wrong correlation (for example,
    counting every passage of the entity).
-4. **Performance guard.** Open a file-backed database through a dedicated
+4. **Isolation pin.** Plant a passage with a foreign `entity_id` on this
+   entity's document through raw SQL (a writer-invariant violation the
+   schema does not prevent) and assert the listing does not count it.
+   This fails the planning form's bare `document_id`-only correlation and
+   passes the shipped `+entity_id`-term form.
+5. **Performance guard.** Open a file-backed database through a dedicated
    handle (`new WikiMemory(openTestDatabase(path), options)` plus its own
    `setup()`). Seed one entity with 5,000 documents and 3 passages per
    document through raw SQL. Call `listStoredSources` once. Assert the
    call returns 5,000 rows in under 500 ms. This scale is the measured
    point, not an extrapolation: the shipped path measures about 10,000 ms
-   there (5,000 × 3 probe, 2026-11-28) and the fixed path 7.8 ms. The
-   guard runs against the shipped SQL first and its failing time becomes
-   ledger RED evidence.
-5. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
+   there (5,000 × 3 probe, 2026-11-28) and the fixed path well under 1
+   ms-scale (final figures in the Errata; the guard's RED run against the
+   shipped SQL was captured before the fix landed and is recorded there).
+6. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
    pass with zero errors.
 
 ## Rejected alternatives
@@ -198,11 +207,17 @@ this SQL. No rule contradicts the change.
   covering-index form. The plan pin and the vitest file-backed guard pass
   unchanged; an isolation pin test now plants a foreign-`entity_id`
   passage through raw SQL and asserts it is not counted.
-- 2026-11-28 — Tier-4 note (m1, pre-existing, tracked with #491): the
+- 2026-11-28 — Tier-4 note (m1/m5, pre-existing, tracked with #491): the
   write path's idempotence `COUNT(*)` and replace `DELETE` in
   `sourceStoreUpsert.ts` carry the same `entity_id = ? AND document_id = ?`
   shape and may plan on the entity index; ~2 ms per call at 15,000
-  passages. EQP pins for those statements belong to the #491 cycle.
+  passages. `MaintenanceService.ts`'s per-document passage `DELETE`
+  (`entity_id = ? AND document_id IN (SELECT …)`) shares the family. EQP
+  pins for those statements belong to the #491 cycle. Also for that
+  cycle: this PR's perf-guard fixture seeds 12-character texts, so it
+  does not exercise the overflow-chain cost real long documents pay on
+  row-layout grounds (bounded by the 5,000,000-character default budget;
+  predates this PR).
 - 2026-11-28 — owner amendment at approval: the shared SQL ships as a
   builder helper `listStoredSourcesSql(prefix)`, not a module constant,
   because the query interpolates `${prefix}`.
