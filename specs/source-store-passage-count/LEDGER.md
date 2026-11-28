@@ -13,7 +13,7 @@ Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
       evidence = failed `toContain`, never a throw; step 5 optional per
       plan)
 - [x] T2 counting regression tests (0 and 3 passages, `id` columns first)
-- [ ] T3 file-backed performance guard at 5,000 docs × 3 passages
+- [x] T3 file-backed performance guard at 5,000 docs × 3 passages
       (< 500 ms ceiling; RED against shipped SQL first, measured time
       recorded)
 - [ ] T4 correlate on `document_id` (GREEN: EQP + counting + guard + full
@@ -43,3 +43,13 @@ verification passes, as a step of the implementation loop.
   `Tests 1 failed | 9 passed (10)` — the new counting test passes against
   shipped SQL as the plan prescribes. Existing "passageCount 0" test
   untouched. origin == HEAD readback `ddcdee07`.
+- **T3 ✓ 2026-11-28** — `54cd8656` file-backed guard (dedicated
+  `WikiMemory` handle, 5,000 × 3 raw-SQL seed in one transaction,
+  `afterAll` closes DB then removes file + sidecars — verified: no tmp
+  residue). RED re-verified by controller at `54cd8656`: fast loop EXIT=1
+  with exactly 2 failures (T1 pin + guard), guard fails on the measured
+  assertion `listStoredSources took 10262 ms: expected 10262.030483 to be
+  less than 500` (not a throw). **Shipped-path Errata figure: 10,414 ms**
+  (T3 RED, file-backed; controller's own run 10,262 ms). This supplies
+  the Task 1 step 5 number per the owner note. origin == HEAD readback
+  `54cd8656`.
