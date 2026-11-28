@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WikiMemory } from '../src/WikiMemory';
 import { SourceStoreService, listStoredSourcesSql } from '../src/services/SourceStoreService';
 import { openTestDatabase } from './helpers/sqliteAdapter';
@@ -106,6 +109,60 @@ describe('listStoredSources query plan', () => {
     expect(details.join('\n')).toContain('idx_source_passages_doc');
     expect(details.some((d) => d.includes('idx_source_passages_entity'))).toBe(false);
   });
+});
+
+describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', () => {
+  const DOCS = 5000;
+  const dbPath = join(tmpdir(), `llm-wiki-source-store-perf-${process.pid}.db`);
+  let db: SQLiteAdapter;
+  let svc: SourceStoreService;
+
+  beforeAll(async () => {
+    db = openTestDatabase(dbPath);
+    const options = { llmProvider: { generateText: async () => '{}' } } as unknown as WikiOptions;
+    const wiki = new WikiMemory(db, options);
+    await wiki.setup();
+    svc = new SourceStoreService(db, PREFIX, options, (wiki as unknown as { jobManager: never }).jobManager);
+    await db.execAsync('BEGIN');
+    try {
+      for (let i = 0; i < DOCS; i++) {
+        const docId = `perf-doc-${i}`;
+        await db.runAsync(
+          `INSERT INTO ${PREFIX}source_documents
+            (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [docId, E, `doc-${String(i).padStart(5, '0')}.md`, String(i).padStart(64, '0'), 'hello world!', String(i).padStart(64, '1'), 12, 1000 + i],
+        );
+        for (let seq = 0; seq < 3; seq++) {
+          await db.runAsync(
+            `INSERT INTO ${PREFIX}source_passages
+              (id, entity_id, document_id, seq, start_offset, end_offset)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+            [`perf-p-${i}-${seq}`, E, docId, seq, seq * 4, seq * 4 + 4],
+          );
+        }
+      }
+      await db.execAsync('COMMIT');
+    } catch (err) {
+      await db.execAsync('ROLLBACK');
+      throw err;
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await db.closeAsync();
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      rmSync(dbPath + suffix, { force: true });
+    }
+  });
+
+  it('lists 5,000 stored sources in under 500 ms', async () => {
+    const t0 = performance.now();
+    const list = await svc.listStoredSources(E);
+    const elapsed = performance.now() - t0;
+    expect(list).toHaveLength(DOCS);
+    expect(elapsed, `listStoredSources took ${elapsed.toFixed(0)} ms`).toBeLessThan(500);
+  }, 120_000);
 });
 
 describe('listSourceRefs stored three-state (spec §4)', () => {
