@@ -34,7 +34,9 @@ SEARCH p USING INDEX llm_wiki_idx_source_passages_entity (entity_id=?)
 
 `document_id` already identifies one entity's document. The
 `(document_id, seq)` index (`idx_source_passages_doc`, schema.ts) covers the
-answer. The `entity_id` predicate adds no information.
+answer. The `entity_id` predicate adds no information — but it is kept
+(with a `+` unary term, see Proposed change) so the query still enforces
+source-store §10's isolation rule itself.
 
 ## Evidence
 
@@ -47,22 +49,32 @@ Reproduction on this machine, 2026-11-28, better-sqlite3, one entity,
 | Fixed (`document_id` only) | `idx_source_passages_doc` (covering) | 7.8 ms |
 
 These are the planning-session scratch figures; the final repo-run numbers
-(shipped 10,414 ms, fixed 15 ms / 12.55 ms / 10.33 ms) are in the Errata at
-the end of this document and supersede them.
+(shipped 10,414 ms; fixed 15 ms / 12.55 ms / 10.33 ms covering-form,
+11.55 ms / 13.09 ms final `+entity_id`-term form) are in the Errata at the
+end of this document and supersede them.
 
 The issue reporter measured the same shape at other scales (1,000 → 88 ms,
 4,000 → 1.4 s, 20,000 → 37 s). `exportStoredSources` is not affected: its
-per-document passage query filters on `document_id` and already plans on
-the `(document_id, seq)` index.
+per-document passage query filters on both `entity_id = ?` and
+`document_id = ?` (`ImportExportService.ts`), one document per outer row,
+and orders by `seq` — which the `(document_id, seq)` index serves, so the
+probe stays off the entity index.
 
 ## Proposed change
 
-`SourceStoreService.listStoredSources` correlates on `document_id` alone:
+`SourceStoreService.listStoredSources` correlates on `document_id` for the
+index and keeps the `entity_id` filter as a `+`-prefixed term:
 
 ```sql
 (SELECT COUNT(*) FROM ${prefix}source_passages p
-  WHERE p.document_id = d.id) AS passage_count
+  WHERE p.document_id = d.id AND +p.entity_id = d.entity_id) AS passage_count
 ```
+
+The unary `+` on `p.entity_id` is a value no-op in SQLite, but the planner
+cannot use that term for index selection — so the probe stays on
+`idx_source_passages_doc` while the query still filters foreign-entity
+passages out of the count itself (source-store §10 stays literally true;
+no writer invariant is relied on for isolation).
 
 The query keeps the same result shape, order (`source_ref COLLATE BINARY`),
 and entity isolation. No type changes. No API changes. The engine exports
@@ -74,19 +86,16 @@ helper, `listStoredSourcesSql(prefix)`, exported from
 interpolated, so a builder keeps one source of truth: the method and the
 plan test both call it with the same prefix.
 
-One invariant underpins the single-predicate correlation: every engine
-write path (`sourceStoreUpsert`, the import path) stamps a passage's
-`entity_id` equal to its document's `entity_id`. The schema enforces no
-foreign key between the two tables, so the correlation on `document_id`
-alone is correct only under this writer invariant. The invariant is stated
-here and relied on; enforcing it with a trigger or check is out of scope.
+An isolation pin test plants a passage with a foreign `entity_id` on this
+entity's document through raw SQL (a writer-invariant violation the schema
+does not prevent) and asserts it is not counted.
 
 ## Scope ruling
 
 The owner ruled 2026-11-28 (Discord): this PR ships the SQL fix and its
 tests only. The paged variant (`afterSourceRef`, `limit`) and the point
-probe (`hasStoredSource(entityId, ref)`) are out of scope. A follow-up
-issue carries them. Rationale: the SQL fix removes the blast radius; the
+probe (`hasStoredSource(entityId, ref)`) are out of scope. Follow-up issue
+#491 carries them. Rationale: the SQL fix removes the blast radius; the
 new API surface needs its own spec cycle against source-store §4/§7.
 
 ## INTENT alignment
@@ -94,8 +103,16 @@ new API surface needs its own spec cycle against source-store §4/§7.
 The change fixes a defect against the shipped source-store spec (§4:
 `listStoredSources` returns `sourceRef`, `sourceHash`, `charCount`,
 `passageCount`, `storedAt`). The result contract does not change. INTENT
-rule 2 (additive result fields) is not implicated. The Curated Thoughts
-guard does not read this SQL. No rule contradicts the change.
+rule 2 (additive result fields) is not implicated. INTENT rule 3 ("one
+database, many memories, never mixed" — every read is scoped to one
+`entityId`) IS touched: the fix removes the bare `entity_id` equality that
+let the planner pick the entity index. The shipped form keeps the filter
+as a `+`-prefixed term the planner cannot index on, so the query still
+excludes other entities' passages itself and source-store §10 ("every
+query on them filters by it in the `WHERE` clause … a read for one entity
+can never return another entity's passage") stays literally true without
+amending that implemented spec. The Curated Thoughts guard does not read
+this SQL. No rule contradicts the change.
 
 ## Files touched
 
@@ -143,10 +160,16 @@ guard does not read this SQL. No rule contradicts the change.
 
 - **`GROUP BY document_id` joined in code.** The issue offers this shape.
   We rejected it for this PR: it adds a second query, a join map, and
-  transactional skew risk between the two reads. The one-predicate
-  correlated form plans on the covering index and stays one statement.
+  transactional skew risk between the two reads. The correlated form
+  plans on `idx_source_passages_doc` and stays one statement.
+- **Bare one-predicate correlation (`document_id` only).** Considered — it
+  is the fastest shape (covering index) and correct under the engine's
+  writer invariant, but it removes the query's self-enforced entity
+  filter, contradicting source-store §10's letter. The shipped form keeps
+  the filter as a `+`-prefixed term instead, at a measured cost of ~0
+  (see Errata, T4-fold numbers).
 - **Paged variant and `hasStoredSource` in this PR.** Rejected per the
-  owner ruling above; tracked in the follow-up issue.
+  owner ruling above; tracked in follow-up issue #491.
 - **Drop `passage_count` from the listing.** Rejected: the field is a
   shipped §4 contract; removing it breaks the result shape.
 
@@ -162,11 +185,30 @@ guard does not read this SQL. No rule contradicts the change.
   better-sqlite3 probe mirroring the shipped schema DDL and indexes;
   EQP confirms `SEARCH p USING COVERING INDEX llm_wiki_idx_source_passages_doc`).
   The planning-session 7.8 ms in-memory figure is superseded by these.
+- 2026-11-28 — Tier-4 review fold (M1): the shipped predicate is now
+  `WHERE p.document_id = d.id AND +p.entity_id = d.entity_id` — the bare
+  one-predicate form contradicted source-store §10's letter ("every query
+  on them filters by it in the `WHERE` clause"). The `+` unary term is a
+  value no-op but keeps the entity predicate out of index selection, so the
+  probe stays on `idx_source_passages_doc` (EQP, in-memory probe,
+  better-sqlite3: `SEARCH p USING INDEX llm_wiki_idx_source_passages_doc
+  (document_id=?)` — no longer COVERING) and the query again excludes
+  foreign-entity passages itself. Re-measured at 5,000 docs × 3 passages,
+  in-memory: **11.55 ms cold / 13.09 ms warm** — within noise of the
+  covering-index form. The plan pin and the vitest file-backed guard pass
+  unchanged; an isolation pin test now plants a foreign-`entity_id`
+  passage through raw SQL and asserts it is not counted.
+- 2026-11-28 — Tier-4 note (m1, pre-existing, tracked with #491): the
+  write path's idempotence `COUNT(*)` and replace `DELETE` in
+  `sourceStoreUpsert.ts` carry the same `entity_id = ? AND document_id = ?`
+  shape and may plan on the entity index; ~2 ms per call at 15,000
+  passages. EQP pins for those statements belong to the #491 cycle.
 - 2026-11-28 — owner amendment at approval: the shared SQL ships as a
   builder helper `listStoredSourcesSql(prefix)`, not a module constant,
   because the query interpolates `${prefix}`.
-- 2026-11-28 — Opus plan-review r1 folds: the perf guard moved to the
-  measured 5,000 × 3 scale (the earlier 2,000-doc figure was
-  extrapolation); the EQP pin is named the primary regression guard; the
-  entity-pair writer invariant is stated in Proposed change. Full
-  adjudication in the lane's r1 dispositions record.
+- 2026-11-28 — Opus plan-review r1 folds (dispositions inlined): the perf
+  guard moved to the measured 5,000 × 3 scale (the earlier 2,000-doc
+  figure was extrapolation); the EQP pin is named the primary regression
+  guard; the entity-pair writer invariant was stated in Proposed change
+  (superseded by the Tier-4 fold above — the shipped predicate now
+  enforces the pair itself).

@@ -95,6 +95,39 @@ describe('listStoredSources passage counts', () => {
       ['b.md', 3],
     ]);
   });
+
+  it('does not count a passage stamped with a foreign entity_id on this entity\'s document', async () => {
+    // Isolation pin for source-store §10: the count filters on entity_id too
+    // (via a +unary term that keeps the probe off the entity index). A row
+    // that violates the writer invariant must not leak into the count.
+    const { db, svc } = await setup();
+    const docSql = `INSERT INTO ${PREFIX}source_documents
+      (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    await db.runAsync(docSql, ['doc-one', E, 'a.md', H1, 'hello', H1, 5, 1000]);
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-own-0', E, 'doc-one', 0, 0, 4],
+    );
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-own-1', E, 'doc-one', 1, 4, 5],
+    );
+    // Writer-invariant violation planted through raw SQL: foreign entity_id,
+    // this entity's document id.
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-foreign', 'other-entity', 'doc-one', 2, 5, 6],
+    );
+    const list = await svc.listStoredSources(E);
+    expect(list.map((s) => [s.sourceRef, s.passageCount])).toEqual([['a.md', 2]]);
+  });
 });
 
 describe('listStoredSources query plan', () => {
