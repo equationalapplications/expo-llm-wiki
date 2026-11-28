@@ -164,6 +164,9 @@ describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', (
   });
 
   it('lists 5,000 stored sources in under 500 ms', async () => {
+    // The EQP plan-pin test above is the authoritative regression guard.
+    // This 500 ms budget is a coarse tripwire (~33x headroom over the
+    // measured 15 ms), not an SLA — loaded CI runners can wobble wall time.
     const t0 = performance.now();
     const list = await svc.listStoredSources(E);
     const elapsed = performance.now() - t0;

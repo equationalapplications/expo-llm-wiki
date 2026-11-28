@@ -46,6 +46,10 @@ Reproduction on this machine, 2026-11-28, better-sqlite3, one entity,
 | Shipped (both predicates) | `idx_source_passages_entity` | 10,083 ms |
 | Fixed (`document_id` only) | `idx_source_passages_doc` (covering) | 7.8 ms |
 
+These are the planning-session scratch figures; the final repo-run numbers
+(shipped 10,414 ms, fixed 15 ms / 12.55 ms / 10.33 ms) are in the Errata at
+the end of this document and supersede them.
+
 The issue reporter measured the same shape at other scales (1,000 → 88 ms,
 4,000 → 1.4 s, 20,000 → 37 s). `exportStoredSources` is not affected: its
 per-document passage query filters on `document_id` and already plans on
@@ -149,7 +153,8 @@ guard does not read this SQL. No rule contradicts the change.
 ## Errata
 
 - 2026-11-28 — final repo-run numbers at 5,000 docs × 3 passages
-  (replacing the scratch-reproduction caveat above; shipped-path figure
+  (replacing the planning-session scratch figures above — the Evidence
+  table and Test plan item 4; shipped-path figure
   measured against the pre-fix SQL, fixed-path figures against PR #490's
   `listStoredSourcesSql`): **shipped 10,414 ms** (file-backed, T3 guard
   RED run in vitest); **fixed 15 ms** (file-backed, T4 guard run in
