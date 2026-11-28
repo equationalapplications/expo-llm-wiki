@@ -1,13 +1,14 @@
 # LEDGER — source-store-passage-count (PR #490)
 
-In flight: **plan APPROVED (Kurt, msg `1576084081173594154`) — implement
-in the NEXT session** per handoff
-`records/handoffs/2026-11-28-handoff-pr490-implement-source-store-passage-count.md`
-(vault). No implementation started in the planning session. Plan review
-converged (r1 REQUEST CHANGES → r2 APPROVE WITH NITS, spend $0.8642).
-Owner notes folded 2026-11-28: LEDGER synced to plan T1–T6; Task 1 step 5
-skippable when Task 3's RED run supplies the shipped-path number.
-Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
+In flight: **implementation of approved plan T1–T6 inside PR #490.**
+T1–T5 landed on this branch and verified (boxes ticked below with
+controller re-verification); T6 (cleanup: spec Status → Implemented,
+plan/LEDGER deletion) opens after the review ladder converges. Plan
+review converged pre-implementation (r1 REQUEST CHANGES → r2 APPROVE
+WITH NITS, spend $0.8642); owner notes folded at `42b12b78`. Task 1
+step 5 skipped per owner note — the T3 RED run supplies the shipped-path
+number (recorded below). Spec: Reviewed (owner-approved 2026-11-28 UTC,
+msg `1576081158758998158`).
 
 - [x] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED
       evidence = failed `toContain`, never a throw; step 5 optional per
