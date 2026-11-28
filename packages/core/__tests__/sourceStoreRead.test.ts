@@ -70,6 +70,30 @@ describe('SourceStoreService reads', () => {
   });
 });
 
+describe('listStoredSources passage counts', () => {
+  it('counts 0 for a document with no passages and 3 for a document with three', async () => {
+    const { db, svc } = await setup();
+    const docSql = `INSERT INTO ${PREFIX}source_documents
+      (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    await db.runAsync(docSql, ['doc-zero', E, 'a.md', H1, 'hello', H1, 5, 1000]);
+    await db.runAsync(docSql, ['doc-three', E, 'b.md', H2, 'hello world!', H2, 12, 2000]);
+    for (let seq = 0; seq < 3; seq++) {
+      await db.runAsync(
+        `INSERT INTO ${PREFIX}source_passages
+          (id, entity_id, document_id, seq, start_offset, end_offset)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [`p-three-${seq}`, E, 'doc-three', seq, seq * 4, seq * 4 + 4],
+      );
+    }
+    const list = await svc.listStoredSources(E);
+    expect(list.map((s) => [s.sourceRef, s.passageCount])).toEqual([
+      ['a.md', 0],
+      ['b.md', 3],
+    ]);
+  });
+});
+
 describe('listStoredSources query plan', () => {
   it('probes the passage count on the document index, not the entity index', async () => {
     const { db, svc } = await setup();
