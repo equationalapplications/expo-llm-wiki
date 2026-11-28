@@ -1,6 +1,8 @@
 # LEDGER — source-store-passage-count (PR #490)
 
-In flight: plan review (Tier-3 Opus loop) — no implementation tasks started.
+In flight: plan review (Tier-3 Opus loop) — r1 REQUEST CHANGES (4 MAJOR /
+5 MINOR, all verified real and folded, one docs commit); delta round
+pending. No implementation tasks started.
 Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 
 - [ ] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED evidence recorded)

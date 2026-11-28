@@ -70,6 +70,13 @@ helper, `listStoredSourcesSql(prefix)`, exported from
 interpolated, so a builder keeps one source of truth: the method and the
 plan test both call it with the same prefix.
 
+One invariant underpins the single-predicate correlation: every engine
+write path (`sourceStoreUpsert`, the import path) stamps a passage's
+`entity_id` equal to its document's `entity_id`. The schema enforces no
+foreign key between the two tables, so the correlation on `document_id`
+alone is correct only under this writer invariant. The invariant is stated
+here and relied on; enforcing it with a trigger or check is out of scope.
+
 ## Scope ruling
 
 The owner ruled 2026-11-28 (Discord): this PR ships the SQL fix and its
@@ -96,22 +103,26 @@ guard does not read this SQL. No rule contradicts the change.
 
 ## Test plan
 
-1. **Plan pin (deterministic).** Open the test database. Seed one entity
-   with documents and passages through `storeSource` and the passage table.
-   Run `EXPLAIN QUERY PLAN` over `LIST_STORED_SOURCES_SQL` through the
-   adapter's `getAllAsync`. Assert the plan names
-   `idx_source_passages_doc`. Assert the plan does not name
-   `idx_source_passages_entity`.
+1. **Plan pin (deterministic; the primary regression guard).** Build the
+   store through the test file's `setup()` helper (tables and indexes
+   exist only after `wiki.setup()`). Seed one entity with documents and
+   passages through `storeSource`. Run `EXPLAIN QUERY PLAN` over
+   `listStoredSourcesSql(PREFIX)` through the adapter's `getAllAsync`,
+   binding the entity parameter (`[E]`) — the SQL carries a `?`. Assert
+   the plan names `idx_source_passages_doc`. Assert the plan does not
+   name `idx_source_passages_entity`.
 2. **Behavior unchanged.** The existing `sourceStoreRead.test.ts` suite
    must pass without edits: entity isolation, `passageCount` accuracy,
    `passageCount 0` for a source stored with no ingest.
-3. **Performance guard.** Open a file-backed database
-   (`openTestDatabase(path)`). Seed one entity with 2,000 documents and 3
-   passages per document through raw SQL. Call `listStoredSources` once.
-   Assert the call returns 2,000 rows in under 500 ms. The bound is 60×
-   above the measured fixed-path time at this scale; the shipped path
-   measures above 1,500 ms at the same scale, so the guard fails only on a
-   real regression.
+3. **Performance guard.** Open a file-backed database through a dedicated
+   handle (`new WikiMemory(openTestDatabase(path), options)` plus its own
+   `setup()`). Seed one entity with 5,000 documents and 3 passages per
+   document through raw SQL. Call `listStoredSources` once. Assert the
+   call returns 5,000 rows in under 500 ms. This scale is the measured
+   point, not an extrapolation: the shipped path measures about 10,000 ms
+   there (5,000 × 3 probe, 2026-11-28) and the fixed path 7.8 ms. The
+   guard runs against the shipped SQL first and its failing time becomes
+   ledger RED evidence.
 4. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
    pass with zero errors.
 
@@ -134,3 +145,8 @@ guard does not read this SQL. No rule contradicts the change.
 - 2026-11-28 — owner amendment at approval: the shared SQL ships as a
   builder helper `listStoredSourcesSql(prefix)`, not a module constant,
   because the query interpolates `${prefix}`.
+- 2026-11-28 — Opus plan-review r1 folds: the perf guard moved to the
+  measured 5,000 × 3 scale (the earlier 2,000-doc figure was
+  extrapolation); the EQP pin is named the primary regression guard; the
+  entity-pair writer invariant is stated in Proposed change. Full
+  adjudication in the lane's r1 dispositions record.
