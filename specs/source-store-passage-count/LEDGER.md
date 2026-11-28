@@ -1,6 +1,7 @@
 # LEDGER — source-store-passage-count (PR #490)
 
 In flight: **implementation of approved plan T1–T6 inside PR #490.**
+All dates in this ledger are UTC.
 T1–T5 landed on this branch and verified (boxes ticked below with
 controller re-verification); T6 (cleanup: spec Status → Implemented,
 plan/LEDGER deletion) opens after the review ladder converges. Plan
