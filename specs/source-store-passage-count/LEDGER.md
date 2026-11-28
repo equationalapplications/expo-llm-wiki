@@ -1,16 +1,28 @@
 # LEDGER — source-store-passage-count (PR #490)
 
-In flight: **plan review CONVERGED** — r1 REQUEST CHANGES (4 MAJOR /
-5 MINOR, all verified real and folded), r2 delta APPROVE WITH NITS
-(2 MINOR + 1 NIT, prescribed fixes folded). Review spend $0.8642.
-**Awaiting owner plan approval — do not implement until Kurt approves.**
+In flight: **plan APPROVED (Kurt, msg `1576084081173594154`) — implement
+in the NEXT session** per handoff
+`records/handoffs/2026-11-28-handoff-pr490-implement-source-store-passage-count.md`
+(vault). No implementation started in the planning session. Plan review
+converged (r1 REQUEST CHANGES → r2 APPROVE WITH NITS, spend $0.8642).
+Owner notes folded 2026-11-28: LEDGER synced to plan T1–T6; Task 1 step 5
+skippable when Task 3's RED run supplies the shipped-path number.
 Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 
-- [ ] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED evidence recorded)
-- [ ] T2 correlate on `document_id` (GREEN + full `sourceStoreRead` suite green)
-- [ ] T3 file-backed performance guard test (2,000 docs × 3 passages < 500 ms; measured time recorded)
-- [ ] T4 gates: `pnpm build`, `pnpm exec tsc --noEmit`, root `pnpm test`
-- [ ] T5 final probe numbers into spec Errata; cleanup commit (Status → Implemented, plan/LEDGER deleted) before `gh pr ready`
+- [ ] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED
+      evidence = failed `toContain`, never a throw; step 5 optional per
+      plan)
+- [ ] T2 counting regression tests (0 and 3 passages, `id` columns first)
+- [ ] T3 file-backed performance guard at 5,000 docs × 3 passages
+      (< 500 ms ceiling; RED against shipped SQL first, measured time
+      recorded)
+- [ ] T4 correlate on `document_id` (GREEN: EQP + counting + guard + full
+      suite; file-backed fixed-path time recorded; spec Errata numbers)
+- [ ] T5 gates: `pnpm build`, `pnpm exec tsc --noEmit`,
+      `grep listStoredSourcesSql packages/core/dist/index.d.ts` → nothing,
+      root `pnpm test`
+- [ ] T6 final probe numbers into spec Errata; cleanup commit (Status →
+      Implemented, plan/LEDGER deleted) before `gh pr ready`
 
 Reconciliation rule (specs/README.md): a box ticks only after its
 verification passes, as a step of the implementation loop.

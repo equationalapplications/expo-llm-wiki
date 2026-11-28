@@ -31,11 +31,13 @@ is a secondary guard against gross slowdowns.
 4. Run the EQP test. It MUST fail (RED) with the failed
    `toContain('idx_source_passages_doc')` assertion — a thrown error
    (missing table, unbound parameter) is NOT valid RED evidence.
-5. Add a second, temporary measurement (not a committed test): run
-   `listStoredSources` once against the shipped SQL at the 5,000-document
-   × 3-passage scale of the spec's Evidence table. Record the shipped time
-   in LEDGER.md — the Errata needs this number and it cannot be measured
-   after Task 4 lands. (File-backed or in-memory both fine; state which.)
+5. Optional shipped-path measurement: if the Task 3 step 2 file-backed
+   RED run already gives the shipped-path number the Errata needs, skip
+   this step (owner note 2026-11-28, msg `1576084081173594154`).
+   Otherwise run `listStoredSources` once against the shipped SQL at the
+   5,000-document × 3-passage scale and record the time in LEDGER.md —
+   the Errata needs this number and it cannot be measured after Task 4
+   lands. State file-backed or in-memory either way.
 
 ## Task 2 — counting regression tests (guard the predicate change)
 
@@ -85,8 +87,9 @@ is a secondary guard against gross slowdowns.
    the guard runs file-backed, so this is the file-backed fixed-path
    number the risks section cites (the 7.8 ms figure was in-memory).
 4. In the same commit, amend the spec as the behavior change requires:
-   land the shipped-path number from Task 1 step 5 in the Errata alongside
-   the fixed-path re-measurement.
+   land the shipped-path number (from Task 1 step 5, or from the Task 3
+   RED run if step 5 was skipped) in the Errata alongside the fixed-path
+   re-measurement.
 5. Commit: `fix(source-store): probe the passage count on the document
    index`.
 
@@ -105,8 +108,9 @@ is a secondary guard against gross slowdowns.
 
 1. Re-run the scratch probe at the 5,000 × 3 scale on the fixed SQL
    (in-memory and file-backed). Write both fixed-path numbers plus the
-   Task 1 shipped-path number into the spec Errata, replacing the
-   scratch-reproduction note; state the measurement conditions of each.
+   shipped-path number (Task 1 step 5 or the Task 3 RED run) into the
+   spec Errata, replacing the scratch-reproduction note; state the
+   measurement conditions of each.
 2. After the tiered review loops converge: one cleanup commit flips the
    spec Status to `Implemented` and deletes `plan.md` and `LEDGER.md`.
    Push it before `gh pr ready`.
