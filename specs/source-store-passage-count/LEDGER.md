@@ -53,3 +53,7 @@ verification passes, as a step of the implementation loop.
   (T3 RED, file-backed; controller's own run 10,262 ms). This supplies
   the Task 1 step 5 number per the owner note. origin == HEAD readback
   `54cd8656`.
+- **T4 (in progress) 2026-11-27** — builder predicate now
+  `WHERE p.document_id = d.id`. Fast loop 11/11 green, zero assertion
+  edits. **Fixed-path Errata figure: 15 ms** (file-backed guard, 5,000 × 3).
+  Core suite 275 files / 3431 tests green. Boxes not ticked.

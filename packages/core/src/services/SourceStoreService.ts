@@ -19,7 +19,7 @@ function limitOr(value: unknown, fallback: number): number {
 export function listStoredSourcesSql(prefix: string): string {
   return `SELECT d.source_ref, d.source_hash, d.char_count, d.created_at,
               (SELECT COUNT(*) FROM ${prefix}source_passages p
-                WHERE p.entity_id = d.entity_id AND p.document_id = d.id) AS passage_count
+                WHERE p.document_id = d.id) AS passage_count
        FROM ${prefix}source_documents d
        WHERE d.entity_id = ?
        ORDER BY d.source_ref COLLATE BINARY`;

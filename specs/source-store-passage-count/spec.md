@@ -159,3 +159,6 @@ guard does not read this SQL. No rule contradicts the change.
   extrapolation); the EQP pin is named the primary regression guard; the
   entity-pair writer invariant is stated in Proposed change. Full
   adjudication in the lane's r1 dispositions record.
+- 2026-11-28 — repo-run numbers, file-backed at 5,000 docs × 3 passages
+  (the 7.8 ms figure above was in-memory): shipped path 10,414 ms (T3 RED
+  run); fixed path 15 ms (T4 guard run).
