@@ -118,6 +118,9 @@ describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', (
   let svc: SourceStoreService;
 
   beforeAll(async () => {
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      rmSync(dbPath + suffix, { force: true });
+    }
     db = openTestDatabase(dbPath);
     const options = { llmProvider: { generateText: async () => '{}' } } as unknown as WikiOptions;
     const wiki = new WikiMemory(db, options);
@@ -144,13 +147,17 @@ describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', (
       }
       await db.execAsync('COMMIT');
     } catch (err) {
-      await db.execAsync('ROLLBACK');
+      try {
+        await db.execAsync('ROLLBACK');
+      } catch {
+        // no active transaction — report the original seeding error
+      }
       throw err;
     }
   }, 120_000);
 
   afterAll(async () => {
-    await db.closeAsync();
+    await db?.closeAsync();
     for (const suffix of ['', '-wal', '-shm', '-journal']) {
       rmSync(dbPath + suffix, { force: true });
     }
