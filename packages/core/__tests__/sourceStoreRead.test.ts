@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
-import { SourceStoreService } from '../src/services/SourceStoreService';
+import { SourceStoreService, listStoredSourcesSql } from '../src/services/SourceStoreService';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter, WikiOptions } from '../src/types';
 
@@ -67,6 +67,20 @@ describe('SourceStoreService reads', () => {
       passageCount: 1,
       storedAt: (r as { storedAt: number }).storedAt,
     });
+  });
+});
+
+describe('listStoredSources query plan', () => {
+  it('probes the passage count on the document index, not the entity index', async () => {
+    const { db, svc } = await setup();
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hello' });
+    const plan = await db.getAllAsync<{ detail: string }>(
+      `EXPLAIN QUERY PLAN ${listStoredSourcesSql(PREFIX)}`,
+      [E],
+    );
+    const details = plan.map((r) => r.detail);
+    expect(details.join('\n')).toContain('idx_source_passages_doc');
+    expect(details.some((d) => d.includes('idx_source_passages_entity'))).toBe(false);
   });
 });
 
