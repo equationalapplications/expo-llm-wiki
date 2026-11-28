@@ -15,6 +15,16 @@ function limitOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
+/** SQL for the stored-source listing; one `?` binds entity_id. */
+export function listStoredSourcesSql(prefix: string): string {
+  return `SELECT d.source_ref, d.source_hash, d.char_count, d.created_at,
+              (SELECT COUNT(*) FROM ${prefix}source_passages p
+                WHERE p.entity_id = d.entity_id AND p.document_id = d.id) AS passage_count
+       FROM ${prefix}source_documents d
+       WHERE d.entity_id = ?
+       ORDER BY d.source_ref COLLATE BINARY`;
+}
+
 /** Source store write path (spec source-store §5, §7, §9). */
 export class SourceStoreService {
   constructor(
@@ -100,15 +110,7 @@ export class SourceStoreService {
   async listStoredSources(entityId: string): Promise<StoredSourceSummary[]> {
     const rows = await this.db.getAllAsync<{
       source_ref: string; source_hash: string; char_count: number; created_at: number; passage_count: number;
-    }>(
-      `SELECT d.source_ref, d.source_hash, d.char_count, d.created_at,
-              (SELECT COUNT(*) FROM ${this.prefix}source_passages p
-                WHERE p.entity_id = d.entity_id AND p.document_id = d.id) AS passage_count
-       FROM ${this.prefix}source_documents d
-       WHERE d.entity_id = ?
-       ORDER BY d.source_ref COLLATE BINARY`,
-      [entityId],
-    );
+    }>(listStoredSourcesSql(this.prefix), [entityId]);
     return rows.map((r) => ({
       sourceRef: r.source_ref,
       sourceHash: r.source_hash,
