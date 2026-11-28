@@ -9,7 +9,7 @@ Owner notes folded 2026-11-28: LEDGER synced to plan T1–T6; Task 1 step 5
 skippable when Task 3's RED run supplies the shipped-path number.
 Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 
-- [ ] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED
+- [x] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED
       evidence = failed `toContain`, never a throw; step 5 optional per
       plan)
 - [ ] T2 counting regression tests (0 and 3 passages, `id` columns first)
@@ -26,3 +26,13 @@ Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 
 Reconciliation rule (specs/README.md): a box ticks only after its
 verification passes, as a step of the implementation loop.
+
+## Verification log
+
+- **T1 ✓ 2026-11-28** — `dd8b37a2` builder hoist (SQL byte-identical),
+  `594e67f8` EQP pin. RED re-verified by controller at `594e67f8`: fast
+  loop EXIT=1, `Tests 1 failed | 8 passed (9)`, failure is
+  `AssertionError: expected 'SEARCH d USING INDEX llm_wiki_idx_sou…' to
+  contain 'idx_source_passages_doc'` (assertion, not a throw). Shipped
+  plan pinned: `SEARCH p USING INDEX llm_wiki_idx_source_passages_entity`.
+  origin == HEAD readback `594e67f8`. Step 5 skipped per owner note.
