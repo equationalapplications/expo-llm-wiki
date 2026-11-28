@@ -204,6 +204,7 @@ describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', (
     const list = await svc.listStoredSources(E);
     const elapsed = performance.now() - t0;
     expect(list).toHaveLength(DOCS);
+    expect(list.every((s) => s.passageCount === 3)).toBe(true);
     expect(elapsed, `listStoredSources took ${elapsed.toFixed(0)} ms`).toBeLessThan(500);
   }, 120_000);
 });

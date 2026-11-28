@@ -1,6 +1,10 @@
 # Source store: the passage count probes the wrong index (issue #489)
 
 **Status:** Implemented (2026-11-28, PR #490).
+**Date:** 2026-11-28
+**Intent check:** touches INTENT rule 3 (entity scoping — preserved via the
+`+entity_id` term; see INTENT alignment) and rule 2 (no schema or result-type
+change); source-store §10 stays true for this query.
 
 ## Problem
 
@@ -57,11 +61,12 @@ figures; the final repo-run numbers (shipped 10,414 ms; fixed 15 ms /
 supersede them.
 
 The issue reporter measured the same shape at other scales (1,000 → 88 ms,
-4,000 → 1.4 s, 20,000 → 37 s). `exportStoredSources` is not affected: its
-per-document passage query filters on both `entity_id = ?` and
-`document_id = ?` (`ImportExportService.ts`), one document per outer row,
-and orders by `seq` — which the `(document_id, seq)` index serves, so the
-probe stays off the entity index.
+4,000 → 1.4 s, 20,000 → 37 s). `exportStoredSources` is not affected at
+issue scales: its per-document passage query filters on both
+`entity_id = ?` and `document_id = ?` (`ImportExportService.ts`), one
+document per outer row, and orders by `seq` — which the
+`(document_id, seq)` index serves, so the probe is expected to stay off
+the entity index; its EQP pin joins the #491 cycle.
 
 ## Proposed change
 
@@ -103,9 +108,10 @@ new API surface needs its own spec cycle against source-store §4/§7.
 
 ## INTENT alignment
 
-The change fixes a defect against the shipped source-store spec (§4:
+The change fixes a defect against the shipped source-store spec (§7:
 `listStoredSources` returns `sourceRef`, `sourceHash`, `charCount`,
-`passageCount`, `storedAt`). The result contract does not change. INTENT
+`passageCount`, `storedAt`; §4 names the call). The result contract does
+not change. INTENT
 rule 2 ("Your database stays yours" — the schema only ever grows) is not
 implicated: no schema change. INTENT rule 3 ("one
 database, many memories, never mixed" — every read is scoped to one
@@ -114,8 +120,11 @@ let the planner pick the entity index. The shipped form keeps the filter
 as a `+`-prefixed term the planner cannot index on, so the query still
 excludes other entities' passages itself and source-store §10 ("every
 query on them filters by it in the `WHERE` clause … a read for one entity
-can never return another entity's passage") stays literally true without
-amending that implemented spec. The Curated Thoughts guard does not read
+can never return another entity's passage") stays literally true for this
+query, without amending that implemented spec. (Repo-wide, §10's letter
+already has a pre-existing exception — `MiniSearchIndexStrategy` reads the
+store tables by id inside an entity-scoped loop; noted for the #491
+cycle.) The Curated Thoughts guard does not read
 this SQL. No rule contradicts the change.
 
 ## Files touched
@@ -159,8 +168,8 @@ this SQL. No rule contradicts the change.
    document through raw SQL. Call `listStoredSources` once. Assert the
    call returns 5,000 rows in under 500 ms. This scale is the measured
    point, not an extrapolation: the shipped path measures about 10,000 ms
-   there (5,000 × 3 probe, 2026-11-28) and the fixed path well under 1
-   ms-scale (final figures in the Errata; the guard's RED run against the
+   there (5,000 × 3 probe, 2026-11-28) and the fixed path about 15 ms
+   (final figures in the Errata; the guard's RED run against the
    shipped SQL was captured before the fix landed and is recorded there).
 6. **Full suite.** `pnpm test` must pass. `pnpm exec tsc --noEmit` must
    pass with zero errors.
@@ -186,7 +195,7 @@ this SQL. No rule contradicts the change.
 
 - 2026-11-28 — final repo-run numbers at 5,000 docs × 3 passages
   (replacing the planning-session scratch figures above — the Evidence
-  table and Test plan item 4; shipped-path figure
+  table and the Test plan's performance-guard step; shipped-path figure
   measured against the pre-fix SQL, fixed-path figures against PR #490's
   `listStoredSourcesSql`): **shipped 10,414 ms** (file-backed, T3 guard
   RED run in vitest); **fixed 15 ms** (file-backed, T4 guard run in
@@ -212,8 +221,14 @@ this SQL. No rule contradicts the change.
   `sourceStoreUpsert.ts` carry the same `entity_id = ? AND document_id = ?`
   shape and may plan on the entity index; ~2 ms per call at 15,000
   passages. `MaintenanceService.ts`'s per-document passage `DELETE`
-  (`entity_id = ? AND document_id IN (SELECT …)`) shares the family. EQP
-  pins for those statements belong to the #491 cycle. Also for that
+  (`entity_id = ? AND document_id IN (SELECT …)`) shares the family, as
+  does `exportStoredSources`'s passage probe above. The
+  `MiniSearchIndexStrategy` store-table reads (by id inside an
+  entity-scoped loop) carry the same writer-invariant reliance. EQP
+  pins for those statements belong to the #491 cycle, as does an
+  executed-SQL capture of the listing pin (recording-adapter pattern of
+  `edgeQueryPlans.test.ts`) so the pin follows the statement the method
+  runs, not just the builder. Also for that
   cycle: this PR's perf-guard fixture seeds 12-character texts, so it
   does not exercise the overflow-chain cost real long documents pay on
   row-layout grounds (bounded by the 5,000,000-character default budget;
