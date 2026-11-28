@@ -12,7 +12,7 @@ Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 - [x] T1 hoist `listStoredSourcesSql(prefix)` builder + EQP pin test (RED
       evidence = failed `toContain`, never a throw; step 5 optional per
       plan)
-- [ ] T2 counting regression tests (0 and 3 passages, `id` columns first)
+- [x] T2 counting regression tests (0 and 3 passages, `id` columns first)
 - [ ] T3 file-backed performance guard at 5,000 docs × 3 passages
       (< 500 ms ceiling; RED against shipped SQL first, measured time
       recorded)
@@ -36,3 +36,10 @@ verification passes, as a step of the implementation loop.
   contain 'idx_source_passages_doc'` (assertion, not a throw). Shipped
   plan pinned: `SEARCH p USING INDEX llm_wiki_idx_source_passages_entity`.
   origin == HEAD readback `594e67f8`. Step 5 skipped per owner note.
+- **T2 ✓ 2026-11-28** — `ddcdee07` counting regression test (raw SQL,
+  `id` first, all 14 columns filled, `document_id` == doc `id`; asserts
+  `[0, 3]` over deterministic refs). Controller re-verified at
+  `ddcdee07`: fast loop EXIT=1 with ONLY the T1 pin failing,
+  `Tests 1 failed | 9 passed (10)` — the new counting test passes against
+  shipped SQL as the plan prescribes. Existing "passageCount 0" test
+  untouched. origin == HEAD readback `ddcdee07`.
