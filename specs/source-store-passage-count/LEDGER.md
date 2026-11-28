@@ -16,7 +16,7 @@ Spec: Reviewed (owner-approved 2026-11-28, msg `1576081158758998158`).
 - [x] T3 file-backed performance guard at 5,000 docs × 3 passages
       (< 500 ms ceiling; RED against shipped SQL first, measured time
       recorded)
-- [ ] T4 correlate on `document_id` (GREEN: EQP + counting + guard + full
+- [x] T4 correlate on `document_id` (GREEN: EQP + counting + guard + full
       suite; file-backed fixed-path time recorded; spec Errata numbers)
 - [ ] T5 gates: `pnpm build`, `pnpm exec tsc --noEmit`,
       `grep listStoredSourcesSql packages/core/dist/index.d.ts` → nothing,
@@ -53,7 +53,10 @@ verification passes, as a step of the implementation loop.
   (T3 RED, file-backed; controller's own run 10,262 ms). This supplies
   the Task 1 step 5 number per the owner note. origin == HEAD readback
   `54cd8656`.
-- **T4 (in progress) 2026-11-27** — builder predicate now
-  `WHERE p.document_id = d.id`. Fast loop 11/11 green, zero assertion
-  edits. **Fixed-path Errata figure: 15 ms** (file-backed guard, 5,000 × 3).
-  Core suite 275 files / 3431 tests green. Boxes not ticked.
+- **T4 ✓ 2026-11-28** — `1cc8c513`: builder predicate now
+  `WHERE p.document_id = d.id` (entity predicate deleted); spec Errata
+  gains the repo-run file-backed numbers (shipped 10,414 ms / fixed
+  15 ms, 5,000 × 3). Controller re-verified at `1cc8c513`: fast loop
+  EXIT=0 **11/11** (pin + counting + guard, zero assertion edits), core
+  suite EXIT=0 **275 files / 3431 tests** (baseline 3428 + 3 new),
+  typecheck EXIT=0. origin == HEAD readback `1cc8c513`.
