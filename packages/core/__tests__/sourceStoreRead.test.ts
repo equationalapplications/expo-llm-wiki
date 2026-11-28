@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WikiMemory } from '../src/WikiMemory';
-import { SourceStoreService } from '../src/services/SourceStoreService';
+import { SourceStoreService, listStoredSourcesSql } from '../src/services/SourceStoreService';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter, WikiOptions } from '../src/types';
 
@@ -68,6 +71,142 @@ describe('SourceStoreService reads', () => {
       storedAt: (r as { storedAt: number }).storedAt,
     });
   });
+});
+
+describe('listStoredSources passage counts', () => {
+  it('counts 0 for a document with no passages and 3 for a document with three', async () => {
+    const { db, svc } = await setup();
+    const docSql = `INSERT INTO ${PREFIX}source_documents
+      (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    await db.runAsync(docSql, ['doc-zero', E, 'a.md', H1, 'hello', H1, 5, 1000]);
+    await db.runAsync(docSql, ['doc-three', E, 'b.md', H2, 'hello world!', H2, 12, 2000]);
+    for (let seq = 0; seq < 3; seq++) {
+      await db.runAsync(
+        `INSERT INTO ${PREFIX}source_passages
+          (id, entity_id, document_id, seq, start_offset, end_offset)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [`p-three-${seq}`, E, 'doc-three', seq, seq * 4, seq * 4 + 4],
+      );
+    }
+    const list = await svc.listStoredSources(E);
+    expect(list.map((s) => [s.sourceRef, s.passageCount])).toEqual([
+      ['a.md', 0],
+      ['b.md', 3],
+    ]);
+  });
+
+  it('does not count a passage stamped with a foreign entity_id on this entity\'s document', async () => {
+    // Isolation pin for source-store §10: the count filters on entity_id too
+    // (via a +unary term that keeps the probe off the entity index). A row
+    // that violates the writer invariant must not leak into the count.
+    const { db, svc } = await setup();
+    const docSql = `INSERT INTO ${PREFIX}source_documents
+      (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    await db.runAsync(docSql, ['doc-one', E, 'a.md', H1, 'hello', H1, 5, 1000]);
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-own-0', E, 'doc-one', 0, 0, 4],
+    );
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-own-1', E, 'doc-one', 1, 4, 5],
+    );
+    // Writer-invariant violation planted through raw SQL: foreign entity_id,
+    // this entity's document id.
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}source_passages
+        (id, entity_id, document_id, seq, start_offset, end_offset)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      ['p-foreign', 'other-entity', 'doc-one', 2, 5, 6],
+    );
+    const list = await svc.listStoredSources(E);
+    expect(list.map((s) => [s.sourceRef, s.passageCount])).toEqual([['a.md', 2]]);
+  });
+});
+
+describe('listStoredSources query plan', () => {
+  it('probes the passage count on the document index, not the entity index', async () => {
+    const { db, svc } = await setup();
+    await svc.storeSource(E, { sourceRef: 'a.md', sourceHash: H1, text: 'hello' });
+    const plan = await db.getAllAsync<{ detail: string }>(
+      `EXPLAIN QUERY PLAN ${listStoredSourcesSql(PREFIX)}`,
+      [E],
+    );
+    const details = plan.map((r) => r.detail);
+    expect(details.join('\n')).toContain('idx_source_passages_doc');
+    expect(details.some((d) => d.includes('idx_source_passages_entity'))).toBe(false);
+  });
+});
+
+describe('listStoredSources file-backed perf guard (5,000 docs x 3 passages)', () => {
+  const DOCS = 5000;
+  const dbPath = join(tmpdir(), `llm-wiki-source-store-perf-${process.pid}.db`);
+  let db: SQLiteAdapter;
+  let svc: SourceStoreService;
+
+  beforeAll(async () => {
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      rmSync(dbPath + suffix, { force: true });
+    }
+    db = openTestDatabase(dbPath);
+    const options = { llmProvider: { generateText: async () => '{}' } } as unknown as WikiOptions;
+    const wiki = new WikiMemory(db, options);
+    await wiki.setup();
+    svc = new SourceStoreService(db, PREFIX, options, (wiki as unknown as { jobManager: never }).jobManager);
+    await db.execAsync('BEGIN');
+    try {
+      for (let i = 0; i < DOCS; i++) {
+        const docId = `perf-doc-${i}`;
+        await db.runAsync(
+          `INSERT INTO ${PREFIX}source_documents
+            (id, entity_id, source_ref, source_hash, text, text_hash, char_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [docId, E, `doc-${String(i).padStart(5, '0')}.md`, String(i).padStart(64, '0'), 'hello world!', String(i).padStart(64, '1'), 12, 1000 + i],
+        );
+        for (let seq = 0; seq < 3; seq++) {
+          await db.runAsync(
+            `INSERT INTO ${PREFIX}source_passages
+              (id, entity_id, document_id, seq, start_offset, end_offset)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+            [`perf-p-${i}-${seq}`, E, docId, seq, seq * 4, seq * 4 + 4],
+          );
+        }
+      }
+      await db.execAsync('COMMIT');
+    } catch (err) {
+      try {
+        await db.execAsync('ROLLBACK');
+      } catch {
+        // no active transaction — report the original seeding error
+      }
+      throw err;
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await db?.closeAsync();
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      rmSync(dbPath + suffix, { force: true });
+    }
+  });
+
+  it('lists 5,000 stored sources in under 500 ms', async () => {
+    // The EQP plan-pin test above is the authoritative regression guard.
+    // This 500 ms budget is a coarse tripwire (~33x headroom over the
+    // measured 15 ms), not an SLA — loaded CI runners can wobble wall time.
+    const t0 = performance.now();
+    const list = await svc.listStoredSources(E);
+    const elapsed = performance.now() - t0;
+    expect(list).toHaveLength(DOCS);
+    expect(list.every((s) => s.passageCount === 3)).toBe(true);
+    expect(elapsed, `listStoredSources took ${elapsed.toFixed(0)} ms`).toBeLessThan(500);
+  }, 120_000);
 });
 
 describe('listSourceRefs stored three-state (spec §4)', () => {
