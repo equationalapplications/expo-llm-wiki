@@ -1,6 +1,6 @@
 # Source store: the passage count probes the wrong index (issue #489)
 
-Status: Draft
+Status: Reviewed (owner-approved 2026-11-28, Discord msg `1576081158758998158`)
 
 ## Problem
 
@@ -64,9 +64,11 @@ The query keeps the same result shape, order (`source_ref COLLATE BINARY`),
 and entity isolation. No type changes. No API changes. The engine exports
 no new symbols from `src/index.ts`.
 
-To pin the plan without copy-drift, the SQL moves to a module-level
-constant, `LIST_STORED_SOURCES_SQL`, in `SourceStoreService.ts`. The method
-and the plan test both read that constant.
+To pin the plan without copy-drift, the SQL moves into a small builder
+helper, `listStoredSourcesSql(prefix)`, exported from
+`SourceStoreService.ts` (not from `src/index.ts`). The prefix is
+interpolated, so a builder keeps one source of truth: the method and the
+plan test both call it with the same prefix.
 
 ## Scope ruling
 
@@ -87,8 +89,8 @@ guard does not read this SQL. No rule contradicts the change.
 ## Files touched
 
 - `packages/core/src/services/SourceStoreService.ts` — replace the
-  correlated subquery's predicate; add the `LIST_STORED_SOURCES_SQL`
-  constant.
+  correlated subquery's predicate; add the `listStoredSourcesSql(prefix)`
+  builder helper.
 - `packages/core/__tests__/sourceStoreRead.test.ts` — add the plan test and
   the performance test described below.
 
@@ -129,3 +131,6 @@ guard does not read this SQL. No rule contradicts the change.
 - 2026-11-28 — the probe numbers above come from a scratch reproduction,
   not from this repo's benchmark suite. The PR will re-run the same probe
   on the fixed SQL and record the final numbers here.
+- 2026-11-28 — owner amendment at approval: the shared SQL ships as a
+  builder helper `listStoredSourcesSql(prefix)`, not a module constant,
+  because the query interpolates `${prefix}`.
